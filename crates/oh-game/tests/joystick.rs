@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 
 use oh_config::joystick;
 use oh_config::{Jdir, Jid, JoystickPoll, TIME_STEP};
-use oh_game::seams::{Joystick, NullReplayStore, PcgCosmeticRng};
+use oh_game::seams::{Joystick, PcgCosmeticRng};
 
 use common::{capture_go_to_menu, compose_with, release_dir};
 
@@ -89,7 +89,6 @@ fn joystick_controls_pipeline_synthetic_polls() {
         assets,
         release_dir(),
         true,
-        Arc::new(NullReplayStore),
         joy.clone(),
         Arc::new(PcgCosmeticRng::new()),
     );
@@ -97,8 +96,9 @@ fn joystick_controls_pipeline_synthetic_polls() {
 
     // Default `j_*` binds (config.rs:499-510), loaded by the ctor's
     // `load_all_joystick_binds`: restart=0, exit=2, force_restart=3,
-    // focus=4, swap=5, replay=6, screenshot=7.
-    c.game.new_game(PACK, LEVEL, true, 1.0, false);
+    // focus=4, swap=5, replay=6, screenshot=7 (the replay bind is no
+    // longer engine-observable — plan 002 issue 02c2).
+    c.game.new_game(PACK, LEVEL, true, 1.0);
     c.game.set_must_start(true);
     c.game.update(TIME_STEP, 1.0);
     assert!(
@@ -187,27 +187,6 @@ fn joystick_controls_pipeline_synthetic_polls() {
         c.game.get_status().started,
         "restarted game starts on demand"
     );
-
-    // ------------------------------------------------------------------
-    // D: death → `j_replay` RISING EDGE: `MustReplay` → the state-change
-    //    block restarts WITH the last replay (`execute_last_replay`).
-    // ------------------------------------------------------------------
-    c.game.perform_player_kill();
-    assert!(c.game.get_status().has_died);
-    joy.set_poll(buttons(&[6])); // j_replay default
-    c.game.update(TIME_STEP, 1.0);
-    assert_eq!(
-        c.game.get_status().must_state_change,
-        oh_game::StateChange::None,
-        "MustReplay was consumed in-frame"
-    );
-    assert!(
-        c.game.in_replay(),
-        "the restart executes the last replay (the C++ replayPlayer.isActive() path)"
-    );
-    c.game.set_must_start(true);
-    c.game.update(TIME_STEP, 1.0);
-    assert!(c.game.get_status().started);
 
     // ------------------------------------------------------------------
     // E: `j_force_restart` RISING EDGE needs NO death (C++'s first

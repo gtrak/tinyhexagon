@@ -145,9 +145,6 @@ impl GameApi for MockGame {
         None
     }
     fn set_background_camera_rotation(&self, _value: f32) {}
-    fn in_replay(&self) -> bool {
-        false
-    }
     fn go_to_menu(&self, _send_scores: bool, _error: bool) {}
 }
 

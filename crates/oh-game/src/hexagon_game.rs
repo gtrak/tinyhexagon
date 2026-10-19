@@ -1,7 +1,7 @@
 //! Port of `include/SSVOpenHexagon/Core/HexagonGame.hpp` +
 //! `src/SSVOpenHexagon/Core/HexagonGame.cpp` — the `hg::HexagonGame`
 //! lifecycle (constructor / `newGame` / `start` / death family /
-//! difficulty / swap / replay record+playback).
+//! difficulty / swap).
 //!
 //! The per-frame `update` loop lives in [`crate::update`] (the C++
 //! `HGUpdate.cpp`), mirroring the file split 1:1.
@@ -17,8 +17,8 @@
 //! store (`S: [`SharedStore`]`): bare `SharedState` for pure-headless
 //! runs, the composition's `GameApiState` when Lua is involved.
 //!
-//! Everything else (player, cameras, particles, input flags, replay
-//! record/last-seed bookkeeping) stays engine-local in
+//! Everything else (player, cameras, particles, input flags) stays
+//! engine-local in
 //! [`EngineState`], behind the engine's own reentrant lock — the C++
 //! captures the `HexagonGame&` directly, and the Rust engine's methods
 //! are `&self` (the engine is the `GameApi` backend `Arc` the lambdas
@@ -40,16 +40,15 @@ use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use oh_config::{Config, TIME_STEP};
-use oh_data::{get_level_validator, LevelData, PackData, StyleData};
-use oh_math::hg::{concat::format_ostream_f64, string::to_uppercase};
+use oh_data::{LevelData, PackData, StyleData};
+use oh_math::hg::concat::format_ostream_f64;
 use oh_math::ssvs::Vec2;
-use oh_replay::{compress_replay_file, InputBits, ReplayData, ReplayFile};
-use oh_rng::{uniform_int, Pcg32Fast, RandomNumberGenerator, Seed};
+use oh_rng::{uniform_int, Pcg32Fast, RandomNumberGenerator};
 
 use crate::camera::Camera;
 use crate::lua_state::{ReentrantMutex, ReentrantMutexGuard, SharedState, SharedStore};
 use crate::renderer::Renderer;
-use crate::seams::{Audio, CosmeticRng, Joystick, ReplayStore, ScriptHost};
+use crate::seams::{Audio, CosmeticRng, Joystick, ScriptHost};
 use crate::{
     CPlayer, CWall, FastVertexVectorTris, HexagonGameStatus, LevelStatus, SpeedData, StateChange,
     Timeline2, Timeline2Runner,
@@ -62,54 +61,6 @@ pub struct GameExecutionResult {
     pub paused_time_seconds: f64,
     pub total_time_seconds: f64,
     pub custom_score: f32,
-}
-
-/// C++ `HexagonGame::ActiveReplay`.
-///
-/// The C++ `replayPlayer` is a `replay_player` (a non-owning cursor over
-/// `replayFile._data`); the cursor is inlined here as `replay_player_index`
-/// (a `&ReplayData` self-borrow cannot be expressed in one struct).
-#[derive(Debug, Clone, PartialEq)]
-pub struct ActiveReplay {
-    pub replay_file: ReplayFile,
-    replay_player_index: usize,
-    pub replay_pack_name: String,
-    pub replay_level_name: String,
-}
-
-impl ActiveReplay {
-    /// C++ `ActiveReplay(const replay_file&)` (names default-empty;
-    /// `newGame` fills them).
-    #[must_use]
-    pub fn new(replay_file: ReplayFile) -> Self {
-        Self {
-            replay_file,
-            replay_player_index: 0,
-            replay_pack_name: String::new(),
-            replay_level_name: String::new(),
-        }
-    }
-
-    /// C++ `replayPlayer.get_current_and_move_forward()`.
-    #[must_use]
-    pub(crate) fn get_current_and_move_forward(&mut self) -> InputBits {
-        if self.replay_file.data.size() <= self.replay_player_index {
-            return InputBits::none();
-        }
-        let current = self.replay_file.data.at(self.replay_player_index);
-        self.replay_player_index += 1;
-        current
-    }
-
-    /// C++ `replayPlayer.done()`.
-    fn done(&self) -> bool {
-        self.replay_player_index == self.replay_file.data.size()
-    }
-
-    /// C++ `replayPlayer.reset()`.
-    fn reset(&mut self) {
-        self.replay_player_index = 0;
-    }
 }
 
 /// C++ `HexagonGame::PreShakeCenters`.
@@ -257,14 +208,14 @@ pub struct EngineState {
     pub(crate) swap_particles: Vec<SwapParticle>,
     pub(crate) swap_particles_spawn_info: Option<SwapParticleSpawnInfo>,
 
-    // C++ `sf::Text messageText / (os -> status) / fpsText / timeText /
-    // replayText` — the string content only (fonts/layout are
-    // render-backend concerns, issue 11).
+    // C++ `sf::Text messageText / (os -> status) / fpsText / timeText`
+    // — the string content only (fonts/layout are
+    // render-backend concerns, issue 11). The C++'s `replayText` half was
+    // retired by plan 002 issue 02c2 with the replay removal.
     pub(crate) message_text: String,
     pub(crate) status_text: String,
     pub(crate) fps_text: String,
     pub(crate) time_text: String,
-    pub(crate) replay_text: String,
 
     // C++ flags.
     pub(crate) must_change_sides: bool,
@@ -275,14 +226,6 @@ pub struct EngineState {
     pub(crate) input_focused: bool,
     pub(crate) input_swap: bool,
     pub(crate) death_input_ignore: f32,
-
-    // C++ `std::optional<ActiveReplay> activeReplay` + last-replay
-    // bookkeeping.
-    pub(crate) active_replay: Option<ActiveReplay>,
-    pub(crate) last_seed: Seed,
-    pub(crate) last_replay_data: ReplayData,
-    pub(crate) last_first_play: bool,
-    pub(crate) last_played_score: f64,
 
     // C++ restart bookkeeping.
     pub(crate) restart_id: String,
@@ -399,8 +342,6 @@ pub(crate) struct Inner<S: SharedStore> {
     pub(crate) config: Arc<RwLock<Config>>,
     // C++ `Audio* audio` (nullable).
     pub(crate) audio: Option<Arc<dyn Audio + 'static>>,
-    // C++ `death_saveReplay` file-write half.
-    pub(crate) replay_store: Arc<dyn ReplayStore + 'static>,
     // C++ `Lua::LuaContext lua` / `initLua` / `runLuaFile`.
     pub(crate) script_host: Arc<dyn ScriptHost + 'static>,
     // C++ `Joystick` global (platform-fed; issue 10).
@@ -411,8 +352,6 @@ pub(crate) struct Inner<S: SharedStore> {
     pub(crate) window: bool,
     // Draw sink (issues 10/11); `None` in the C++ headless tests.
     pub(crate) renderer: Option<Arc<dyn Renderer + 'static>>,
-    // C++ `std::function<void(const replay_file&)> onDeathReplayCreated`.
-    pub(crate) on_death_replay_created: std::sync::RwLock<Option<DeathReplayCallback>>,
     // C++ `std::function<void(const bool)> fnGoToMenu` (HexagonGame.hpp:445)
     // — the app-level "back to menu" callback, assigned by `mainClient`
     // AFTER construction (main.cpp:456-462) and called at the tail of
@@ -441,10 +380,6 @@ impl<S: SharedStore> DerefMut for SharedGuard<'_, S> {
         self.0.shared_mut()
     }
 }
-
-/// C++ `std::function<void(const replay_file&)>` capture (type alias so the
-/// `Inner` field stays under clippy's type-complexity budget).
-pub type DeathReplayCallback = Arc<dyn Fn(&ReplayFile) + Send + Sync + 'static>;
 
 /// C++ `std::function<void(const bool)>` capture (type alias so the
 /// `Inner` field stays under clippy's type-complexity budget). `Send +
@@ -477,7 +412,6 @@ impl<S: SharedStore> HexagonGame<S> {
         config: Arc<RwLock<Config>>,
         assets: Arc<oh_assets::Assets>,
         audio: Option<Arc<dyn Audio + 'static>>,
-        replay_store: Arc<dyn ReplayStore + 'static>,
         script_host: Arc<dyn ScriptHost + 'static>,
         joystick: Arc<dyn Joystick + 'static>,
         cosmetic_rng: Arc<dyn CosmeticRng + 'static>,
@@ -543,18 +477,12 @@ impl<S: SharedStore> HexagonGame<S> {
             status_text: String::new(),
             fps_text: String::new(),
             time_text: String::new(),
-            replay_text: String::new(),
             must_change_sides: false,
             must_start: false,
             must_take_screenshot: false,
             input_focused: false,
             input_swap: false,
             death_input_ignore: 0.0,
-            active_replay: None,
-            last_seed: 0,
-            last_replay_data: ReplayData::default(),
-            last_first_play: false,
-            last_played_score: 0.0,
             restart_id: String::new(),
             restart_first_time: true,
             input_impl_last_movement: 0,
@@ -617,13 +545,11 @@ impl<S: SharedStore> HexagonGame<S> {
             assets,
             config,
             audio,
-            replay_store,
             script_host,
             joystick,
             cosmetic_rng,
             window,
             renderer,
-            on_death_replay_created: std::sync::RwLock::new(None),
             fn_go_to_menu: std::sync::RwLock::new(None),
             est: ReentrantMutex::new(est),
         }))
@@ -678,15 +604,15 @@ impl<S: SharedStore> HexagonGame<S> {
     // client branches are their null-gated headless forms)
     // ------------------------------------------------------------------
 
-    /// C++ `newGame(mPackId, mId, mFirstPlay, mDifficultyMult,
-    /// mExecuteLastReplay)`.
+    /// C++ `newGame(mPackId, mId, mFirstPlay, mDifficultyMult)` — the C++'s
+    /// `mExecuteLastReplay` argument was retired by plan 002 issue 02c2
+    /// with the replay removal.
     pub fn new_game(
         &self,
         m_pack_id: &str,
         m_id: &str,
         m_first_play: bool,
         m_difficulty_mult: f32,
-        m_execute_last_replay: bool,
     ) {
         // 030b fingerprint (additive-only): the frame counter is per-game
         // (see .agents/plans/001-rust-port/parity/
@@ -696,11 +622,6 @@ impl<S: SharedStore> HexagonGame<S> {
             let mut e = self.est();
             e.fingerprint_frame = 0;
             e.fingerprint_last_draws = 0;
-        }
-
-        // C++: save replay when restarting without having died.
-        if !m_first_play {
-            self.save_replay();
         }
 
         debug_assert!(self.0.assets.is_valid_pack_id(m_pack_id));
@@ -713,16 +634,7 @@ impl<S: SharedStore> HexagonGame<S> {
         e.pack_id = m_pack_id.to_string();
         e.level_id = m_id.to_string();
 
-        if m_execute_last_replay {
-            // C++ `replayPlayer.isActive()` — the active replay's firstPlay
-            // wins; otherwise the argument.
-            g.first_play = e
-                .active_replay
-                .as_ref()
-                .map_or(m_first_play, |ar| ar.replay_file.first_play);
-        } else {
-            g.first_play = m_first_play;
-        }
+        g.first_play = m_first_play;
 
         let level_data = self
             .0
@@ -733,76 +645,12 @@ impl<S: SharedStore> HexagonGame<S> {
 
         g.difficulty_mult = m_difficulty_mult;
 
-        let temp_replay_score = get_replay_score(&g.status);
         // C++ `status = HexagonGameStatus{};`
         g.status = HexagonGameStatus::new();
 
-        if !m_execute_last_replay {
-            // C++ `rng = initializeRng();` — a fresh `pcg32_fast`-seeded
-            // `random_number_generator` per non-replay game (see
-            // `initialize_rng`).
-            g.rng = initialize_rng();
-            e.last_seed = g.rng.seed();
-            e.last_replay_data = ReplayData::default();
-            e.last_first_play = m_first_play;
-            e.active_replay = None;
-        } else {
-            if e.active_replay.is_none() {
-                e.last_played_score = temp_replay_score;
-                // C++ `assets.getCurrentLocalProfile().getName()` — the
-                // profiles seam was retired by plan 002 issue 02c1 (no
-                // local profile exists in the tiny runtime), so the
-                // replay's `playerName` is the neutral empty string
-                // (the C++'s `no_profile`-equivalent headless state).
-                let rf_name = String::new();
-                e.active_replay = Some(ActiveReplay::new(ReplayFile {
-                    version: 0,
-                    player_name: rf_name.into(),
-                    seed: e.last_seed,
-                    data: e.last_replay_data.clone(),
-                    pack_id: m_pack_id.into(),
-                    level_id: m_id.into(),
-                    first_play: e.last_first_play,
-                    difficulty_mult: m_difficulty_mult,
-                    played_score: e.last_played_score,
-                }));
-            }
-            e.active_replay.as_mut().expect("active_replay").reset();
-
-            debug_assert!(self.0.assets.is_valid_pack_id(m_pack_id));
-            e.active_replay
-                .as_mut()
-                .expect("active_replay")
-                .replay_pack_name = to_uppercase(
-                self.0
-                    .assets
-                    .get_pack_data(m_pack_id)
-                    .expect("SSVOH_ASSERT(assets.isValidPackId(mPackId))")
-                    .name
-                    .clone(),
-            );
-            e.active_replay
-                .as_mut()
-                .expect("active_replay")
-                .replay_level_name =
-                to_uppercase(e.level_data.as_ref().expect("level_data").name.clone());
-
-            // C++ `rng = random_number_generator{activeReplay->replayFile._seed};`
-            g.rng = RandomNumberGenerator::new(
-                e.active_replay
-                    .as_ref()
-                    .expect("active_replay")
-                    .replay_file
-                    .seed,
-            );
-            g.first_play = e
-                .active_replay
-                .as_ref()
-                .expect("active_replay")
-                .replay_file
-                .first_play;
-        }
-
+        // C++ `rng = initializeRng();` — a fresh `pcg32_fast`-seeded
+        // `random_number_generator` per game (see `initialize_rng`).
+        g.rng = initialize_rng();
         // C++ audio cleanup block: `if(window && audio)` — audio never
         // starts in headless; ported for windowed compositions.
         if self.0.window {
@@ -942,23 +790,24 @@ impl<S: SharedStore> HexagonGame<S> {
         g.status.pulse_delay += g.level_status.pulse_initial_delay;
         g.status.beat_pulse_delay += g.level_status.beat_pulse_initial_delay;
 
-        // C++ `newGame`'s "Prepare text for input hints on restart/
-        // replay" (HexagonGame.cpp:758-821) — VERBATIM, window-gated
-        // (`window != nullptr`): `getKeyboardBindNames(Tid::Restart/Replay)`
-        // (:763-764), trimmed to the FIRST key (the `find(',')` +
-        // `erase(commaPos)` half — "to avoid extremely long messages";
-        // a comma at position 0 is NOT erased, the C++ `commaPos > 0`
-        // gate), then `getJoystickBindName(Jid::Restart/Replay)` (:781/
-        // :801) — the vendor-aware button name (the C++ reads
+        // C++ `newGame`'s "Prepare text for input hints on restart/"
+        // replay (HexagonGame.cpp:758-821) — the RESTART half, VERBATIM,
+        // window-gated (`window != nullptr`):
+        // `getKeyboardBindNames(Tid::Restart)` (:763), trimmed to the FIRST
+        // key (the `find(',')` + `erase(commaPos)` half — "to avoid
+        // extremely long messages"; a comma at position 0 is NOT erased,
+        // the C++ `commaPos > 0` gate), then `getJoystickBindName(Jid::
+        // Restart)` (:781) — the vendor-aware button name (the C++ reads
         // `isConnected(0) ? getIdentification(0).vendorId : 0` INSIDE the
         // call, Config.cpp:1577-1581; the port's seam takes the `vendor_id`
         // as a parameter — the `Joystick` seam's `vendor_id()`, 29j1,
-        // `NoJoystick` = 0 = the C++'s not-connected read). Headless
-        // leaves both strings empty, exactly like the C++.
+        // `NoJoystick` = 0 = the C++'s not-connected read). The C++'s
+        // replay-input hint half was retired by plan 002 issue 02c2 with
+        // the replay removal. Headless leaves the string empty, exactly
+        // like the C++.
         if self.0.window {
             let cfg = self.config();
             let mut restart_input = cfg.get_keyboard_bind_names(oh_config::Tid::Restart);
-            let mut replay_input = cfg.get_keyboard_bind_names(oh_config::Tid::Replay);
 
             // C++ `status.restartInput.find(',')` — `std::string::find`
             // returns `npos` (= -1 as `int`) when absent; the port's
@@ -966,11 +815,6 @@ impl<S: SharedStore> HexagonGame<S> {
             if let Some(comma_pos) = restart_input.find(',') {
                 if comma_pos > 0 {
                     restart_input.truncate(comma_pos);
-                }
-            }
-            if let Some(comma_pos) = replay_input.find(',') {
-                if comma_pos > 0 {
-                    replay_input.truncate(comma_pos);
                 }
             }
 
@@ -988,33 +832,17 @@ impl<S: SharedStore> HexagonGame<S> {
                 g.status.restart_input = "NO RESTART BUTTON SET\n".to_string();
             }
 
-            let joystick_button =
-                cfg.get_joystick_bind_name(oh_config::Jid::Replay, self.0.joystick.vendor_id());
-            if !replay_input.is_empty() {
-                if !joystick_button.is_empty() {
-                    replay_input.push_str(" OR JOYSTICK ");
-                    replay_input.push_str(&joystick_button);
-                }
-                g.status.replay_input = format!("PRESS {replay_input} TO REPLAY\n");
-            } else if !joystick_button.is_empty() {
-                g.status.replay_input = format!("PRESS JOYSTICK {joystick_button} TO REPLAY\n");
-            } else {
-                g.status.replay_input = "NO REPLAY BUTTON SET\n".to_string();
-            }
-
             // issue 039 (F31) — the Android hint half: the touch
-            // affordance's names (the overlay's `Restart` / `Replay`
-            // buttons — the button LABEL is the input name, the desktop
-            // bind names' `Space` / `Y` are unreachable on a touch-only
-            // device; the C++'s default bind table carries no Android
-            // `#if`, so this override is the documented deviation,
-            // F31). Cfg-scoped: the desktop strings above stay the
-            // C++ verbatim (the host test `restart_replay_hints` pins
-            // them).
+            // affordance's name (the overlay's `Restart` button — the
+            // button LABEL is the input name, the desktop bind name's
+            // `Space` is unreachable on a touch-only device; the C++'s
+            // default bind table carries no Android `#if`, so this
+            // override is the documented deviation, F31). Cfg-scoped:
+            // the desktop string above stays the C++ verbatim (the host
+            // test `restart_replay_hints` pins it).
             #[cfg(target_os = "android")]
             {
                 g.status.restart_input = "PRESS RESTART TO RESTART\n".to_string();
-                g.status.replay_input = "PRESS REPLAY TO REPLAY\n".to_string();
             }
         }
     }
@@ -1200,7 +1028,8 @@ impl<S: SharedStore> HexagonGame<S> {
     // ------------------------------------------------------------------
 
     /// C++ `death(mForce)` (verbatim; window/audio/client branches are
-    /// their null-gated forms).
+    /// their null-gated forms; the C++'s replay-creation branch was
+    /// retired by plan 002 issue 02c2 with the replay removal).
     pub fn death(&self, m_force: bool) {
         {
             let g = self.st();
@@ -1232,22 +1061,9 @@ impl<S: SharedStore> HexagonGame<S> {
 
         self.st().status.has_died = true;
 
-        if !self.in_replay() {
-            let rf = self.death_create_replay_file();
-            // C++ `if(onDeathReplayCreated) onDeathReplayCreated(rf);`
-            if let Some(cb) = &*self
-                .0
-                .on_death_replay_created
-                .read()
-                .expect("on_death_replay_created poisoned")
-            {
-                cb(&rf);
-            }
-            // C++ HexagonGame.cpp:980 — `ssvu::lo("Replay") <<
-            // "Attempting to send and save replay...\n"`.
-            self.log("Replay", "Attempting to send and save replay...\n");
-            self.death_send_and_save_replay(&rf);
-        }
+        // C++ `if(!inReplay()) { createReplayFile(); ... }` — the entire
+        // replay-creation branch was retired by plan 002 issue 02c2 with
+        // the replay removal.
 
         // C++ `if(window && Config::getAutoRestart())`.
         if self.0.window && self.config().get_auto_restart() {
@@ -1279,124 +1095,9 @@ impl<S: SharedStore> HexagonGame<S> {
         self.st().status.flash_effect = 255.0;
     }
 
-    /// C++ `death_createReplayFile()` (verbatim).
-    fn death_create_replay_file(&self) -> ReplayFile {
-        // C++ `no_profile` fallback — the profiles seam was retired by
-        // plan 002 issue 02c1 (no local profile exists in the tiny
-        // runtime), so the replay's `playerName` is always the C++'s
-        // no-active-profile spelling.
-        let rf_name = "no_profile".to_string();
-        let g = self.st();
-        let e = self.est();
-        ReplayFile {
-            version: 0,
-            player_name: rf_name.into(),
-            seed: e.last_seed,
-            data: e.last_replay_data.clone(),
-            pack_id: e.pack_id.clone().into(),
-            level_id: e.level_id.clone().into(),
-            first_play: g.first_play,
-            difficulty_mult: g.difficulty_mult,
-            played_score: get_replay_score(&g.status),
-        }
-    }
-
-    /// C++ `death_sendAndSaveReplay(rf)` (verbatim; the server-send half
-    /// always fails headless: `hexagonClient == nullptr`).
-    fn death_send_and_save_replay(&self, rf: &ReplayFile) {
-        let Some(crf) = compress_replay_file(rf) else {
-            self.log(
-                "Replay",
-                "Failed to compress replay, will not save to file or send to server\n",
-            );
-            return;
-        };
-
-        // C++ send half: `death_sendReplay(levelValidator, crf)` —
-        // `hexagonClient == nullptr` -> `return false` ->
-        // "Failure sending replay".
-        let _level_validator =
-            get_level_validator(&rf.level_id.to_string_lossy(), rf.difficulty_mult);
-        self.log("Replay", "Failure sending replay\n");
-
-        // C++ save half.
-        let mut dir_path = format!(
-            "Replays/{}/{}x/",
-            rf.level_id,
-            self.diff_format(rf.difficulty_mult)
-        );
-        let mut filename = rf.create_filename() + ".z";
-        // C++ `for(const char c : {':', '*', '?', '"', '<', '>', '|'})
-        // replace(...)`.
-        for c in [':', '*', '?', '"', '<', '>', '|'] {
-            dir_path = dir_path.replace(c, "_");
-            filename = filename.replace(c, "_");
-        }
-        if !self.0.replay_store.save(&dir_path, &filename, &crf) {
-            self.log("Replay", "Failure saving replay\n");
-        }
-    }
-
     // ------------------------------------------------------------------
-    // Replay record / playback (HexagonGame.cpp:467 / 1100ff, verbatim)
+    // Hooks (callbacks / test flags / fingerprint)
     // ------------------------------------------------------------------
-
-    /// C++ `setLastReplay(mReplayFile)` (verbatim).
-    pub fn set_last_replay(&self, m_replay_file: ReplayFile) {
-        let mut e = self.est();
-        e.last_seed = m_replay_file.seed;
-        e.last_replay_data = m_replay_file.data.clone();
-        e.last_first_play = m_replay_file.first_play;
-        e.last_played_score = m_replay_file.played_score;
-
-        e.active_replay = Some(ActiveReplay::new(m_replay_file));
-    }
-
-    /// C++ `inReplay()`.
-    #[must_use]
-    pub fn in_replay(&self) -> bool {
-        self.est().active_replay.is_some()
-    }
-
-    /// C++ `mustReplayInput()`.
-    #[must_use]
-    pub fn must_replay_input(&self) -> bool {
-        let e = self.est();
-        e.active_replay.as_ref().is_some_and(|ar| !ar.done())
-    }
-
-    /// C++ `mustShowReplayUI()`.
-    #[must_use]
-    pub fn must_show_replay_ui(&self) -> bool {
-        self.in_replay()
-    }
-
-    /// The active replay file (for tests; C++ exposes it via the member).
-    #[must_use]
-    pub fn active_replay_file(&self) -> Option<ReplayFile> {
-        self.est()
-            .active_replay
-            .as_ref()
-            .map(|ar| ar.replay_file.clone())
-    }
-
-    /// `lastReplayData` (the recorded input so far; test hook).
-    #[must_use]
-    pub fn last_replay_data(&self) -> ReplayData {
-        self.est().last_replay_data.clone()
-    }
-
-    /// The C++ `onDeathReplayCreated` test hook.
-    pub fn set_on_death_replay_created(
-        &self,
-        cb: Arc<dyn Fn(&ReplayFile) + Send + Sync + 'static>,
-    ) {
-        *self
-            .0
-            .on_death_replay_created
-            .write()
-            .expect("on_death_replay_created poisoned") = Some(cb);
-    }
 
     /// C++ `hg.fnGoToMenu = ...` (main.cpp:456-462) — the app-level
     /// "back to menu" callback, invoked at the tail of [`Self::go_to_menu`]
@@ -1500,45 +1201,16 @@ impl<S: SharedStore> HexagonGame<S> {
         })
     }
 
-    /// C++ `runReplayUntilDeathAndGetScore(mReplayFile, maxProcessingSeconds,
-    /// timescale)` (verbatim).
-    #[must_use]
-    pub fn run_replay_until_death_and_get_score(
-        &self,
-        m_replay_file: &ReplayFile,
-        max_processing_seconds: i32,
-        timescale: f32,
-    ) -> Option<GameExecutionResult> {
-        debug_assert!(self
-            .0
-            .assets
-            .is_valid_pack_id(&m_replay_file.pack_id.to_string_lossy()));
-        debug_assert!(self
-            .0
-            .assets
-            .is_valid_level_id(&m_replay_file.level_id.to_string_lossy()));
-
-        self.set_last_replay(m_replay_file.clone());
-
-        self.new_game(
-            &m_replay_file.pack_id.to_string_lossy(),
-            &m_replay_file.level_id.to_string_lossy(),
-            m_replay_file.first_play,
-            m_replay_file.difficulty_mult,
-            true, /* mExecuteLastReplay */
-        );
-
-        self.execute_game_until_death(max_processing_seconds, timescale)
-    }
-
     // ------------------------------------------------------------------
-    // goToMenu / saveReplay / invalidateScore / addMessage (verbatim)
+    // goToMenu / invalidateScore / addMessage (verbatim)
     // ------------------------------------------------------------------
 
     /// C++ `goToMenu(mSendScores, mError)` (verbatim; `fnGoToMenu` is the
     /// app-level callback and is unset in this port — the C++ guard
-    /// `if(fnGoToMenu)` skips it).
-    pub fn go_to_menu(&self, m_send_scores: bool, m_error: bool) {
+    /// `if(fnGoToMenu)` skips it). The C++'s `mSendScores`
+    /// `saveReplay()` call was retired by plan 002 issue 02c2 with the
+    /// replay removal.
+    pub fn go_to_menu(&self, _m_send_scores: bool, m_error: bool) {
         if !self.0.window {
             self.log(
                 "hg::HexagonGame::goToMenu",
@@ -1557,9 +1229,8 @@ impl<S: SharedStore> HexagonGame<S> {
             self.play_sound_override("beep.ogg");
         }
 
-        if m_send_scores && !m_error {
-            self.save_replay();
-        }
+        // C++ `if(mSendScores && !mError) saveReplay();` — retired by
+        // plan 002 issue 02c2 with the replay removal.
 
         // Stop infinite feedback from occurring if the error is happening on
         // onUnload.
@@ -1581,19 +1252,6 @@ impl<S: SharedStore> HexagonGame<S> {
             .clone()
         {
             cb(m_error);
-        }
-    }
-
-    /// C++ `saveReplay()` — the C++ body's `shouldSaveScore()` gate was
-    /// the official-score/PB-eligibility check (retired with the profiles
-    /// seam, plan 002 issue 02c1); the surviving halves are its
-    /// in-replay reject (`inReplay` stays until 02c2) and the
-    /// `!hasDied` conjunct.
-    pub fn save_replay(&self) {
-        if !self.in_replay() && !self.st().status.has_died {
-            let rf = self.death_create_replay_file();
-            self.log("Replay", "Attempting to send and save replay...\n");
-            self.death_send_and_save_replay(&rf);
         }
     }
 
@@ -1827,12 +1485,6 @@ impl<S: SharedStore> HexagonGame<S> {
     // ------------------------------------------------------------------
     // Misc getters (HexagonGame.cpp, verbatim)
     // ------------------------------------------------------------------
-
-    /// C++ `getReplayScore` accessor (the file-local `get_replay_score`).
-    #[must_use]
-    pub fn get_replay_score(&self) -> f64 {
-        get_replay_score(&self.st().status)
-    }
 
     /// C++ `getPackId()` — `levelData->packId`.
     #[must_use]
@@ -2142,9 +1794,10 @@ impl<S: SharedStore> HexagonGame<S> {
         self.est().input_swap = value;
     }
 
-    /// C++ `inputImplCCW` (test access — the replay-leak check: live input
-    /// sets this even during a replay; `update_input` must not read it
-    /// then, `must_replay_input` branch).
+    /// C++ `inputImplCCW` (test access). The C++'s replay-leak check (live
+    /// input sets this even during a replay, which `updateInput` must not
+    /// read — the C++'s `mustReplayInput` branch) left with the replay
+    /// removal (plan 002 issue 02c2); the accessor stays as a test hook.
     #[must_use]
     pub fn get_input_impl_ccw(&self) -> bool {
         self.est().input_impl_ccw
@@ -2181,18 +1834,6 @@ impl<S: SharedStore> HexagonGame<S> {
         }
     }
 
-    /// C++ `Tid::Replay` body (`HexagonGame.cpp:399-407`).
-    pub fn trigger_replay(&self) {
-        let (ignore, has_died) = {
-            let g = self.st();
-            let e = self.est();
-            (e.death_input_ignore, g.status.has_died)
-        };
-        if (ignore <= 0.0_f32 && has_died) || self.in_replay() {
-            self.st().status.must_state_change = StateChange::MustReplay;
-        }
-    }
-
     /// C++ `Tid::Screenshot` body (`HexagonGame.cpp:409-410`):
     /// `mustTakeScreenshot = true` (consumed by the windowed `draw()`).
     pub fn trigger_screenshot(&self) {
@@ -2202,7 +1843,8 @@ impl<S: SharedStore> HexagonGame<S> {
     /// C++ hardcoded-Escape / `Tid::Exit` bind body
     /// (`HexagonGame.cpp:379-383`): `goToMenu()` — the default-argument
     /// call `goToMenu(true /*mSendScores*/, false /*mError*/)`
-    /// (HexagonGame.hpp:417).
+    /// (HexagonGame.hpp:417). The `mSendScores` argument's `saveReplay()`
+    /// half was retired by plan 002 issue 02c2 with the replay removal.
     pub fn trigger_go_to_menu(&self) {
         self.go_to_menu(true, false);
     }
@@ -2463,14 +2105,6 @@ impl<S: SharedStore> HexagonGame<S> {
     // verbatim)
     // ------------------------------------------------------------------
 
-    /// C++ `diffFormat(diff)` — `snprintf("%g")`: the C default 6-digit
-    /// general format, which the codebase's oracle-pinned ostream
-    /// formatter reproduces (mapping/oracle-vectors.md, format probe).
-    #[must_use]
-    pub(crate) fn diff_format(&self, diff: f32) -> String {
-        format_ostream_f64(diff as f64)
-    }
-
     /// C++ `formatTime(x)` (HGGraphics.cpp file-local) —
     /// `ssvu::toStr(std::floor(x * 1000) / 1000.f)`: floor the *product*,
     /// then divide (double / the float literal 1000.f promoted to double).
@@ -2505,16 +2139,6 @@ impl<S: SharedStore> HexagonGame<S> {
     }
 }
 
-/// C++ file-local `getReplayScore(status)` (HexagonGame.cpp:50, verbatim).
-#[must_use]
-pub(crate) fn get_replay_score(status: &HexagonGameStatus) -> f64 {
-    if status.get_custom_score() != 0.0_f32 {
-        status.get_custom_score() as f64
-    } else {
-        status.get_played_accumulated_frametime()
-    }
-}
-
 /// C++ `initializeRng()` (HexagonGame.cpp:55, ported): a fresh
 /// `random_number_generator` seeded by ONE 32-bit draw of a thread-local
 /// `pcg32_fast`.
@@ -2522,8 +2146,7 @@ pub(crate) fn get_replay_score(status: &HexagonGameStatus) -> f64 {
 /// The C++ seeds that thread-local engine with
 /// `seed_seq_from<std::random_device>` (4 random u32s); the port seeds
 /// from process entropy (`entropy_seed`) — both are non-deterministic by
-/// design (this only seeds *live* games; replays always re-seed from the
-/// recorded `lastSeed`).
+/// design.
 fn initialize_rng() -> RandomNumberGenerator {
     thread_local! {
         static SEED_RNG: std::cell::Cell<Pcg32Fast> =
@@ -2694,11 +2317,6 @@ impl<S: SharedStore> crate::GameApi for HexagonGame<S> {
         if let Some(c) = self.est().background_camera.as_mut() {
             c.set_rotation(value);
         }
-    }
-
-    // -- replay -------------------------------------------------------------
-    fn in_replay(&self) -> bool {
-        HexagonGame::in_replay(self)
     }
 
     // -- error exit ----------------------------------------------------------

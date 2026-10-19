@@ -26,7 +26,7 @@ use oh_config::joystick;
 use oh_config::{Button, Combo, Config, Jid, JoystickPoll, Key, Tid, MAX_BINDS};
 use oh_game::hexagon_game::HexagonGame;
 use oh_game::lua_state::SharedState;
-use oh_game::seams::{NoJoystick, NoScriptHost, NullReplayStore, PcgCosmeticRng};
+use oh_game::seams::{NoJoystick, NoScriptHost, PcgCosmeticRng};
 
 fn release_dir() -> std::path::PathBuf {
     let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
@@ -92,7 +92,6 @@ fn game_ctor_runs_the_cpp_keyboard_sanity_and_joystick_bind_load() {
             oh_assets::Assets::new(release_dir(), true, true).expect("_RELEASE loads headless"),
         ),
         None, // C++ `audio == nullptr`
-        Arc::new(NullReplayStore),
         Arc::new(NoScriptHost),
         Arc::new(NoJoystick),
         Arc::new(PcgCosmeticRng::new()),

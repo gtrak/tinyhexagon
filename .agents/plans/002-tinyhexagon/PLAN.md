@@ -1,6 +1,6 @@
 # 002 — tinyhexagon
 
-Status: APPROVED (execution in progress; issues 000–001, 02a, 02b and 02c1 landed 2026-10-19; 02c2 next)
+Status: APPROVED (execution in progress; issues 000–001, 02a, 02b, 02c1 and 02c2 landed 2026-10-19; 02c3 next)
 Owner: operator; orchestrator: this session
 Plan file: `.agents/plans/002-tinyhexagon/PLAN.md`
 Issues: `00-*.md` … `09-*.md` in this folder
@@ -137,8 +137,8 @@ web `th-web` emscripten bin. All use the same `th-render`/`bridge` path.
 | 02a | Strip `oh-app` to a headless library; draw target; web fullscreen; android/web stubs | 01 | LANDED |
 | 02b | Remove retired front-end/online crates (menu, menu-system, additions, net, steam, server-control, workshop-uploader) | 02a | LANDED |
 | 02c1 | Remove Steam/Discord/profiles/PB; remove `oh-discord` | 02b | LANDED |
-| 02c2 | Remove replay; remove `oh-replay`; bridge replay UI/tests | 02c1 | PROPOSED |
-| 02c3 | Remove parity fingerprint/RNG; final engine cleanup | 02c2 | PROPOSED |
+| 02c2 | Remove replay; remove `oh-replay`; bridge replay UI/tests | 02c1 | LANDED |
+| 02c3 | Remove parity fingerprint/RNG; remove `oh-render` replay/PB fields; final engine cleanup | 02c2 | PROPOSED |
 | 03 | Rename `oh-` → `th-`; rename artifacts | 02c3 | PROPOSED |
 | 04 | Engine kid alterations (soft collision, difficulty, beat, text, gaps) | 03 | PROPOSED |
 | 05 | `th-synth` cross-target spike + music director | 03 | PROPOSED |

@@ -3,7 +3,6 @@ resolver = "2"
 members = [
     "crates/oh-math",
     "crates/oh-rng",
-    "crates/oh-replay",
     "crates/oh-data",
     "crates/oh-config",
     "crates/oh-lua",
@@ -16,27 +15,22 @@ members = [
     "crates/oh-web",
 ]
 # Later issues add workspace members as they land (PLAN.md architecture
-# table): oh-timeline, oh-replay, oh-data, oh-config, oh-assets, oh-lua,
-# oh-game, oh-audio, oh-render, oh-app. (The Discord crate was removed by plan 002 issue 02c1.)
+# table): oh-timeline, oh-data, oh-config, oh-assets, oh-lua,
+# oh-game, oh-audio, oh-render, oh-app. (The Discord crate was removed by
+# plan 002 issue 02c1; the replay crate was removed by issue 02c2.)
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
 
-# Pinned for later issues (issue 02: flate2; issues 03+: serde, serde_json,
-# thiserror). Resolved workspace-wide; harmless while unused.
+# Pinned for later issues (issues 03+: serde, serde_json, thiserror).
+# Resolved workspace-wide; harmless while unused. (The flate2 + tempfile
+# pins were the replay crate's (issue 02) and left with it — plan 002
+# issue 02c2.)
 [workspace.dependencies]
-# flate2 on its `zlib` feature (system libz via libz-sys), NOT the default
-# miniz_oxide rust backend: the replay CZHEX oracle pin requires the *same
-# deflate implementation as the C++ build (system zlib `compress2`, level 9)
-# — see DECISIONS.md D-006 and .agents/skills/lib-flate2.md.
-flate2 = { version = "1", default-features = false, features = ["zlib"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-# tempfile — test-only (oh-replay's 29m1 bounded-read test needs an
-# isolated on-disk file; see crates/oh-replay/Cargo.toml).
-tempfile = "3"
 
 # Profile tuning is finalized by issue 22 (builds/CI); issue 24 pins the
 # release profile to the C++ release build's settings.

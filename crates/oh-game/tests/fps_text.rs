@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use oh_config::TIME_STEP;
 use oh_game::renderer::Renderer;
-use oh_game::seams::{NoJoystick, NullReplayStore, PcgCosmeticRng};
+use oh_game::seams::{NoJoystick, PcgCosmeticRng};
 
 /// The exact pack/level ids the C++ test names (the same ids as
 /// `oh-game`'s `tests/determinism.rs`).
@@ -60,7 +60,6 @@ fn windowed_with_fps(fps: f32) -> (common::Composed, Arc<AtomicU32>) {
         common::release_dir(),
         true,
         Some(renderer),
-        Arc::new(NullReplayStore),
         Arc::new(NoJoystick),
         Arc::new(PcgCosmeticRng::new()),
     );
@@ -82,7 +81,7 @@ fn fps_text_is_the_live_window_fps_in_ostream_float_format() {
         .expect("config poisoned")
         .set_show_fps(true);
 
-    c.game.new_game(PACK, LEVEL, true, 1.0, false);
+    c.game.new_game(PACK, LEVEL, true, 1.0);
     // The C++'s per-tick `updateText` (HGUpdate.cpp:384).
     c.game.update(TIME_STEP, 1.0);
     assert_eq!(
@@ -113,7 +112,7 @@ fn fps_text_before_the_first_run_fps_is_zero() {
         .expect("config poisoned")
         .set_show_fps(true);
 
-    c.game.new_game(PACK, LEVEL, true, 1.0, false);
+    c.game.new_game(PACK, LEVEL, true, 1.0);
     c.game.update(TIME_STEP, 1.0);
     assert_eq!(c.game.fps_text(), "0");
 }
@@ -127,7 +126,7 @@ fn fps_text_gate_off_keeps_the_ctor_empty_string() {
     let (c, _slot) = windowed_with_fps(59.9342);
     // `Config::default` — showFPS off.
 
-    c.game.new_game(PACK, LEVEL, true, 1.0, false);
+    c.game.new_game(PACK, LEVEL, true, 1.0);
     c.game.update(TIME_STEP, 1.0);
     assert_eq!(c.game.fps_text(), "");
 }

@@ -960,18 +960,12 @@ mod tests {
             status_text: String::new(),
             fps_text: String::new(),
             time_text: String::new(),
-            replay_text: String::new(),
             must_change_sides: false,
             must_start: false,
             must_take_screenshot: false,
             input_focused: false,
             input_swap: false,
             death_input_ignore: 0.0,
-            active_replay: None,
-            last_seed: 0,
-            last_replay_data: oh_replay::ReplayData::default(),
-            last_first_play: false,
-            last_played_score: 0.0,
             restart_id: String::new(),
             restart_first_time: true,
             input_impl_last_movement: 0,
@@ -1931,7 +1925,7 @@ mod tests {
 
     use crate::hexagon_game::HexagonGame;
     use crate::lua_state::ReentrantMutex;
-    use crate::seams::{NoJoystick, NullReplayStore, PcgCosmeticRng};
+    use crate::seams::{NoJoystick, PcgCosmeticRng};
 
     /// A bare headless engine (no Lua host: `NoScriptHost` stands in the
     /// C++ engine's always-present `Lua::LuaContext`).
@@ -1947,7 +1941,6 @@ mod tests {
             config,
             Arc::new(assets),
             None,
-            Arc::new(NullReplayStore),
             host,
             Arc::new(NoJoystick),
             Arc::new(PcgCosmeticRng::new()),

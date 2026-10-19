@@ -26,7 +26,6 @@ oh-assets = { path = "../oh-assets" }
 # the comment marks for `ssvu::lo` / `std::exit` in the handler). Transitively
 # present (signal-hook's dep); a direct dep for the `write(2)` call.
 libc = "0.2"
-oh-replay = { path = "../oh-replay" }
 oh-rng = { path = "../oh-rng" }
 # The real audio is on EVERY target: the `oh_render::audio::AudioDevice`
 # seam picks the backend per target (rodio on desktop/Android, emscripten's

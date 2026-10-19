@@ -61,7 +61,7 @@ use std::sync::{Arc, RwLock};
 use oh_app::compose::compose_with_config;
 use oh_app::draw_target::{AssetsPackShaderProvider, GlDrawTarget};
 use oh_config::{Config, TIME_STEP};
-use oh_game::seams::{NoJoystick, NullReplayStore};
+use oh_game::seams::NoJoystick;
 use oh_render::gl::GlBackend;
 use oh_render::graphics::DrawTarget;
 use oh_render::pack_shaders::{PackShaderProgram, PackShaderSnapshot};
@@ -135,11 +135,9 @@ fn composed_pointless(
         config,
         None, // renderer
         None, // audio
-        Arc::new(NullReplayStore),
         Arc::new(NoJoystick),
     );
-    c.game
-        .new_game(ARTWORK_PACK, ARTWORK_POINTLESS, true, 1.0, false);
+    c.game.new_game(ARTWORK_PACK, ARTWORK_POINTLESS, true, 1.0);
     c.game.set_must_start(true);
     for _ in 0..30 {
         c.game.update(TIME_STEP, 1.0);

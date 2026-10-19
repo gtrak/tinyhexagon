@@ -1,6 +1,6 @@
 # Issue 02 — Remove retired crates; de-scope the engine
 
-**Status:** PARTIAL — 02a/02b/02c1 LANDED; 02c2/02c3 pending
+**Status:** PARTIAL — 02a/02b/02c1/02c2 LANDED; 02c3 pending
 **Depends:** 01
 
 **Execution split (2026-10-19):** this issue is executed as **02a** (strip

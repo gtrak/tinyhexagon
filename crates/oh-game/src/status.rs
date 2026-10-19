@@ -7,12 +7,12 @@
 
 use crate::clock::HRTimePoint;
 
-/// `hg::StateChange`.
+/// `hg::StateChange` (the C++ `MustReplay` variant was retired by plan 002
+/// issue 02c2 with the replay removal).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StateChange {
     None,
     MustRestart,
-    MustReplay,
 }
 
 /// `hg::RenderStage` (used to size `fragmentShaderIds`; `Count == 9`).
@@ -69,7 +69,6 @@ pub struct HexagonGameStatus {
     pub invalid_reason: String,
     pub started: bool,
     pub restart_input: String,
-    pub replay_input: String,
     pub show_player_trail: bool,
     pub fragment_shader_ids: [Option<u64>; 9],
 }
@@ -105,7 +104,6 @@ impl Default for HexagonGameStatus {
             invalid_reason: String::new(),
             started: false,
             restart_input: String::new(),
-            replay_input: String::new(),
             show_player_trail: true,
             fragment_shader_ids: [None; 9],
         }

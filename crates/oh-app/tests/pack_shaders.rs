@@ -35,7 +35,7 @@ use std::sync::{Arc, RwLock};
 
 use oh_assets::{ShaderType, UniformValue};
 use oh_config::{Config, TIME_STEP};
-use oh_game::seams::{NoJoystick, NullReplayStore};
+use oh_game::seams::NoJoystick;
 
 use common::{compose, release_dir};
 
@@ -71,7 +71,7 @@ fn run_level(
     frames: u32,
 ) -> common::Composed {
     let c = compose(assets.clone(), release_dir(), true);
-    c.game.new_game(pack, level, true, 1.0, false);
+    c.game.new_game(pack, level, true, 1.0);
     c.game.set_must_start(true);
     for _ in 0..frames {
         c.game.update(TIME_STEP, 1.0);
@@ -230,16 +230,10 @@ fn shaders_required_invalidates_the_score_only_when_shaders_are_off() {
             config,
             None, /* renderer */
             None, /* audio */
-            Arc::new(NullReplayStore),
             Arc::new(NoJoystick),
         );
-        c.game.new_game(
-            EXPERIMENTAL_PACK,
-            EXPERIMENTAL_SHADERS_REQUIRED,
-            true,
-            1.0,
-            false,
-        );
+        c.game
+            .new_game(EXPERIMENTAL_PACK, EXPERIMENTAL_SHADERS_REQUIRED, true, 1.0);
         c.game.set_must_start(true);
         for _ in 0..10 {
             c.game.update(TIME_STEP, 1.0);
@@ -413,8 +407,7 @@ fn headless_load_registers_no_shaders_and_the_lua_path_is_a_noop() {
         let a = assets.clone();
         let r = release_dir();
         let c = compose(a, r, false);
-        c.game
-            .new_game(ARTWORK_PACK, ARTWORK_POINTLESS, true, 1.0, false);
+        c.game.new_game(ARTWORK_PACK, ARTWORK_POINTLESS, true, 1.0);
         c.game.set_must_start(true);
         for _ in 0..5 {
             c.game.update(TIME_STEP, 1.0);

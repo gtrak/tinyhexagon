@@ -106,14 +106,11 @@ fn callback_firing_order_matches_cpp_call_sites() {
         "testport_tester_ordering_1_seq",
         true,
         1.0,
-        false,
     );
-    let (score, rf) = common::run_live_to_death(&c.game);
+    // The C++ test's replay-recording half (the `rf.data.size() >= 5`
+    // check) was retired by plan 002 issue 02c2 with the replay removal.
+    let score = common::execute_game_until_death(&c.game).played_time_seconds;
     assert!(score > 0.0, "the e_kill event must have killed the player");
-    assert!(
-        rf.data.size() >= 5,
-        "the replay recorded the pre-kill input frames"
-    );
 
     // Read back the recorded first-fire order from the Lua context.
     let order: Vec<String> = c

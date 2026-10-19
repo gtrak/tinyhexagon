@@ -7,9 +7,6 @@
 //! app-level issue, or a test) implements:
 //!
 //! * [`Audio`] — C++ `Audio* audio` (nullable).
-//! * [`ReplayStore`] — C++ `death_saveReplay`'s `Replays/<levelId>/<diff>x/`
-//!   file write (the C++ server-send half always fails headless:
-//!   `hexagonClient == nullptr`).
 //! * [`ScriptHost`] — the C++ `Lua::LuaContext` callback surface
 //!   (`runLuaFunctionIfExists`/`readVariable`/`doesVariableExist`/
 //!   `runLuaFile`/`initLua`); the composition wires it to `oh-lua`
@@ -28,7 +25,6 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use oh_replay::CompressedReplayFile;
 use oh_rng::{uniform_int, uniform_real, Pcg32Fast};
 
 use crate::lua_state::ReentrantMutex;
@@ -80,26 +76,6 @@ impl Audio for NoAudio {
         false
     }
     fn set_current_music_pitch(&self, _: f32) {}
-}
-
-/// C++ `death_saveReplay`'s filesystem half: write the compressed replay
-/// bytes to `<dir_path>/<filename>` via `std::filesystem::create_directories`
-/// and `crf.serialize_to_file`. The C++ server-send half (`death_sendReplay`)
-/// requires `hexagonClient`, which is `nullptr` in every headless path and
-/// is not a seam of this issue — the engine logs the same
-/// "Failure sending replay" message the C++ produces for a null client.
-pub trait ReplayStore: Send + Sync + 'static {
-    /// Returns C++ `crf.serialize_to_file(p)`'s success flag.
-    fn save(&self, dir_path: &str, filename: &str, crf: &CompressedReplayFile) -> bool;
-}
-
-/// In-memory no-op store (always "succeeds"; nothing is written).
-pub struct NullReplayStore;
-
-impl ReplayStore for NullReplayStore {
-    fn save(&self, _: &str, _: &str, _: &CompressedReplayFile) -> bool {
-        true
-    }
 }
 
 /// The C++ `Lua::LuaContext` callback surface the update loop and lifecycle

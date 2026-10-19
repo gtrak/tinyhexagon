@@ -33,7 +33,7 @@ const LEVEL: &str = "ohvrvanilla_vittorio_romeo_cube_1_apeirogon";
 fn draw_is_a_no_op_without_a_window() {
     let assets = load_release();
     let c = compose(assets, release_dir(), false);
-    c.game.new_game(PACK, LEVEL, true, 1.0, false);
+    c.game.new_game(PACK, LEVEL, true, 1.0);
 
     let (font, font_bold) = test_fonts();
     let mut app = oh_app::bridge::AppDraw::new(
@@ -70,42 +70,12 @@ fn bind_all_stages(game: &oh_game::hexagon_game::HexagonGame<oh_lua::api::state:
     ];
 }
 
-/// The `alwaysSpinRight` replay stream — the C++ test's policy pinned by
-/// `oh-game`'s `tests/determinism.rs`: CW-only bits (bit 1 = right →
-/// byte `0x02`). Built directly instead of live-run-captured: the C++
-/// `ReplayExecution` flow is `live run → replay file →
-/// runReplayUntilDeathAndGetScore(rf)`; the bridge test needs the second
-/// phase (the replay path `setLastReplay` + `newGame(executeLastReplay)`,
-/// which is what makes the seed — and therefore the whole run —
-/// identical across engines). A constructed `rf` pins that seed exactly
-/// (`seed 0`) without a wall-clock-budgeted live run (the C++ `1s`
-/// processing budget is a safety net, not a behavior pin — the oh-game
-/// determinism harness owns the live phase).
-#[must_use]
-fn always_spin_right_replay() -> oh_replay::ReplayFile {
-    let mut data = oh_replay::ReplayData::default();
-    // 3000 ticks = 50 s of game time — far past the first wall arrival
-    // (walls spawn at the 1600 unit spawn distance; the player sits at
-    // ~75 units); the run stops at death regardless.
-    for _ in 0..3000 {
-        data.record_input(false, true, false, false);
-    }
-    oh_replay::ReplayFile {
-        version: 0,
-        player_name: "player".into(),
-        seed: 0,
-        data,
-        pack_id: PACK.into(),
-        level_id: LEVEL.into(),
-        first_play: true,
-        difficulty_mult: 1.0,
-        played_score: 0.0,
-    }
-}
-
 /// The full-frame bridge test (spec: "real composition … run a few ticks
-/// like `tests/determinism.rs` does"): TWO fresh WINDOWED engines replay
-/// the same `alwaysSpinRight` stream (seed 0) to death — a few ticks per
+/// like `tests/determinism.rs` does"): TWO fresh WINDOWED engines run the
+/// SAME live game (`alwaysSpinRight` input + the game stream pinned to
+/// seed 0 directly through `state_handle()` — the C++'s
+/// `runReplayUntilDeathAndGetScore` seed injection was retired by plan 002
+/// issue 02c2 with the replay removal) to death — a few ticks per
 /// `TIME_STEP`, the level's `.lua` running for real — and draw one frame
 /// each. Asserts:
 ///
@@ -120,29 +90,24 @@ fn always_spin_right_replay() -> oh_replay::ReplayFile {
 ///    the `screenshot.png` save and the engine flag is cleared.
 #[test]
 fn full_frame_passes_cpp_order_and_is_deterministic() {
+    const SEED: u64 = 0;
     let assets = load_release();
     let root = release_dir();
-    let rf = always_spin_right_replay();
 
-    // ---- runs A + B (windowed replays): draw one frame each -----------
+    // ---- runs A + B (windowed live runs): draw one frame each ----------
     let mut recordings = Vec::new();
     let mut wall_vertex_counts = Vec::new();
     for _ in 0..2 {
         let c = compose(assets.clone(), root.clone(), true);
-        // C++ `runReplayUntilDeathAndGetScore`'s first two steps:
-        // `setLastReplay(rf)` + `newGame(..., executeLastReplay = true)`.
-        c.game.set_last_replay(rf.clone());
-        c.game.new_game(
-            &rf.pack_id.to_string_lossy(),
-            &rf.level_id.to_string_lossy(),
-            rf.first_play,
-            rf.difficulty_mult,
-            true,
-        );
+        // The C++'s `setLastReplay(rf)` + `newGame(..., executeLastReplay
+        // = true)` seed injection is retired (plan 002 issue 02c2); the
+        // equivalent is a direct `st.rng` overwrite after `new_game`.
+        c.game.new_game(PACK, LEVEL, true, 1.0);
+        c.game.state_handle().lock().rng = oh_rng::RandomNumberGenerator::new(SEED);
+        c.game.set_always_spin_right(true);
         // A few ticks like the determinism harness (C++
         // `executeGameUntilDeath`'s loop body: `update` + `post_update`),
-        // to death. The replay input (CW every tick) auto-starts the game
-        // (the C++ `HGUpdate.cpp:650-658` `mustStart = true` branch).
+        // to death.
         for _ in 0..3000 {
             if c.game.get_status().has_died {
                 break;
@@ -152,7 +117,7 @@ fn full_frame_passes_cpp_order_and_is_deterministic() {
         }
         assert!(
             c.game.get_status().has_died,
-            "the replay run must end at death within the stream"
+            "the live run must end at death within the frame budget"
         );
 
         // Every stage gets a distinct shader id → the per-stage states in
@@ -261,7 +226,7 @@ fn full_frame_passes_cpp_order_and_is_deterministic() {
 fn on_render_stage_fires_per_stage_with_frametime() {
     let assets = load_release();
     let c = compose(assets, release_dir(), true);
-    c.game.new_game(PACK, LEVEL, true, 1.0, false);
+    c.game.new_game(PACK, LEVEL, true, 1.0);
     c.game.set_must_start(true);
     // A few ticks like the determinism harness (the level's `onUpdate`
     // runs for real; walls spawn).
@@ -327,7 +292,7 @@ fn on_render_stage_fires_per_stage_with_frametime() {
 fn on_render_stage_first_frame_frametime_is_the_cpp_inf() {
     let assets = load_release();
     let c = compose(assets, release_dir(), true);
-    c.game.new_game(PACK, LEVEL, true, 1.0, false);
+    c.game.new_game(PACK, LEVEL, true, 1.0);
     c.game.set_must_start(true);
     for _ in 0..20 {
         c.game.update(TIME_STEP, 1.0);
@@ -391,7 +356,7 @@ fn on_render_stage_first_frame_frametime_is_the_cpp_inf() {
 fn the_bridge_applies_the_per_frame_text_sizes_and_origins() {
     let assets = load_release();
     let c = compose(assets, release_dir(), true);
-    c.game.new_game(PACK, LEVEL, true, 1.0, false);
+    c.game.new_game(PACK, LEVEL, true, 1.0);
     c.game.set_must_start(true);
     // A live message (the C++ `e_messageAdd` → `messageText.setString`):
     // the origin assertion needs a non-empty message string.
@@ -438,23 +403,28 @@ fn the_bridge_applies_the_per_frame_text_sizes_and_origins() {
         st.message_text.get_origin().x > 0.0,
         "the message text is centred (the C++'s getGlobalWidth/2 origin, :567 — the ctor left it at (0, 0))"
     );
-    // showFPS off (Config::default) + no replay UI → the fps / replay
-    // texts keep their ctor sizes (the C++'s `getShowFPS()` /
-    // `mustShowReplayUI()` gates, :560-564 / :574-598).
+    // showFPS off (Config::default) + no replay UI (the C++'s
+    // `mustShowReplayUI()` gate, :574-598 — always false post-replay
+    // removal, plan 002 issue 02c2) → the fps / replay texts keep their
+    // ctor sizes (the C++'s `getShowFPS()` / `mustShowReplayUI()` gates,
+    // :560-564 / :574-598).
     assert_eq!(st.fps_text.get_character_size(), 19);
     assert_eq!(st.replay_text.get_character_size(), 15);
 }
 
 // ---------------------------------------------------------------------
 // 029e1 (the graphics audit's M1): the HUD icon + particle textures must
-// be the real `Assets/*.png` decodes — the pre-fix port drew all five
-// key/replay icons and every PB/trail/swap particle from
-// `Texture::new()`'s 1×1 white pixel (a `sf::Texture` default), where
-// the C++ assigns the asset registry's textures: `initKeyIcons`'s
+// be the real `Assets/*.png` decodes — the pre-fix port drew all four
+// key icons and every PB/trail/swap particle from `Texture::new()`'s
+// 1×1 white pixel (a `sf::Texture` default), where the C++ assigns the
+// asset registry's textures: `initKeyIcons`'s
 // `getTextureOrNullTexture` loop + `setSmooth(true)`
 // (`HexagonGame.cpp:87-107`, called from the ctor `:453` and
 // `onRecreation` `:339`) and the ctor window branch's
-// `txStarParticle` / `txSmallCircle` (`:324-325`).
+// `txStarParticle` / `txSmallCircle` (`:324-325`). The C++'s
+// `replayIcon.png` load left with the replay removal (plan 002 issue
+// 02c2) — the render `replay_icon` field stays inert until the 02c3
+// sweep.
 // ---------------------------------------------------------------------
 
 /// The six textures are the REAL `Assets/` PNGs (their on-disk
@@ -472,9 +442,8 @@ fn app_draw_loads_the_real_hud_and_particle_textures() {
     );
     let st = app.state();
     // The four key icons: `keyArrow.png` (64×64) on BOTH left and right
-    // (`HexagonGame.cpp:102-103`), `keyFocus.png` / `keySwap.png` (64×64),
-    // `replayIcon.png` (128×128) — the C++'s `setSmooth(true)`
-    // (`HexagonGame.cpp:96-100`).
+    // (`HexagonGame.cpp:102-103`), `keyFocus.png` / `keySwap.png` (64×64)
+    // — the C++'s `setSmooth(true)` (`HexagonGame.cpp:96-100`).
     for (name, icon) in [
         ("key_icon_left", st.key_icon_left.get_texture()),
         ("key_icon_right", st.key_icon_right.get_texture()),
@@ -488,9 +457,9 @@ fn app_draw_loads_the_real_hud_and_particle_textures() {
         );
         assert!(icon.is_smooth(), "{name} carries the C++ setSmooth(true)");
     }
-    let replay = st.replay_icon.get_texture();
-    assert_eq!(replay.get_size(), (128, 128), "replayIcon.png is 128×128");
-    assert!(replay.is_smooth());
+    // (The C++'s `replayIcon.png` (128×128, smoothed) assertion left with
+    // the replay removal, plan 002 issue 02c2 — the `replay_icon` field
+    // now carries the neutral `Texture::new()` until 02c3 sweeps it.)
 
     // The particle textures (the ctor window branch, `:324-325`) — NOT
     // smoothed (the C++ smooths only the four icon textures).
@@ -529,10 +498,12 @@ fn app_draw_missing_assets_fall_back_to_the_cpp_null_textures() {
         st.key_icon_right.get_texture(),
         st.key_icon_focus.get_texture(),
         st.key_icon_swap.get_texture(),
-        st.replay_icon.get_texture(),
     ] {
         assert_eq!(icon.get_size(), (1, 1), "the nullTexture is 1×1");
     }
+    // The `replay_icon` field is the neutral `Texture::new()` (inert
+    // since the replay removal, plan 002 issue 02c2) — 1×1 either way.
+    assert_eq!(st.replay_icon.get_texture().get_size(), (1, 1));
     assert_eq!(app.tx_star_particle().get_size(), (1, 1));
     assert_eq!(app.tx_small_circle().get_size(), (1, 1));
 }

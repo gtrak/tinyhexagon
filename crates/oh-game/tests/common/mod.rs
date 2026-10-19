@@ -47,7 +47,7 @@
 //! re-executed script observes the same fresh state the C++ fresh context
 //! would. Chunk-local Lua state is the one difference (it survives a
 //! re-`newGame` here) — no shipped level relies on chunk locals persisting
-//! or resetting in a way the replay property (D-018) observes.
+//! or resetting in a way a live-run test observes.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -57,16 +57,12 @@ use oh_config::Config;
 use oh_data::{MusicData, PackData, StyleData};
 use oh_game::hexagon_game::HexagonGame;
 use oh_game::lua_state::{GameApi, ReentrantMutex};
-use oh_game::seams::{
-    CosmeticRng, Joystick, NoJoystick, NullReplayStore, PcgCosmeticRng, ReplayStore, ScriptError,
-    ScriptHost,
-};
+use oh_game::seams::{CosmeticRng, Joystick, NoJoystick, PcgCosmeticRng, ScriptError, ScriptHost};
 use oh_game::{HexagonGameStatus, LevelStatus};
 use oh_lua::api::callbacks;
 use oh_lua::api::state::{AssetsApi, GameApiState, RunLuaFile, SharedLua};
 use oh_lua::api::{init_level_api, init_lua_api, State};
 use oh_lua::{LuaContext, LuaError};
-use oh_replay::ReplayFile;
 use oh_rng::RandomNumberGenerator;
 
 /// The `HGAssets` lookups the 007 lambdas perform, backed by the real
@@ -463,38 +459,35 @@ pub fn capture_go_to_menu(game: &HexagonGame<GameApiState>) -> Arc<std::sync::Mu
 
 /// Builds the composition for one engine instance (C++ test: one
 /// `HexagonGame` per `doTest` call, all sharing one `HGAssets`), with the
-/// C++ test's seam defaults: `NullReplayStore`, `NoJoystick` (see
-/// [`compose_with`] for the parameterized form, used by the issue 029m
-/// 29d1 `go_to_menu` score-send tests).
+/// C++ test's seam defaults: `NoJoystick` (see [`compose_with`] for the
+/// parameterized form, used by the issue 029m 29d1 `go_to_menu`
+/// score-send tests).
 ///
-/// `window` mirrors the C++ `mGameWindow != nullptr` (the replay tests pass
-/// a null window in the headless loop); `root` is the process-CWD
-/// equivalent the level-script paths resolve against.
+/// `window` mirrors the C++ `mGameWindow != nullptr` (the headless tests
+/// pass a null window); `root` is the process-CWD equivalent the
+/// level-script paths resolve against.
 #[allow(dead_code)]
-#[allow(clippy::too_many_arguments)]
 pub fn compose(assets: Arc<oh_assets::Assets>, root: PathBuf, window: bool) -> Composed {
     compose_with(
         assets,
         root,
         window,
-        Arc::new(NullReplayStore),
         Arc::new(NoJoystick),
         Arc::new(PcgCosmeticRng::new()),
     )
 }
 
-/// [`compose`] with injectable `ReplayStore` / `Joystick` / `CosmeticRng`
-/// seams — the form tests that observe the engine's cosmetic-RNG draw
-/// order use (the PB particle test was retired in 02c1). `window` / `root` mean the same as
-/// in [`compose`]. `allow(dead_code)`: each test binary compiles this
-/// module separately and not all of them use this parameterized variant.
+/// [`compose`] with injectable `Joystick` / `CosmeticRng` seams — the
+/// form tests that observe the engine's cosmetic-RNG draw order use (the
+/// PB particle test was retired in 02c1). `window` / `root` mean the
+/// same as in [`compose`]. `allow(dead_code)`: each test binary compiles
+/// this module separately and not all of them use this parameterized
+/// variant.
 #[allow(dead_code)]
-#[allow(clippy::too_many_arguments)]
 pub fn compose_with(
     assets: Arc<oh_assets::Assets>,
     root: PathBuf,
     window: bool,
-    replay_store: Arc<dyn ReplayStore>,
     joystick: Arc<dyn Joystick>,
     cosmetic_rng: Arc<dyn CosmeticRng>,
 ) -> Composed {
@@ -503,7 +496,6 @@ pub fn compose_with(
         root,
         window,
         None, // C++ headless tests: no renderer
-        replay_store,
         joystick,
         cosmetic_rng,
     )
@@ -516,13 +508,11 @@ pub fn compose_with(
 /// `allow(dead_code)`: each test binary compiles this module separately
 /// and not all of them use this parameterized variant.
 #[allow(dead_code)]
-#[allow(clippy::too_many_arguments)]
 pub fn compose_with_renderer(
     assets: Arc<oh_assets::Assets>,
     root: PathBuf,
     window: bool,
     renderer: Option<Arc<dyn oh_game::renderer::Renderer>>,
-    replay_store: Arc<dyn ReplayStore>,
     joystick: Arc<dyn Joystick>,
     cosmetic_rng: Arc<dyn CosmeticRng>,
 ) -> Composed {
@@ -532,7 +522,6 @@ pub fn compose_with_renderer(
         window,
         Arc::new(RwLock::new(Config::default())),
         renderer,
-        replay_store,
         joystick,
         cosmetic_rng,
     )
@@ -544,14 +533,12 @@ pub fn compose_with_renderer(
 /// tests need specific `t_*` / `j_*` bind values; the C++'s default
 /// config is `compose_with_renderer`'s `Config::default()`).
 #[allow(dead_code)]
-#[allow(clippy::too_many_arguments)]
 pub fn compose_with_config(
     assets: Arc<oh_assets::Assets>,
     root: PathBuf,
     window: bool,
     config: Arc<RwLock<Config>>,
     renderer: Option<Arc<dyn oh_game::renderer::Renderer>>,
-    replay_store: Arc<dyn ReplayStore>,
     joystick: Arc<dyn Joystick>,
     cosmetic_rng: Arc<dyn CosmeticRng>,
 ) -> Composed {
@@ -565,7 +552,6 @@ pub fn compose_with_config(
         config.clone(),
         assets.clone(),
         None, // C++ `audio == nullptr`
-        replay_store,
         host.clone() as Arc<dyn ScriptHost>,
         joystick,
         cosmetic_rng,
@@ -640,27 +626,16 @@ pub fn release_dir() -> PathBuf {
 }
 
 /// Runs one engine to death (C++ `executeGameUntilDeath(1, 1.f)`) and
-/// returns the C++ test's `(playedTimeSeconds, replay_file)` pair.
-/// `allow(dead_code)`: each test binary compiles this module separately and
-/// not all of them drive a live run.
+/// returns the C++ test's `playedTimeSeconds`. The C++'s `replay_file`
+/// half of the returned pair was retired by plan 002 issue 02c2 with the
+/// replay removal. `allow(dead_code)`: each test binary compiles this
+/// module separately and not all of them drive a live run.
 #[must_use]
 #[allow(dead_code)]
-pub fn run_live_to_death(game: &HexagonGame<GameApiState>) -> (f64, ReplayFile) {
-    let captured: std::sync::Arc<std::sync::Mutex<Option<ReplayFile>>> =
-        std::sync::Arc::new(std::sync::Mutex::new(None));
-    let cap = captured.clone();
-    game.set_on_death_replay_created(std::sync::Arc::new(move |rf: &ReplayFile| {
-        *cap.lock().expect("replay capture poisoned") = Some(rf.clone());
-    }));
-
+pub fn execute_game_until_death(
+    game: &HexagonGame<GameApiState>,
+) -> oh_game::hexagon_game::GameExecutionResult {
     game.set_must_start(true);
-    let result = game
-        .execute_game_until_death(1, 1.0)
-        .expect("live run exceeded the C++ 1-second processing budget");
-    let rf = captured
-        .lock()
-        .expect("replay capture poisoned")
-        .take()
-        .expect("on_death_replay_created never fired (in_replay was true?)");
-    (result.played_time_seconds, rf)
+    game.execute_game_until_death(1, 1.0)
+        .expect("live run exceeded the C++ 1-second processing budget")
 }

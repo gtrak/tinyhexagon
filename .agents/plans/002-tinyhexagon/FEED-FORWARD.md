@@ -282,14 +282,57 @@ re-reading the whole history.
   regenerated (`oh-discord` entry gone). Host-only again (no
   emscripten/android toolchains on this box — 08 re-checks the targets).
 
-### 02 — crate removal / engine de-scope (02c1 LANDED; 02c2/02c3 pending)
+### 02c2 — replay (LANDED)
+
+- Removed `oh-replay` (crate + root member + `oh-game`/`oh-app` deps;
+  35 tests) and the replay surface: `ReplayStore`/`NullReplayStore`/
+  `CompressedReplayFile`, `ReplayFile`/`ReplayData`/`ActiveReplay`, the
+  replay cursor/`last_replay_data`/`last_first_play`/`last_played_score`/
+  `active_replay`/`replay_store`, `set_last_replay`/`in_replay`/
+  `must_replay_input`/`must_show_replay_ui`/`save_replay`/
+  `death_create_replay_file`/`death_send_and_save_replay`, the `update.rs`
+  replay input/recording branches, `lua_console` replay state,
+  `GameApi::in_replay`, and `new_game`'s `execute_last_replay`.
+- Final signatures:
+  `HexagonGame::new(config, assets, audio, script_host, joystick,
+  cosmetic_rng, window, renderer)` (8 args; `replay_store` gone);
+  `new_game(pack_id, id, first_play, difficulty_mult)`;
+  `compose_with(assets, root, window)` and
+  `compose_with_config(assets, root, window, config, renderer, audio,
+  joystick)` (7 args; `replay_store` gone).
+- Fingerprint: the 030b path stays for 02c3; its replay-sourced
+  `last_played_score` byte was removed (off-by-default parity debug only).
+- Replay UI: engine side gone; `oh-render` `DrawState` still carries
+  `replay_icon`/`replay_text`/`must_show_replay_ui`, and `bridge.rs` keeps
+  the corresponding inert initializers (`must_show_replay_ui: false`) — the
+  02c3 render sweep removes both, like the PB fields.
+- Tests: 552 → 511 passed (35 `oh-replay` + 2 `go_to_menu_score` + 4
+  replay-determinism); `oh-app/tests/bridge.rs` keeps 7 tests and injects
+  `SEED = 0` directly into `state_handle().rng` for its two live runs; no
+  surviving assertion weakened. Two basis notes: the D-019 determinism
+  survivor is now self-consistent (direct seed) rather than
+  C++-oracle-verified; the live `go_to_menu`/`send_scores` path keeps no test
+  after its replay-store instrument was deleted — 02c3/07 decides remove vs.
+  a non-replay assertion.
+- `flate2`/`tempfile` workspace pins removed (only `oh-replay` used them);
+  `Cargo.lock` regenerated.
+- Gate 4/4 green (orchestrator re-ran; worker timed out after the gate while
+  writing the report).
+- For 02c3: remove the `oh-render` replay + PB `DrawState` fields, the
+  `bridge.rs` inert initializers (`replay_icon`/`replay_text`/`pb_text`/
+  `pb_text_growth`/`must_show_replay_ui: false`), the fingerprint/RNG path,
+  and the replay/PB/steam doc residue.
+
+### 02 — crate removal / engine de-scope (02c1/02c2 LANDED; 02c3 pending)
 
 - 02c2 (remove replay; remove `oh-replay`): see §02c1's "For 02c2"
   note — the replay surface, `GameApi::in_replay` and the
   replay-name fallbacks are 02c2's removal list.
 - 02c3 (remove the parity fingerprint/RNG + final engine cleanup):
-  fingerprint path + `oh-render` `DrawState` PB fields + the two inert
-  `bridge.rs` initializers + the doc residue (see §02c1).
+  fingerprint path + the `oh-render` `DrawState` replay AND PB fields +
+  the inert `bridge.rs` initializers (`replay_icon`/`replay_text`/
+  `pb_text`/`pb_text_growth`/`must_show_replay_ui: false`) + the doc
+  residue (see §02c1/§02c2).
 - `draw_target.rs` API / `th-app` keep-list: landed in 02a/02b (see
   those sections); the composition signatures moved again in 02c1 (see
   §02c1).

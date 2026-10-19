@@ -13,11 +13,18 @@
 //!
 //! Windowed presentation (particles, cameras, key icons, level info, text)
 //! is gated on the constructor's `window: bool` exactly like the C++
-//! `window != nullptr` checks; the C++ `ReplayExecution` tests run with a
-//! null window, and this issue's tests do the same.
+//! `window != nullptr` checks; this issue's tests run with a null window,
+//! exactly like the C++'s execution tests.
 
 use std::time::SystemTime;
 
+use crate::hexagon_game::{
+    EngineState, HexagonGame, Particle, PreShakeCenters, SpriteState, SwapParticle,
+    SwapParticleSpawnInfo, TrailParticle,
+};
+use crate::lua_state::SharedStore;
+use crate::timeline::Outcome;
+use crate::{StateChange, Timeline2Runner};
 use oh_config::{Jdir, Jid, TIME_STEP};
 use oh_math::ssvs::{get_vec_from_rad, Vec2};
 use oh_math::ssvu::{get_clamped, get_sign};
@@ -28,15 +35,6 @@ use oh_math::{
     },
     FT,
 };
-use oh_replay::InputBits;
-
-use crate::hexagon_game::{
-    EngineState, HexagonGame, Particle, PreShakeCenters, SpriteState, SwapParticle,
-    SwapParticleSpawnInfo, TrailParticle,
-};
-use crate::lua_state::SharedStore;
-use crate::timeline::Outcome;
-use crate::{StateChange, Timeline2Runner};
 
 /// C++ `HexagonGame::centerPos` (`const sf::Vector2f{0.f, 0.f}` member).
 const CENTER_POS: Vec2 = Vec2::new(0.0, 0.0);
@@ -127,46 +125,25 @@ impl<S: SharedStore> HexagonGame<S> {
                 e.effect_timeline_manager.update(m_ft);
             }
 
-            if !self.must_replay_input() {
-                self.update_input();
-            } else {
-                // C++ `SSVOH_ASSERT(activeReplay.has_value())`.
-                if !self.st().status.started {
-                    // C++ `window->getTimerBase().reset()` — the port has no
-                    // window timer (windowed replay viewing is issue 10).
-                    self.est().must_start = true;
-                } else {
-                    let ib: InputBits = self
-                        .est()
-                        .active_replay
-                        .as_mut()
-                        .expect("activeReplay.has_value() (SSVOH_ASSERT)")
-                        .get_current_and_move_forward();
-
-                    {
-                        let mut e = self.est();
-                        e.input_movement = if ib.left() {
-                            -1
-                        } else if ib.right() {
-                            1
-                        } else {
-                            0
-                        };
-                        e.input_swap = ib.swap();
-                        e.input_focused = ib.focus();
-                    }
-                }
-            }
+            // C++ `if(!mustReplayInput()) updateInput(); else
+            // <replay playback>` — the replay-playback half was retired by
+            // plan 002 issue 02c2 with the replay removal (update input
+            // now runs unconditionally).
+            self.update_input();
 
             // --------------------------------------------------------------------
-            // Update key icons.
-            if self.config().get_show_key_icons() || self.must_show_replay_ui() {
+            // Update key icons. (The C++'s `|| mustShowReplayUI()`
+            // conjunct was retired by plan 002 issue 02c2 with the replay
+            // removal.)
+            if self.config().get_show_key_icons() {
                 self.update_key_icons();
             }
 
             // --------------------------------------------------------------------
-            // Update level info.
-            if self.config().get_show_level_info() || self.must_show_replay_ui() {
+            // Update level info. (The C++'s `|| mustShowReplayUI()`
+            // conjunct was retired by plan 002 issue 02c2 with the replay
+            // removal.)
+            if self.config().get_show_level_info() {
                 self.update_level_info();
             }
 
@@ -408,17 +385,17 @@ impl<S: SharedStore> HexagonGame<S> {
         self.update_text();
 
         if self.st().status.started {
+            // C++ `mustStateChange` — `MustReplay` was a third C++ variant
+            // (replay re-execution); it left with the replay removal
+            // (plan 002 issue 02c2), so only `MustRestart` remains.
             if self.st().status.must_state_change != StateChange::None {
-                let execute_last_replay =
-                    self.st().status.must_state_change == StateChange::MustReplay;
-
                 let restart_id = self.est().restart_id.clone();
                 let (pack_id, first_time, dm) = (
                     self.get_pack_id(),
                     self.est().restart_first_time,
                     self.st().difficulty_mult,
                 );
-                self.new_game(&pack_id, &restart_id, first_time, dm, execute_last_replay);
+                self.new_game(&pack_id, &restart_id, first_time, dm);
             }
 
             // TODO (P2): score invalidation due to performance
@@ -531,10 +508,11 @@ impl<S: SharedStore> HexagonGame<S> {
 
         // S7: the status booleans.
         b.u8(u8::from(g.status.has_died));
+        // The C++'s third arm (`MustReplay -> 2`) left with the replay
+        // removal (plan 002 issue 02c2).
         b.u8(match g.status.must_state_change {
             StateChange::None => 0,
             StateChange::MustRestart => 1,
-            StateChange::MustReplay => 2,
         });
         b.u8(u8::from(g.status.score_invalid));
         b.u8(u8::from(g.status.started));
@@ -554,8 +532,14 @@ impl<S: SharedStore> HexagonGame<S> {
         b.f32(g.level_status.rotation_speed);
 
         // S12/S13: the difficulty and the replay's recorded score.
+        // S13 was `e.last_played_score` (the last replayed game's
+        // played score, 0.0 for a live game); the replay removal
+        // (plan 002 issue 02c2) retired the field, so the slot carries
+        // the neutral constant 0.0. 02c3 owns the fingerprint schema:
+        // keep the slot (no renumbering / re-hashing) even though the
+        // value is now constant.
         b.f32(g.difficulty_mult);
-        b.f64(e.last_played_score);
+        b.f64(0.0);
 
         // S14: the entity counts.
         b.u32(e.particles.len() as u32);
@@ -767,7 +751,8 @@ impl<S: SharedStore> HexagonGame<S> {
         }
 
         self.update_input_resolve_input_impl_to_input_movement();
-        self.update_input_record_current_input_to_last_replay_data();
+        // C++ `updateInput_RecordCurrentInputToLastReplayData()` — retired
+        // by plan 002 issue 02c2 with the replay removal.
     }
 
     /// C++ `updateInput_UpdateJoystickControls()` (verbatim; the windowed
@@ -808,9 +793,10 @@ impl<S: SharedStore> HexagonGame<S> {
             || (self.st().status.has_died && self.0.joystick.rising_edge_id(Jid::Restart))
         {
             self.st().status.must_state_change = StateChange::MustRestart;
-        } else if self.st().status.has_died && self.0.joystick.rising_edge_id(Jid::Replay) {
-            self.st().status.must_state_change = StateChange::MustReplay;
         }
+        // C++'s `else if (hasDied && risingEdge(Jid::Replay)) ->
+        // MustReplay` arm was retired by plan 002 issue 02c2 with the
+        // replay removal.
     }
 
     /// C++ `updateInput_UpdateTouchControls()` (verbatim; the finger
@@ -868,30 +854,6 @@ impl<S: SharedStore> HexagonGame<S> {
 
         e.input_impl_last_movement = 0;
         e.input_movement = e.input_impl_last_movement;
-    }
-
-    /// C++ `updateInput_RecordCurrentInputToLastReplayData()` (verbatim).
-    fn update_input_record_current_input_to_last_replay_data(&self) {
-        let (started, has_died, left, right, swap, focus) = {
-            let g = self.st();
-            let e = self.est();
-            (
-                g.status.started,
-                g.status.has_died,
-                e.input_movement == -1,
-                e.input_movement == 1,
-                e.input_swap,
-                e.input_focused,
-            )
-        };
-
-        if !started || has_died {
-            return;
-        }
-
-        self.est()
-            .last_replay_data
-            .record_input(left, right, swap, focus);
     }
 
     /// C++ `updateEvents(mFT)` (verbatim).
@@ -1457,7 +1419,9 @@ impl<S: SharedStore> HexagonGame<S> {
 
                 if g.status.has_died {
                     os.push_str(&g.status.restart_input);
-                    os.push_str(&g.status.replay_input);
+                    // The C++'s `os << status.replayInput;` line was
+                    // retired by plan 002 issue 02c2 with the replay
+                    // removal.
                 }
 
                 let n = g.called_deprecated_functions.len();
@@ -1539,26 +1503,8 @@ impl<S: SharedStore> HexagonGame<S> {
             self.est().fps_text = format_ostream_f32(fps);
         }
 
-        // --------------------------------------------------------------------
-        if self.must_show_replay_ui() {
-            let rf = self
-                .active_replay_file()
-                .expect("activeReplay (mustShowReplayUI)");
-            let mut ros = String::new();
-
-            if !self.st().level_status.score_overridden {
-                ros.push_str(&self.format_time(rf.played_seconds()));
-                ros.push('s');
-            } else {
-                ros.push_str(&self.format_time(rf.played_score));
-            }
-
-            ros.push_str(&format!(" BY {}", rf.player_name));
-
-            self.est().replay_text = ros;
-        } else {
-            self.est().replay_text.clear();
-        }
+        // C++'s `if(mustShowReplayUI()) { replayText... }` block was
+        // retired by plan 002 issue 02c2 with the replay removal.
 
         // C++ `text.setString(os.str())` — the status text content.
         self.est().status_text = os;
@@ -1598,12 +1544,6 @@ impl<S: SharedStore> HexagonGame<S> {
     #[must_use]
     pub fn time_text(&self) -> String {
         self.est().time_text.clone()
-    }
-
-    /// The C++ `replayText` content (test access).
-    #[must_use]
-    pub fn replay_text(&self) -> String {
-        self.est().replay_text.clone()
     }
 
     /// The C++ `fpsText` content (test access).

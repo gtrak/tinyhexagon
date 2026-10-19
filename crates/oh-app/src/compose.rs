@@ -51,7 +51,7 @@
 //! re-executed script observes the same fresh state the C++ fresh context
 //! would. Chunk-local Lua state is the one difference (it survives a
 //! re-`newGame` here) — no shipped level relies on chunk locals persisting
-//! or resetting in a way the replay property (D-018) observes.
+//! or resetting in a way a live-run test observes.
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -63,9 +63,7 @@ use oh_data::{MusicData, PackData, StyleData};
 use oh_game::hexagon_game::HexagonGame;
 use oh_game::lua_state::{GameApi, ReentrantMutex};
 use oh_game::renderer::Renderer;
-use oh_game::seams::{
-    Audio, NoJoystick, NullReplayStore, PcgCosmeticRng, ReplayStore, ScriptError, ScriptHost,
-};
+use oh_game::seams::{Audio, NoJoystick, PcgCosmeticRng, ScriptError, ScriptHost};
 use oh_game::{HexagonGameStatus, LevelStatus};
 use oh_lua::api::callbacks;
 use oh_lua::api::state::{AssetsApi, GameApiState, RunLuaFile, SharedLua};
@@ -499,9 +497,8 @@ pub fn compose_with(assets: Arc<oh_assets::Assets>, root: PathBuf, window: bool)
         root,
         window,
         Arc::new(RwLock::new(Config::default())),
-        None,                      // the headless composition's renderer (the C++'s `nullptr`)
-        None, // the headless composition's audio (the C++'s `audio == nullptr`)
-        Arc::new(NullReplayStore), // issue 029a1 — headless: disk-silent (the compose_with_config docs)
+        None,                 // the headless composition's renderer (the C++'s `nullptr`)
+        None,                 // the headless composition's audio (the C++'s `audio == nullptr`)
         Arc::new(NoJoystick), // 29j1 — the headless composition's joystick (the C++'s no-controller / headless state)
     )
 }
@@ -528,26 +525,16 @@ pub fn compose_with(assets: Arc<oh_assets::Assets>, root: PathBuf, window: bool)
 /// `oh_audio::Audio` (issue 025e); the headless/server composition passes
 /// `None` (the C++'s `audio == nullptr`).
 ///
-/// `replay_store` — the engine's `ReplayStore` seam (the C++
-/// `death_saveReplay`'s filesystem half, HexagonGame.cpp:1067-1097;
-/// issue 029a1): the retired WINDOWED composition passed the disk-backed
-/// `RealReplayStore` rooted at `root` (the C++'
-/// CWD — both windowed entries chdir to the game-data root before
-/// composing), so a death persists `Replays/<levelId>/<diff>x/<name>.z`;
-/// the headless client / server / print-lua-docs compositions keep
-/// `NullReplayStore` — the C++ headless modes never write a replay file
-/// (replay playback's `inReplay()` gates the save, HexagonGame.cpp:970 +
-/// `shouldSaveScore`'s rejects, :1178-1183/:1220-1227; the server's
-/// executor is the same `runReplayUntilDeathAndGetScore` path), so the
-/// no-op matches the C++ there (disk-silent) and keeps the headless
-/// determinism tests from writing files.
+/// (The engine's `ReplayStore` seam — issue 029a1's `replay_store`
+/// argument — was retired by plan 002 issue 02c2 with the replay
+/// removal; the C++'s `death_saveReplay`'s filesystem half no longer
+/// exists in the port.)
 ///
 /// `joystick` — the engine's `Joystick` seam (29j1): the WINDOWED
 /// desktop composition passes the shared `crate::joystick::RealJoystick`
 /// (the gilrs poller — the C++ `sf::Joystick` controller-0 read);
 /// the Android / wasm / headless compositions keep `NoJoystick` (the
 /// C++'s `isConnected(0) == false` / headless state).
-#[allow(clippy::too_many_arguments)]
 #[must_use]
 pub fn compose_with_config(
     assets: Arc<oh_assets::Assets>,
@@ -556,7 +543,6 @@ pub fn compose_with_config(
     config: Arc<RwLock<Config>>,
     renderer: Option<Arc<dyn Renderer + 'static>>,
     audio: Option<Arc<dyn Audio + 'static>>,
-    replay_store: Arc<dyn ReplayStore + 'static>,
     joystick: Arc<dyn oh_game::seams::Joystick + 'static>,
 ) -> Composed {
     // Heap-pinned before the `SharedLua` capture (see the `lua` field docs
@@ -569,7 +555,6 @@ pub fn compose_with_config(
         config.clone(),
         assets.clone(),
         audio, // C++ `Audio* audio` — `oh_audio::Audio` windowed; `None` headless (issue 025e)
-        replay_store, // issue 029a1 — the C++ `death_saveReplay`'s filesystem half (the fn docs)
         host.clone() as Arc<dyn ScriptHost>,
         joystick, // 29j1 — the C++ `Joystick` global's poller (the fn docs)
         Arc::new(PcgCosmeticRng::new()),

@@ -174,6 +174,10 @@ impl AppDraw {
             key_icon_right: Sprite::new(Texture::new()),
             key_icon_focus: Sprite::new(Texture::new()),
             key_icon_swap: Sprite::new(Texture::new()),
+            // (The `replay_icon` / `replay_text` inits stay inert — the
+            // replay removal, plan 002 issue 02c2, retired the C++'s
+            // replay UI on the engine side; the render `DrawState` fields
+            // themselves are swept in 02c3, as `pb_text`'s were in 02c1.)
             replay_icon: Sprite::new(Texture::new()),
             level_info_rectangle: RectangleShape::default(),
             // C++ `levelInfoTextLevel/Pack/Author/By/DM{"", font}`
@@ -189,6 +193,8 @@ impl AppDraw {
             fps_text: graphics::init_text(&font, "0", 25.0, zoom),
             time_text: graphics::init_text(&font_bold, "0", 70.0, zoom),
             text: graphics::init_text(&font, "", 25.0, zoom),
+            // C++ `replayText` (inert post-replay-removal — plan 002
+            // issue 02c2; the 02c3 render sweep owns the field).
             replay_text: graphics::init_text(&font, "", 20.0, zoom),
             message_text: graphics::init_text(&font, "", 38.0, zoom),
             // (The `pbText` init below stays at the C++ ctor's
@@ -204,11 +210,16 @@ impl AppDraw {
         // `getTextureOrNullTexture`, Assets.cpp:568-575: the 1×1 white
         // `nullTexture` when the file is missing; `init_key_icons` below
         // applies the C++'s `setSmooth(true)` to the four icon textures —
-        // NOT the particle textures, HexagonGame.cpp:324-325).
+        // NOT the particle textures, HexagonGame.cpp:324-325). The
+        // replay icon's PNG load was retired by plan 002 issue 02c2 with
+        // the replay removal: the icon is never drawn again, so the
+        // C++'s `getTextureOrNullTexture` (missing file → the 1×1 white
+        // `nullTexture`) is replaced by the plain neutral `Texture` —
+        // the `replay_icon` field itself is swept in 02c3.
         let mut key_arrow = load_texture_or_null(assets_dir, "keyArrow.png");
         let mut key_focus = load_texture_or_null(assets_dir, "keyFocus.png");
         let mut key_swap = load_texture_or_null(assets_dir, "keySwap.png");
-        let mut replay = load_texture_or_null(assets_dir, "replayIcon.png");
+        let mut replay = Texture::new();
         graphics::init_key_icons(
             &mut state.key_icon_left,
             &mut state.key_icon_right,
@@ -293,8 +304,9 @@ pub fn draw<S: SharedStore>(game: &HexagonGame<S>, app: &mut AppDraw, target: &m
     // drives these each frame with the same C++ gates. Both C++ methods
     // also carry their own `window == nullptr` return — already satisfied
     // by the guard above.
-    let must_show_replay_ui = game.must_show_replay_ui();
-    if game.config_ref().get_show_key_icons() || must_show_replay_ui {
+    // (The C++'s `|| mustShowReplayUI()` conjunct on both gates left
+    // with the replay removal — plan 002 issue 02c2.)
+    if game.config_ref().get_show_key_icons() {
         graphics::update_key_icons(
             &mut app.state.key_icon_left,
             &mut app.state.key_icon_right,
@@ -304,7 +316,7 @@ pub fn draw<S: SharedStore>(game: &HexagonGame<S>, app: &mut AppDraw, target: &m
             &game.config_ref(),
         );
     }
-    if game.config_ref().get_show_level_info() || must_show_replay_ui {
+    if game.config_ref().get_show_level_info() {
         // C++ `updateLevelInfo` (`HexagonGame.cpp:159-186`): offset color =
         // `Black` in B&W / empty colours, else `styleData.getColor(0)`;
         // outline = `styleData.getMainColor()` (the RAW style colour — NOT
@@ -393,7 +405,9 @@ pub fn draw<S: SharedStore>(game: &HexagonGame<S>, app: &mut AppDraw, target: &m
     app.state.fps_text.set_string(game.fps_text());
     app.state.time_text.set_string(game.time_text());
     app.state.text.set_string(game.status_text());
-    app.state.replay_text.set_string(game.replay_text());
+    // C++ `replayText` — always empty post-replay-removal (the C++'s
+    // `updateText` cleared it whenever `!mustShowReplayUI`).
+    app.state.replay_text.set_string("");
     app.state.message_text.set_string(game.message_text());
 
     // The per-frame character-size / origin half of the C++ `updateText`
@@ -410,7 +424,10 @@ pub fn draw<S: SharedStore>(game: &HexagonGame<S>, app: &mut AppDraw, target: &m
     // constructor values: empty text, growth 0; 02c3/09 sweeps it from
     // `oh-render`.)
     let config = game.config_ref();
-    oh_render::text_draw::update_text_sizes(&mut app.state, &config, must_show_replay_ui);
+    // `false` — the C++'s `mustShowReplayUI()` is always false post-replay
+    // removal (plan 002 issue 02c2); the `oh-render` parameter stays
+    // until the 02c3 render sweep.
+    oh_render::text_draw::update_text_sizes(&mut app.state, &config, false);
 
     // ------------------------------------------------------------------
     // The scene batches — the C++ `HGGraphics.cpp:127-146` fill
@@ -469,7 +486,10 @@ pub fn draw<S: SharedStore>(game: &HexagonGame<S>, app: &mut AppDraw, target: &m
         darken_uneven_background_chunk: level_status.darken_uneven_background_chunk,
         show_player_trail: status.show_player_trail,
         pulse3d: status.pulse_3d,
-        must_show_replay_ui,
+        // `false` — the C++'s `mustShowReplayUI()` is always false
+        // post-replay removal (plan 002 issue 02c2); the `FrameInput`
+        // field stays until the 02c3 render sweep.
+        must_show_replay_ui: false,
         must_take_screenshot: &mut must_take_screenshot,
         fps: app.fps,
         input_movement: game.get_input_movement(),

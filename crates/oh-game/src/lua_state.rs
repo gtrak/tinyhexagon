@@ -168,10 +168,6 @@ pub trait GameApi: Send + Sync {
     /// callers check `background_camera_rotation().is_some()` first).
     fn set_background_camera_rotation(&self, value: f32);
 
-    // -- replay -------------------------------------------------------------
-    /// C++ `HexagonGame::inReplay()`.
-    fn in_replay(&self) -> bool;
-
     // -- error exit ----------------------------------------------------------
     /// C++ `goToMenu(sendScores, mError)`.
     fn go_to_menu(&self, send_scores: bool, error: bool);
@@ -658,9 +654,6 @@ mod tests {
             None
         }
         fn set_background_camera_rotation(&self, _: f32) {}
-        fn in_replay(&self) -> bool {
-            false
-        }
         fn go_to_menu(&self, _: bool, _: bool) {}
     }
 

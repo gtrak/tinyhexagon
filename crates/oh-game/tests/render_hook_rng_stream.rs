@@ -24,12 +24,17 @@
 //!
 //! # The single-stream oracle
 //!
-//! `set_last_replay` + `new_game(executeLastReplay=true)` is the C++'s
-//! `rng = random_number_generator{replayFile._seed}` (`HexagonGame.cpp`:
-//! the port's `hexagon_game.rs` `new_game` replay branch) — a deterministic
-//! seed. The oracle is a fresh `RandomNumberGenerator::new(seed)` advanced
-//! by the EXACT wrapper-call sequence the engine consumes (hook `get_real`
-//! calls, the increment's side-selection `get_int`, and the per-frame
+//! `new_game` seeds the shared game RNG from process entropy
+//! (`initialize_rng`); the C++'s deterministic replay-seed injection
+//! (`set_last_replay` + `new_game(executeLastReplay=true)` →
+//! `rng = random_number_generator{replayFile._seed}`) left with the
+//! replay removal (plan 002 issue 02c2), so this test overwrites
+//! `st.rng` DIRECTLY through `state_handle()` with
+//! `RandomNumberGenerator::new(SEED)` after `new_game` — the same
+//! deterministic stream the oracle uses. The oracle is a fresh
+//! `RandomNumberGenerator::new(seed)` advanced by the EXACT wrapper-call
+//! sequence the engine consumes (hook `get_real` calls, the
+//! increment's side-selection `get_int`, and the per-frame
 //! `rng.advance(fixup(...))` blocks, `HGUpdate.cpp`:449-458 / port
 //! `update.rs`:400-411 — read from the engine's post-frame status values,
 //! the values the C++ block reads). Every wrapper call is one stream
@@ -56,7 +61,6 @@ use std::io::Write;
 use std::sync::Arc;
 
 use oh_config::TIME_STEP;
-use oh_replay::{ReplayData, ReplayFile};
 use oh_rng::{RandomNumberGenerator, Seed};
 
 /// The known replay seed (the C++'s `replayFile._seed` → `mRng`'s seed).
@@ -144,29 +148,6 @@ function onRenderStage(rs, ft) end
     );
 }
 
-/// The C++'s `replayFile` the run is seeded from (`setLastReplay` → the
-/// `newGame(executeLastReplay)` `rng = random_number_generator{_seed}`).
-/// The inputs are the determinism-pinned `alwaysSpinRight` stream (0x02 =
-/// right; mapping/oracle-vectors.md fixture 2) — 300 bytes cover the frame
-/// budget with margin.
-fn seeded_replay(level_id: &str) -> ReplayFile {
-    let mut data = ReplayData::default();
-    for _ in 0..300 {
-        data.record_input(false, true, false, false);
-    }
-    ReplayFile {
-        version: 0,
-        player_name: "tester".into(),
-        seed: SEED,
-        data,
-        pack_id: "testport_tester_k7_1".into(),
-        level_id: level_id.into(),
-        first_play: true,
-        difficulty_mult: 1.0,
-        played_score: 0.0,
-    }
-}
-
 /// One fully-composed engine over the synthetic pack (the issue-009 step (c)
 /// composition — the real `ScriptHost` over Luau, so `math.random` runs the
 /// C++'s redefinition through the shared state, exactly as the windowed
@@ -175,14 +156,11 @@ fn compose_level(level_id: &str, dir: &std::path::Path) -> common::Composed {
     let assets =
         Arc::new(oh_assets::Assets::new(dir, true, false).expect("synthetic pack loads headless"));
     let c = common::compose(assets, dir.to_path_buf(), false);
-    c.game.set_last_replay(seeded_replay(level_id));
-    c.game.new_game(
-        "testport_tester_k7_1",
-        level_id,
-        true,
-        1.0,
-        true, /* executeLastReplay: the C++'s `rng = random_number_generator{_seed}` */
-    );
+    c.game.new_game("testport_tester_k7_1", level_id, true, 1.0);
+    // The replay removal (plan 002 issue 02c2) retired the C++'s
+    // deterministic replay-seed injection; pin the game stream directly
+    // (the C++'s `rng = random_number_generator{_seed}` equivalent).
+    c.game.state_handle().lock().rng = RandomNumberGenerator::new(SEED);
     c
 }
 
@@ -250,8 +228,9 @@ fn drive_frames(
             .expect("l_getSides");
         let drew_side = sides_before != sides_after;
 
-        // The started frames (frame 2 on: the replay path's `mustStart`
-        // defers `start()` one frame, the C++'s `HGUpdate.cpp`:169-172)
+        // The started frames (frame 2 on: the port's `must_start` is set
+        // by frame 1's `update_input` and consumed at the top of frame 2's
+        // `update`, the C++'s `HGUpdate.cpp`:169-172 equivalent)
         // consume the frame's fixup advances; the side draw (increment
         // frame) consumed it BEFORE those advances (in-frame order above).
         if frame >= 2 {
@@ -301,9 +280,10 @@ fn render_hook_draw_advances_the_game_rng_stream() {
     // ------------------------------------------------------------------
     let c = compose_level("testport_tester_k7_1_seq", &dir);
 
-    // `new_game(executeLastReplay)` re-seeded the shared game RNG from the
-    // replay seed (the C++'s `rng = random_number_generator{_seed}`) and
-    // made no gameplay draws (the level's `onInit` is `l_set*` only).
+    // `new_game` + the direct `st.rng` overwrite left the shared game RNG
+    // freshly seeded from SEED (the C++'s `rng = random_number_generator
+    // {_seed}` equivalent) with no gameplay draws (the level's `onInit`
+    // is `l_set*` only).
     let (draws0, state0) = game_rng_metrics(&c);
     assert_eq!(
         draws0, 0,

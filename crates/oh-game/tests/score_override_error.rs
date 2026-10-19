@@ -38,7 +38,7 @@ fn score_override_read_error_skips_and_menus_instead_of_crashing() {
     let c = compose(assets, release_dir(), true);
     let seen = capture_go_to_menu(&c.game);
 
-    c.game.new_game(PACK, LEVEL, true, 1.0, false);
+    c.game.new_game(PACK, LEVEL, true, 1.0);
 
     // Arm the broken-override state the C++ way: `l_overrideScore` sets
     // `scoreOverride`/`scoreOverridden`, then its spliced validation
@@ -89,7 +89,7 @@ fn l_override_score_validation_passes_for_a_number_variable() {
     let c = compose(assets, release_dir(), true);
     let seen = capture_go_to_menu(&c.game);
 
-    c.game.new_game(PACK, LEVEL, true, 1.0, false);
+    c.game.new_game(PACK, LEVEL, true, 1.0);
     c.host
         .execute_code("myScore = 42.5")
         .expect("the seed assignment must run");
