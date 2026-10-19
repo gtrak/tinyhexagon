@@ -2619,6 +2619,7 @@ dependencies = [
  "th-math",
  "th-render",
  "th-rng",
+ "th-synth",
  "web-sys",
 ]
 

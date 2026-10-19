@@ -1,6 +1,6 @@
 # Issue 07 — `th-app` tiny runtime, loop and renderer integration (desktop)
 
-**Status:** PROPOSED
+**Status:** LANDED
 **Depends:** 04, 05, 06
 
 ## Objective

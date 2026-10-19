@@ -6,10 +6,61 @@
 //! main.cpp:382-388 — were retired by plan 002 issue 02c1: the tiny
 //! runtime persists no config and no profiles.)
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use th_config::Config;
 use th_render::VideoMode;
+
+/// C++ `main`'s chdir (main.cpp:653, "Set working directory to current
+/// executable location"): the game-data root (`Assets/`, `Packs/`,
+/// `config.json`) the binary resolves before composing (the tiny
+/// runtime's `_RELEASE` finder — plan 002 issue 07: "find `_RELEASE` …
+/// keep it in `lifecycle.rs` or a small helper"). Pure (only existence
+/// checks) so it is testable without spawning anything.
+///
+/// Precedence (the existence check is "`<dir>/Assets` is a directory"):
+///
+/// 1. `exe_dir` — if it contains `Assets/` (the C++ main.cpp:653
+///    behavior: the packaged layout, `<game_root>/tinyhexagon` beside
+///    `Assets/`, run from any CWD);
+/// 2. `cwd` — if it contains `Assets/` (keeps the CWD-based test
+///    harnesses / explicit roots working);
+/// 3. the nearest ancestor `A` of `exe_dir` (including `exe_dir` itself)
+///    for which `A/_RELEASE/Assets` exists — returns `A/_RELEASE` (the
+///    dev layout: `cargo run` from the repo root —
+///    `target/<profile>/tinyhexagon` → `<repo>/_RELEASE`);
+/// 4. the nearest ancestor `A` of `cwd` (including `cwd` itself) for
+///    which `A/_RELEASE/Assets` exists — returns `A/_RELEASE`;
+/// 5. otherwise `cwd` unchanged (so the caller's asset-load failure
+///    fires as usual).
+///
+/// Documented deviation from the C++: the C++ chdirs UNCONDITIONALLY to
+/// the executable's directory (main.cpp:653). The port only deviates in
+/// the fallback branches (2)–(5), which are reached only in layouts
+/// where the C++ would fail outright (no `Assets/` beside the exe); the
+/// packaged layout (branch 1) is byte-identical to the C++.
+#[must_use]
+pub fn resolve_game_root(cwd: &Path, exe_dir: &Path) -> PathBuf {
+    if exe_dir.join("Assets").is_dir() {
+        return exe_dir.to_path_buf();
+    }
+    if cwd.join("Assets").is_dir() {
+        return cwd.to_path_buf();
+    }
+    for ancestor in exe_dir.ancestors() {
+        let release = ancestor.join("_RELEASE");
+        if release.join("Assets").is_dir() {
+            return release;
+        }
+    }
+    for ancestor in cwd.ancestors() {
+        let release = ancestor.join("_RELEASE");
+        if release.join("Assets").is_dir() {
+            return release;
+        }
+    }
+    cwd.to_path_buf()
+}
 
 /// C++ `createFolderIfNonExistant(folderName)` (main.cpp:65-79) with the
 /// CWD made explicit as `base_dir` (the binary passes the process CWD; the

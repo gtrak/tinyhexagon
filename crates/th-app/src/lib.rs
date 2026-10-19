@@ -31,10 +31,19 @@
 //! * [`lifecycle`] — the `mainClient` folder creation + config load /
 //!   reapply (`main.cpp:275-291`; the config/profile exit scope guards
 //!   were retired by plan 002 issue 02c1);
+//! * [`journey`] — the tiny journey (plan 002 issue 07): the 20-stage
+//!   arc's table (difficulty / BPM / level / hue) + the stage clock;
 //! * [`sigint`] — the headless / server SIGINT handlers (desktop only;
 //!   the web loop is a plain `request_animation_frame`);
 //! * [`joystick`] — the desktop `RealJoystick` controller poller (gilrs;
 //!   the Android/wasm targets keep the engine's no-op seam);
+//! * [`touch`] — the kid's two-zone touch + the two corner icons' hit
+//!   tests (plan 002 issue 07);
+//! * [`tiny`] — the tiny runtime (plan 002 issue 07): the journey-driven
+//!   fixed-step loop over the de-scoped composition + the `th-synth`
+//!   music + the `th-audio` SFX + the soft-collision bump / slow-motion,
+//!   the beat palette, and the two corner icons (no text, no menus, no
+//!   persistence);
 //! * [`web_fullscreen`] — the web's `#fs` click / change-sink install
 //!   (emscripten only; the web entry wires it in Issue 08).
 
@@ -49,6 +58,7 @@ pub mod compose;
 // platform bodies are cfg'd inside the module).
 pub mod desktop_mode;
 pub mod draw_target;
+pub mod journey;
 #[cfg(not(any(target_os = "android", target_family = "wasm")))]
 pub mod joystick;
 pub mod lifecycle;
@@ -57,6 +67,8 @@ pub mod lifecycle;
 // is a plain `request_animation_frame`, no signal handler).
 #[cfg(not(target_os = "emscripten"))]
 pub mod sigint;
+pub mod tiny;
+pub mod touch;
 // The web's `#fs` sink install (salvaged from `oh-additions` by issue
 // 02a; no caller yet — the web entry lands in Issue 08).
 #[cfg(target_os = "emscripten")]

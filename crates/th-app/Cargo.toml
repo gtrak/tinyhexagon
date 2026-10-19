@@ -4,9 +4,9 @@ description = "The tiny-runtime composition library (D-020): the draw bridge tha
 version.workspace = true
 edition.workspace = true
 
-# The `tinyhexagon` stub binary (plan 002 issue 03): `cargo run`'s target via
-# the workspace `default-members`. Issue 07 replaces the stub with the tiny
-# runtime (same bin name / path).
+# The `tinyhexagon` binary (plan 002 issue 07 — the tiny runtime; the
+# issue-03 stub was replaced in place): `cargo run`'s target via the
+# workspace `default-members`.
 [[bin]]
 name = "tinyhexagon"
 path = "src/bin/tinyhexagon.rs"
@@ -41,6 +41,10 @@ th-rng = { path = "../th-rng" }
 # `rodio`/`cpal`'s device sink itself only compiles to a usable sink on
 # desktop/Android (the web's sink is the OpenAL backend in `th-render`).
 th-audio = { path = "../th-audio" }
+# plan 002 issue 07 — the tiny runtime's soundtrack (the `MusicDirector`
+# the `tiny` loop drives: `set_stage` / `bump` / `tick`'s `BeatView`;
+# SFX stay in `th-audio`).
+th-synth = { path = "../th-synth" }
 
 # SIGINT is a desktop / headless concern: the web loop is a plain
 # `request_animation_frame` (no signal handler).

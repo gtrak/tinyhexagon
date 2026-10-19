@@ -779,7 +779,7 @@ re-reading the whole history.
   list +`Packs/tiny/`) and `th-data` load_release (levels 37→40, styles
   33→36).
 
-### 07 — app tiny runtime (pending)
+### 07 — app tiny runtime (LANDED)
 
 - Desktop-mode probe (upstream `228a4cfb`, landed in the fork's
   `th-app`): the tiny `main` calls
@@ -793,13 +793,14 @@ re-reading the whole history.
   the `th-app::desktop_mode` module docs). The probe's CLI flag is
   `--th-desktop-mode-probe` (renamed from `--oh-desktop-mode-probe` in 03).
 - 05a handoff: host listen still pending on a device-bearing machine (05b/07); `BeatView.playing` means live, NOT un-suspended — re-fire `start_on_gesture` on visibility/gesture; `stop()` does not seed `fallback_t` from the live phase, so 07 may see a one-frame beat jump after a stop/resume; the Heartbeat half-time/root-fourth choices are 09 tuning.
-- Composition signature:
-- Journey table:
-- Touch mapping:
-- SFX ids/volumes:
-- Beat-hue call:
-- Headless tests:
-- No-storage proof:
+- Composition signature: `TinyRuntime::new(assets: Arc<Assets>, root: PathBuf, window: bool, config: Config, audio: Option<Arc<TinyAudio>>, music: MusicDirector)` — inside: `compose_with_config(assets, root, window, Arc<RwLock<Config>>, renderer: None, engine_audio: Option<Arc<dyn Audio>>, Arc<NoJoystick>)` (the 02 de-scope) + `set_soft_collisions(true)` ONCE + stage-0 `new_game(PACK, journey.level_id(PACK), true, journey.difficulty())` + `start()`; `DrawOptions` all false (04b); the bin runs `load_and_reapply(DesktopModeSource::Lazy)` + `kid_config` (`no_music` / 3D off / 1024×768; in-memory, never written back) + `audio.set_sound_volume(60.0)`.
+- Journey table (`journey.rs`): 30 s × stages 0..=20 (20 transitions = 10 min), plateau at 20; `difficulty = 0.55 + 0.03 * min(stage, 20)`; `bpm = 70 + 1.5 * min(stage, 20)`; one level per 2 stages cycling every 6 (`meadow`/`river`/`stars` — the 06 pack ids `{PACK}_{level}`); base hue `style.hue_min + 47° * (stage / 6)`; music layers 0 pad+drone / 2 pluck / 5 bell / 8 bass / 11 shimmer / 14 heartbeat / 17 supersaw via `MusicDirector::set_stage`; stage-up work: even stages (level change) `new_game` + `start`, odd stages `set_difficulty_mult`, flash 90, `levelUp.ogg`; manual reset = `new_game` SAME level/mult + `start` + `reset_elapsed` + `restart.ogg` (no stage change).
+- Touch mapping (`touch.rs`): finger-captured halves (a NEW finger binds to its down-half: `x < width/2` → CCW, else CW; it keeps it for the whole touch — multi-touch holds both sides); a finger on an icon is consumed (one tap on the down-edge, no rotation, held icon fingers keep no tap — the icon-re-fire `Bound` state). Icons ~64×64, margin 8: top-left reset, top-right fullscreen; the mouse icon tap's single source is `FrameEvents.mouse_left` (the window feed's field — `run_windowed` mirrors it from the `InputState` left button; `frame` reads no button state itself).
+- SFX ids/volumes: start `go.ogg` (engine `start`), bump `beep.ogg` + the 05a duck (0.55 → 0.22 over 0.6 s) + 0.35× for 0.35 s slow-motion (the `bump_serial` delta arms it; the journey stays REAL time), stage-up `levelUp.ogg`, reset `restart.ogg`, icon tap `select.ogg`, fullscreen `beep.ogg`; sound volume 60 (SFML units; the synth master gain is independent).
+- Beat-hue call: EVERY frame `game.apply_music_beat(beat.beat_phase, beat.bar_phase, beat.energy, journey.base_hue())` — `beat_hue` is never cleared (04b P2), so the app keeps feeding it; the beat comes from `MusicDirector::tick(dt)`.
+- Headless tests: `th-app/tests/tiny_runtime.rs` — 7 tests: the 65 s run (stage advance at 30/60 s, no death, wall/player/background/flash batches; `LevelData` carries the SHORT level id — assert `pack_id == PACK` + `id == "river"`), the forced collision (`set_always_spin_right(true)`; the first wall spawns ~3 s in and takes ~12 s more at meadow's 0.55× to travel the 1600 px spawn distance — first bump ~16 s, seed-0 stream; 20 s budget), the reset (stage unchanged, clock restarted, same level/mult, angle re-zeroed), the left/right input (keyboard + touch halves), the zero-text recording (all-false `DrawOptions`: 0 text, 6 icon rectangles + the reset triangle + the scene), the no-storage proof, and the 10-minute journey plateau (stage 20, the capped table).
+- No-storage proof: a run against a TEMP root (the `_RELEASE` content reached through `Assets`/`Packs` symlinks) leaves the root free of `config.json` / `Profiles/` / `Replays/` and the `_RELEASE/config.json` byte-identical (`the_run_writes_no_config_profiles_or_replays`).
+- For 08 (reuse notes): `TinyRuntime::frame(dt, &FrameEvents) -> FrameActions` is the window-agnostic half — feed it from the Android activity / the web rAF (`FrameEvents { input, fingers: [(id, pos)] in the window's `finger_down_positions` order, finger_count, mouse_left, mouse_pos, width, height }`; act on `FrameActions { close, toggle_fullscreen }`); `run_windowed` is the desktop (winit) half only; the dev screenshot arms the bridge's `mustTakeScreenshot` (`--tiny-shot=SECONDS`, the save fires at `draw_frame` step 12 — BEFORE the screen-space icon pass, so the bridge PNG lacks the icons; a post-icon capture would need a new `DrawTarget` hook); the `web_fullscreen` sinks + the audio-gesture re-fire land in 08 (the 05a notes above).
 
 ### 08 — Android/web/packaging (pending)
 
@@ -833,6 +834,7 @@ re-reading the whole history.
   string; that half is inert until 07/08 adapts it to the tiny loop.
 - 05a handoff: `BeatView.playing` means live, not un-suspended; a hidden tab freezes `phase_clock` and cpal 0.15 exposes no suspend query — re-fire `start_on_gesture` on visibility/gesture. The web entry must start the synth only on the first gesture.
 - 05b handoff: wasm uses the vendored rust-synth (tui/recording features off) + the cpal 0.15.3 emscripten ABI patch; 08 must keep `wasm-bindgen 0.2.129`, never downgrade, and re-fire `start_on_gesture` on visibility/gesture. Runtime audio (device/browser listen, AAudio on-device) remains 07/08. Windows cross was outside 05b; the cpal emscripten host has 2 dead-code warnings.
+- 07 handoff: the screenshot is armed inside `bridge_draw` BEFORE `TinyRuntime::draw` appends the two icons, so `evidence/07/screenshot.png` lacks them (the window/test show the 6 rects + triangle); 08/09 capture after the icon pass. The host has no audio device (fallback only). The no-storage test is `#[cfg(unix)]`; Windows coverage is 08/09. The 10-minute end-to-end currently exercises `Journey::advance`, not `TinyRuntime::frame`; 09. `base_hue_for_stage(20)=331` clamps against the river 190–250 range; 09 tuning. `th-app/src/lib.rs` still describes the bin as stripped; 09 docs.
 - Web boot/audio-unlock export: 03c landed the STUB's browser half —
   `th-web`'s `#[wasm_bindgen] status()` (returns "tinyhexagon stub: the
   tiny runtime lands in plan 002 issue 07/08"; the page's
