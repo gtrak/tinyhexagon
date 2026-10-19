@@ -1,11 +1,19 @@
 <!doctype html>
 <!--
-  th-web (plan 002 issue 03c) — the STUB page: the minimal shell the
-  stub wasm (th-web's `#[wasm_bindgen] status()` / `save_session()`
-  exports, issue 03c) executes against. The adult W5 shell (the IDBFS
-  persistence / fullscreen / IME glue) is retired with the entry
-  (issue 02a); issue 08 replaces this page with the real tiny entry's
-  shell (re-adding the fullscreen / IME / audio-unlock wiring there).
+  th-web (plan 002 issue 08a) — the TINY ENTRY's minimal shell: the
+  real game's canvas + the `#status` probe hook (visually hidden — fix
+  4; the page is text-free) + the first-gesture audio-unlock wiring. No IME / `#ime`, no text entry, no IDBFS /
+  persistence (the tiny runtime persists nothing — the read-only
+  `_RELEASE` content stays in emscripten MEMFS; the 03c stub's
+  `save_session()` no-op retired with the persistence machinery).
+  The fullscreen control is NOT declared here: the `th-render`
+  emscripten window's `#fs` get-or-create provides the fallback button
+  (the committed-shell style contract — the top-right `⛶`, the 055
+  lesson: always present, top-right, clearing the in-canvas icon's
+  band), and `th_app::web_fullscreen::install_sinks` wires its click to
+  the browser Fullscreen API (the in-canvas fullscreen icon's tap
+  applies the SAME shared toggle — both read the browser's actual
+  state).
 
   SERVE (static, no build step): the THREE build artifacts (the loader
   `tinyhexagon.js` — MODULARIZE + EXPORT_ES6, the factory default-
@@ -18,15 +26,31 @@
   URL: http://127.0.0.1:8080/
   (Any static file server works — the page is plain ES module + three
   files. The `.data` is the `--preload-file=_RELEASE@/RELEASE` package;
-  tools/web-stub-probe.mjs waits on the MODULE RESOLVE (default 60 s),
-  not the page load — the 22 MB preload fetches during the factory's
-  boot.)
+  tools/web-stub-probe.mjs waits on `#status` reaching
+  `booted=true` (default 120 s), not the page load — the 22 MB preload
+  fetches during the factory's boot, and the engine's boot (assets +
+  config + Luau + the first frame) follows.)
 
-  Expected browser console:
-      status tinyhexagon stub: the tiny runtime lands in plan 002 issue 07/08   (every 1 s)
-  The canvas stays BLACK until the runtime lands (07/08) — it is the
-  probe's "a canvas with non-zero width/height" assertion's target,
-  not the game's window.
+  Expected browser console (the 1 s poll's lines):
+      [th-web] boot started (after __wasm_call_ctors)
+      [th-web] tiny boot scheduled (the rAF loop owns the game from here)
+      status tinyhexagon web: booted=true;ticks=...;stage=0;started=true;angle=0.0000;audio=fallback;help=auto
+      ...
+      [shell] audio unlock requested (first keydown)   (after the first gesture)
+  Plus the engine's `[tiny]` boot lines (the `th-game` log sink's
+  browser-console routing) + the boot's ONE expected autoplay warning
+  (the OpenAL SFX device's `AudioContext` is created before any user
+  gesture — Chrome's "The AudioContext was not allowed to start" — the
+  probe tolerates it; the device resumes itself on the first gesture).
+  `audio=fallback` until the first user gesture unlocks the live synth
+  engine (`resumeAudio()` → `start_on_gesture`, the 05a handoff); a
+  real browser's first tap / key flips it to `audio=live` — and the
+  10-19 Chrome 148 probe run did: its synthetic `keydown` granted user
+  activation, so that run measured `audio=live` (the 041 measurement
+  saw no activation; granting it is the browser's). The no-activation
+  fallback guard (`navigator.userActivation.isActive` in
+  `web_request_audio_unlock`) stays: where activation is withheld, the
+  fallback clock keeps running.
 -->
 <html>
   <head>
@@ -35,26 +59,41 @@
     <style>
       html, body { margin: 0; padding: 0; background: #111; color: #ddd;
                    font-family: monospace; overflow: hidden; }
-      /* Full-viewport: the stub draws nothing (the runtime is 07/08);
-         the non-zero size is the probe's canvas assertion's target. */
+      /* Full-viewport: the emscripten window measures the real size at
+         boot (the Gl backend's canvas backing store) — the attributes
+         below are the pre-boot initial values only. */
       canvas { display: block; width: 100vw; height: 100vh; }
-      #status { position: fixed; top: 4px; right: 8px; font-size: 11px;
-                opacity: 0.7; }
+      /* 08a fix 4 (P2 #1) — visually hidden: the page is text-free, so
+         the raw status line must not show to the child; the element
+         stays in the DOM (the 1 s poll keeps filling its
+         `textContent`, so `window.ohStatus()` + the probe's `#status`
+         contract are unchanged). */
+      #status { display: none; position: fixed; top: 4px; right: 8px;
+                font-size: 11px; opacity: 0.7; z-index: 11; }
     </style>
   </head>
   <body>
-    <!-- The initial backing store only: the stub never resizes it
-         (the emscripten window's real-size measurement lands with the
-         runtime, 07/08). -->
     <canvas id="c" width="640" height="480"></canvas>
-    <!-- Starts EMPTY: the probe's wait is `#status` leaving empty (the
-         poll below fills it within 1 s of the module's resolve). -->
+    <!-- Starts EMPTY: the probe's wait is `#status` reaching
+         `booted=true` (the poll below fills it every 1 s once the
+         module resolves + the first frame lands). -->
     <div id="status"></div>
+    <!-- 08a (fix 2) — the pinned wasm-bindgen 0.2.129 CLI's emscripten
+         glue emits `new lAudioContext` (its vendor-prefixed alias for
+         the native AudioContext) but emcc's JS-library merge drops the
+         CLI's `const lAudioContext = ...` definition line, so the alias
+         is bound here, before the module boots. Remove when the
+         CLI/recipe is fixed (the pinned-CLI note in the 08a report). -->
+    <script>
+      window.lAudioContext = window.AudioContext || window.webkitAudioContext;
+    </script>
     <script type="module">
       // MODULARIZE + EXPORT_ES6 (the 26c.1 recipe): the default export
-      // is the Module factory; it resolves once the wasm (the stub's
-      // `main`, registered through wasm-bindgen's addOnInit) has
-      // initialized — the resolve IS the boot (the probe's wait).
+      // is the Module factory; it resolves once the wasm (the tiny
+      // entry's `main` — `__wasm_call_ctors()` first, then the boot —
+      // registered through wasm-bindgen's addOnInit) has initialized +
+      // scheduled the first rAF frame (the 26c D-029 shape: the loop
+      // self-owns; the browser owns the frames from here).
       import Module from "./tinyhexagon.js";
       const mod = await Module();
       // The probe hook (tools/web-stub-probe.mjs's `window.ohStatus` —
@@ -66,6 +105,38 @@
         document.getElementById("status").textContent = s;
         console.log("status " + s);
       }, 1000);
+      // plan 002 issue 08a — the FIRST-GESTURE audio unlock: the first
+      // pointerdown / keydown calls the exported `resumeAudio()` once
+      // (idempotent — the Rust side re-checks the browser's user
+      // activation and arms the live synth engine; the `th-audio` SFX
+      // device (emscripten's OpenAL) unlocks on the SAME first gesture
+      // through its own listeners). The fallback clock runs until then.
+      let gestureUnlock = false;
+      const onGesture = (source) => {
+        if (gestureUnlock) return;
+        gestureUnlock = true;
+        try {
+          mod.resumeAudio();
+          console.log("[shell] audio unlock requested (" + source + ")");
+        } catch (err) {
+          console.error("[shell] resumeAudio failed: " + err);
+          gestureUnlock = false; // the export threw — allow the re-fire
+        }
+      };
+      window.addEventListener("pointerdown", () => onGesture("first pointerdown"));
+      window.addEventListener("keydown", () => onGesture("first keydown"));
+      // The 05a handoff's re-fire: a hidden tab freezes the
+      // AudioContext's phase clock; returning to the tab re-arms (the
+      // unlock is idempotent — a no-op while live).
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState !== "visible") return;
+        try {
+          mod.resumeAudio();
+          console.log("[shell] audio re-fire (visibility -> visible)");
+        } catch (err) {
+          console.error("[shell] resumeAudio re-fire failed: " + err);
+        }
+      });
     </script>
   </body>
 </html>
