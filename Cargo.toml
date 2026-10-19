@@ -12,14 +12,12 @@ members = [
     "crates/oh-audio",
     "crates/oh-render",
     "crates/oh-app",
-    "crates/oh-discord",
     "crates/oh-android",
     "crates/oh-web",
 ]
 # Later issues add workspace members as they land (PLAN.md architecture
 # table): oh-timeline, oh-replay, oh-data, oh-config, oh-assets, oh-lua,
-# oh-game, oh-audio, oh-render, oh-app, oh-discord. (oh-discord landed
-# with issue 21.)
+# oh-game, oh-audio, oh-render, oh-app. (The Discord crate was removed by plan 002 issue 02c1.)
 
 [workspace.package]
 version = "0.1.0"

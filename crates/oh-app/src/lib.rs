@@ -25,8 +25,9 @@
 //! * [`draw_target`] — the reusable GL draw target extracted from the
 //!   retired windowed module (`GlDrawTarget` over a live `GlParts`, the
 //!   no-op `NullDrawTarget`, the 029n1 (K6) pack-shader provider);
-//! * [`lifecycle`] — the `mainClient` folder/config scope-guard pieces
-//!   (`main.cpp:275-291`);
+//! * [`lifecycle`] — the `mainClient` folder creation + config load /
+//!   reapply (`main.cpp:275-291`; the config/profile exit scope guards
+//!   were retired by plan 002 issue 02c1);
 //! * [`sigint`] — the headless / server SIGINT handlers (desktop only;
 //!   the web loop is a plain `request_animation_frame`);
 //! * [`joystick`] — the desktop `RealJoystick` controller poller (gilrs;

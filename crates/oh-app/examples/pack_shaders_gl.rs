@@ -58,10 +58,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
-use oh_app::compose::{compose_with_config, RealProfiles};
+use oh_app::compose::compose_with_config;
 use oh_app::draw_target::{AssetsPackShaderProvider, GlDrawTarget};
 use oh_config::{Config, TIME_STEP};
-use oh_game::seams::{NoJoystick, NoneSteamSink, NullReplayStore};
+use oh_game::seams::{NoJoystick, NullReplayStore};
 use oh_render::gl::GlBackend;
 use oh_render::graphics::DrawTarget;
 use oh_render::pack_shaders::{PackShaderProgram, PackShaderSnapshot};
@@ -132,10 +132,7 @@ fn composed_pointless(
         assets.clone(),
         release_dir(),
         true, /* window (the C++ `window != nullptr`) */
-        Arc::new(RealProfiles::new(assets.clone())),
         config,
-        Arc::new(NoneSteamSink),
-        None, // discord
         None, // renderer
         None, // audio
         Arc::new(NullReplayStore),

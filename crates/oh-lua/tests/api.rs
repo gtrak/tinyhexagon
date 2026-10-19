@@ -1,8 +1,9 @@
 //! Issue 007 verification: the exact registered global-function name set
-//! (the 285 names re-derived from the C++ `addLuaFn` /
+//! (the 284 names re-derived from the C++ `addLuaFn` /
 //! `makeLuaAccessor` / `sdColorGetter` / `writeVariable` call sites in
-//! `src/SSVOpenHexagon/Core/*.cpp`, per mapping/lua-api.md §1/§2) and the
-//! spread-argument closure semantics of `add_lua_fn!`.
+//! `src/SSVOpenHexagon/Core/*.cpp`, per mapping/lua-api.md §1/§2 — minus
+//! the C++'s `steam_unlockAchievement`, retired by plan 002 issue 02c1)
+//! and the spread-argument closure semantics of `add_lua_fn!`.
 
 use oh_game::lua_state::ReentrantMutex;
 use std::collections::BTreeSet;
@@ -147,7 +148,6 @@ impl GameApi for MockGame {
     fn in_replay(&self) -> bool {
         false
     }
-    fn unlock_achievement(&self, _achievement_id: &str) {}
     fn go_to_menu(&self, _send_scores: bool, _error: bool) {}
 }
 
@@ -209,10 +209,10 @@ fn snapshot_globals(lua: &LuaContext) -> BTreeSet<String> {
     names.into_iter().collect()
 }
 
-// The 285 registered global function names: 135 `addLuaFn` +
+// The 284 registered global function names: 134 `addLuaFn` +
 // 72 `makeLuaAccessor` variables × 2 (get/set) + 5 `sdColorGetter`
 // + 1 raw `u_impl_addTrackedResult` write.
-const REGISTERED_NAMES: [&str; 285] = [
+const REGISTERED_NAMES: [&str; 284] = [
     "a_overrideBeepSound",
     "a_overrideDeathSound",
     "a_overrideIncrementSound",
@@ -451,7 +451,6 @@ const REGISTERED_NAMES: [&str; 285] = [
     "shdr_setUniformIVec2",
     "shdr_setUniformIVec3",
     "shdr_setUniformIVec4",
-    "steam_unlockAchievement",
     "t_clear",
     "t_eval",
     "t_kill",

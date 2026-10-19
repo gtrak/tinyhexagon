@@ -75,7 +75,6 @@ const MENU_NO_OP_FUNCTIONS: &[&str] = &[
     "w_wallAcc",
     "w_wallHModSpeedData",
     "w_wallHModCurveData",
-    "steam_unlockAchievement",
     "u_kill",
     "u_eventKill",
     "u_playSound",

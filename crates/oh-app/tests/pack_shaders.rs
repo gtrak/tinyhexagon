@@ -35,7 +35,7 @@ use std::sync::{Arc, RwLock};
 
 use oh_assets::{ShaderType, UniformValue};
 use oh_config::{Config, TIME_STEP};
-use oh_game::seams::{NoJoystick, NoneSteamSink, NullReplayStore};
+use oh_game::seams::{NoJoystick, NullReplayStore};
 
 use common::{compose, release_dir};
 
@@ -227,10 +227,7 @@ fn shaders_required_invalidates_the_score_only_when_shaders_are_off() {
             assets,
             root,
             true, /* window (the C++ `window != nullptr`) */
-            Arc::new(common::TestProfiles),
             config,
-            Arc::new(NoneSteamSink),
-            None, /* discord */
             None, /* renderer */
             None, /* audio */
             Arc::new(NullReplayStore),

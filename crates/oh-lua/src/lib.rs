@@ -37,7 +37,7 @@
 //!   the 29s1 bug class — a hand-transcribed Lua typo inside a snippet)
 //! * [`prelude`] — the Lua 5.1 compat prelude (D-037: the Luau-era safety
 //!   net for third-party packs; installed from `api::init_lua_api`)
-//! * [`api`] — the complete game API (issue 007): all 285 registered global
+//! * [`api`] — the complete game API (issue 007): all 284 registered global
 //!   function names + the 12-callback dispatch + the `GameApiState` /
 //!   `GameApi` / `AssetsApi` state interface (issue 009 implements the real
 //!   backend)

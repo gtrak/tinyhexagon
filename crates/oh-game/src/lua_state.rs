@@ -168,12 +168,9 @@ pub trait GameApi: Send + Sync {
     /// callers check `background_camera_rotation().is_some()` first).
     fn set_background_camera_rotation(&self, value: f32);
 
-    // -- replay / steam ------------------------------------------------------
+    // -- replay -------------------------------------------------------------
     /// C++ `HexagonGame::inReplay()`.
     fn in_replay(&self) -> bool;
-    /// C++ `steamManager->unlock_achievement(id)` (no-op when there is no
-    /// steam manager; the caller already checked `in_replay` / official).
-    fn unlock_achievement(&self, achievement_id: &str);
 
     // -- error exit ----------------------------------------------------------
     /// C++ `goToMenu(sendScores, mError)`.
@@ -664,7 +661,6 @@ mod tests {
         fn in_replay(&self) -> bool {
             false
         }
-        fn unlock_achievement(&self, _: &str) {}
         fn go_to_menu(&self, _: bool, _: bool) {}
     }
 

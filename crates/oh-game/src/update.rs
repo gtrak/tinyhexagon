@@ -20,7 +20,7 @@ use std::time::SystemTime;
 
 use oh_config::{Jdir, Jid, TIME_STEP};
 use oh_math::ssvs::{get_vec_from_rad, Vec2};
-use oh_math::ssvu::{get_clamped, get_ft_to_seconds, get_sign, PI};
+use oh_math::ssvu::{get_clamped, get_sign};
 use oh_math::{
     hg::{
         color::Color, concat::format_ostream_f32, easing::get_smoother_step,
@@ -113,40 +113,6 @@ impl<S: SharedStore> HexagonGame<S> {
         // --------------------------------------------------------------------
         // Scale simulation delta frame time
         m_ft *= timescale;
-
-        // --------------------------------------------------------------------
-        // Update Discord and Steam "rich presence" (window-gated) — the
-        // accounting is the C++ one, verbatim. The Steam half is the
-        // engine's `steam_manager` seam (issue 020); the Discord
-        // `run_callbacks` retry is issue 021; the in-game Discord activity
-        // itself is set in `start` / `death`, per the C++.
-        if self.0.window {
-            let (name_str, diff_str, time_str) = {
-                let g = self.st();
-                (
-                    self.name_format(&g.level_name),
-                    self.diff_format(g.difficulty_mult),
-                    self.time_format(g.status.get_time_seconds() as f32),
-                )
-            };
-            {
-                let mut e = self.est();
-                e.time_until_rich_presence_update -= get_ft_to_seconds(m_ft);
-
-                if e.time_until_rich_presence_update <= 0.0_f32 {
-                    // C++ `steamManager->set_rich_presence_in_game(nameStr,
-                    // diffStr, timeStr)` (HGUpdate.cpp:147-149) — the C++'s
-                    // `steamManager != nullptr` gate is the sink's
-                    // null-equivalent (`NoneSteamSink`).
-                    self.0
-                        .steam_manager
-                        .set_rich_presence_in_game(&name_str, &diff_str, &time_str);
-                    e.time_until_rich_presence_update = 5.0_f32;
-                }
-            }
-
-            self.update_rich_presence_callbacks();
-        }
 
         // --------------------------------------------------------------------
         if self.est().must_start {
@@ -439,23 +405,12 @@ impl<S: SharedStore> HexagonGame<S> {
             }
         }
 
-        self.update_text(m_ft);
+        self.update_text();
 
         if self.st().status.started {
             if self.st().status.must_state_change != StateChange::None {
                 let execute_last_replay =
                     self.st().status.must_state_change == StateChange::MustReplay;
-
-                if !execute_last_replay && !self.0.profiles.any_local_profile_active() {
-                    // If playing a replay from file, there is no local profile
-                    // active, so just go to the menu when attempting to restart
-                    // the level.
-                    // C++ `goToMenu()` — the default-argument call
-                    // `goToMenu(true /*mSendScores*/, false /*mError*/)`
-                    // (HexagonGame.hpp:417).
-                    self.go_to_menu(true, false);
-                    return;
-                }
 
                 let restart_id = self.est().restart_id.clone();
                 let (pack_id, first_time, dm) = (
@@ -730,13 +685,7 @@ impl<S: SharedStore> HexagonGame<S> {
                     m_ft,
                 )
             };
-            if just_swapped {
-                self.perform_player_kill();
-
-                // C++ `steamManager->unlock_achievement("a22_swapdeath")`
-                // (HGUpdate.cpp:448-451).
-                self.0.steam_manager.unlock_achievement("a22_swapdeath");
-            } else if pushed_out {
+            if just_swapped || pushed_out {
                 self.perform_player_kill();
             }
 
@@ -758,12 +707,6 @@ impl<S: SharedStore> HexagonGame<S> {
                 continue;
             }
 
-            if self.est().player.get_just_swapped() {
-                // C++ `steamManager->unlock_achievement("a22_swapdeath")`
-                // (HGUpdate.cpp:478-481).
-                self.0.steam_manager.unlock_achievement("a22_swapdeath");
-            }
-
             self.perform_player_kill();
         }
     }
@@ -782,12 +725,6 @@ impl<S: SharedStore> HexagonGame<S> {
         };
         if hit {
             self.perform_player_kill();
-
-            if self.est().player.get_just_swapped() {
-                // C++ `steamManager->unlock_achievement("a22_swapdeath")`
-                // (HGUpdate.cpp:496-499).
-                self.0.steam_manager.unlock_achievement("a22_swapdeath");
-            }
         }
     }
 
@@ -1317,41 +1254,6 @@ impl<S: SharedStore> HexagonGame<S> {
             p.sprite.position += p.velocity * m_ft;
             p.sprite.rotation_deg += p.angular_velocity * m_ft;
         }
-
-        if e.must_spawn_pb_particles {
-            e.next_pb_particle_spawn -= m_ft;
-            if e.next_pb_particle_spawn <= 0.0_f32 {
-                // C++ `makePBParticle` (HGUpdate.cpp:944-955) — ONE
-                // pcg32_fast stream drawn in this exact order: position x,
-                // rotation, scale, alpha (int), velocity x, velocity y,
-                // angularVelocity. (y is the fixed `-64.f`; the color
-                // comes from `getColorMain`, an RNG-free read.)
-                let position_x = self.0.cosmetic_rng.get_rnd_r(-64.0_f32, width + 64.0_f32);
-                let rotation_deg = self.0.cosmetic_rng.get_rnd_r(0.0_f32, 360.0_f32);
-                let scale = self.0.cosmetic_rng.get_rnd_r(0.75_f32, 1.35_f32);
-                let color = {
-                    let mut c = self.get_color_main();
-                    c.a = self.0.cosmetic_rng.get_rnd_i(90, 145) as u8;
-                    c
-                };
-                let p = Particle {
-                    sprite: SpriteState {
-                        position: Vec2::new(position_x, -64.0_f32),
-                        rotation_deg,
-                        scale: Vec2::new(scale, scale),
-                        color,
-                        origin: Vec2::new(0.0, 0.0), // C++: the texture origin (issue 11).
-                    },
-                    velocity: Vec2::new(
-                        self.0.cosmetic_rng.get_rnd_r(-12.0_f32, 12.0_f32),
-                        self.0.cosmetic_rng.get_rnd_r(4.0_f32, 18.0_f32),
-                    ),
-                    angular_velocity: self.0.cosmetic_rng.get_rnd_r(-6.0_f32, 6.0_f32),
-                };
-                e.particles.push(p);
-                e.next_pb_particle_spawn = 2.75_f32;
-            }
-        }
     }
 
     /// C++ `updateTrailParticles(mFT)` (verbatim; windowed).
@@ -1498,19 +1400,13 @@ impl<S: SharedStore> HexagonGame<S> {
     /// verbatim; the SFML `setCharacterSize`/`setOrigin` calls are issue-11
     /// render properties and don't affect game state. Window-gated, exactly
     /// like the C++.
-    pub fn update_text(&self, m_ft: FT) {
+    ///
+    /// (The C++'s `mFT` argument drove the retired PB-text growth
+    /// sawtooth (plan 002 issue 02c1); no remaining half reads it, so the
+    /// port's signature drops it.)
+    pub fn update_text(&self) {
         if !self.0.window {
             return;
-        }
-
-        // --------------------------------------------------------------------
-        // Update "personal best" text animation.
-        {
-            let mut e = self.est();
-            e.pb_text_growth += 0.08_f32 * m_ft;
-            if e.pb_text_growth > PI * 2.0_f32 {
-                e.pb_text_growth = 0.0;
-            }
         }
 
         // --------------------------------------------------------------------
@@ -1668,44 +1564,6 @@ impl<S: SharedStore> HexagonGame<S> {
         self.est().status_text = os;
     }
 
-    /// C++ `updateRichPresenceCallbacks()` (HexagonGame.cpp:477-508) — the
-    /// Steam arm (the `steamAttempt`/`steamHung` hung counter,
-    /// HexagonGame.hpp:90,92 — delegated to the engine's `steam_manager`
-    /// seam, which owns the counter in the port — issue 020) + the Discord
-    /// `run_callbacks` + the `discordAttempt` / `discordHung` retry.
-    /// Driven every frame
-    /// from BOTH states: the in-game `update` (inside the C++'s
-    /// `window != nullptr` block, HGUpdate.cpp:155) and the menu's
-    /// `fnHGUpdateRichPresenceCallbacks` (main.cpp:451-454). The retry state
-    /// is a `HexagonGame` member (HexagonGame.hpp:89,91), NOT a
-    /// `discord_manager` one — so it lives on the engine here. `pub` because
-    /// the menu's per-frame callback (the app's `RichPresenceCallback`) calls
-    /// it through the engine handle.
-    pub fn update_rich_presence_callbacks(&self) {
-        // C++ HexagonGame.cpp:480-492 — the Steam arm.
-        self.0.steam_manager.update_rich_presence_callbacks();
-        // C++ `if(discordManager != nullptr && !discordHung)`
-        // (HexagonGame.cpp:495).
-        let Some(discord) = self.0.discord.as_ref() else {
-            return;
-        };
-        let mut e = self.est();
-        if e.discord_hung {
-            return;
-        }
-        // C++ `if(!discordManager->run_callbacks())` (HexagonGame.cpp:497).
-        if !discord.run_callbacks() {
-            e.discord_attempt += 1;
-            // C++ `if(discordAttempt > 20)` (HexagonGame.cpp:500).
-            if e.discord_attempt > 20 {
-                e.discord_hung = true;
-                // C++ `ssvu::lo("Discord") << "Too many failed callbacks.
-                // Stopping Discord callbacks.\n"` (HexagonGame.cpp:503-504).
-                println!("[Discord] Too many failed callbacks. Stopping Discord callbacks.");
-            }
-        }
-    }
-
     /// The `particles` vector (test access; the C++ member).
     #[must_use]
     pub fn particles(&self) -> Vec<Particle> {
@@ -1722,18 +1580,6 @@ impl<S: SharedStore> HexagonGame<S> {
     #[must_use]
     pub fn swap_particles(&self) -> Vec<SwapParticle> {
         self.est().swap_particles.clone()
-    }
-
-    /// The C++ `mustSpawnPBParticles` flag (test access).
-    #[must_use]
-    pub fn must_spawn_pb_particles(&self) -> bool {
-        self.est().must_spawn_pb_particles
-    }
-
-    /// The C++ `pbText` content (test access).
-    #[must_use]
-    pub fn pb_text(&self) -> String {
-        self.est().pb_text.clone()
     }
 
     /// The C++ `messageText` content (test access).

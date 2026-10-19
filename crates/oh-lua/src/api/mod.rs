@@ -1,4 +1,4 @@
-//! The complete Lua game API (issue 007): all 285 registered global function
+//! The complete Lua game API (issue 007): all 284 registered global function
 //! names, the `LuaScripting::init` shared registration, the
 //! `HexagonGame::initLua` per-game groups, the menu-context stubs, and the
 //! callback-dispatch helpers (`onInput` veto and friends).
@@ -29,8 +29,10 @@
 //! `u_impl_addTrackedResult`) → `audio` (`a_*`) → `main_timeline` (`t_*`) →
 //! `event_timeline` (`e_*`) → `custom_timelines` (`ct_*`) →
 //! `level_control_level` (`initLua_LevelControl`) → `style_level`
-//! (`initLua_StyleControl`) → `wall_creation` (`w_*`) → `steam`
-//! (`initLua_Steam`) → `deprecated` (`initLua_Deprecated`, incl. `m_*`).
+//! (`initLua_StyleControl`) → `wall_creation` (`w_*`) → `deprecated`
+//! (`initLua_Deprecated`, incl. `m_*`).
+//! (The C++'s `initLua_Steam` group — the `steam_unlockAchievement` global
+//! — was retired by plan 002 issue 02c1 along with the engine's Steam seam.)
 //!
 //! Menu context (`init_menu_api`, C++ `MenuGame::initLua`): the shared init
 //! with `in_menu == true` + `menu` (overrides `u_log`, pins 4 getters,
@@ -55,7 +57,6 @@ mod main_timeline;
 mod menu;
 mod random;
 mod shaders;
-mod steam;
 mod style_control;
 mod style_level;
 mod utils;
@@ -144,7 +145,8 @@ pub fn init_lua_api(ctx: &LuaContext, state: &State) -> Result<(), LuaError> {
 /// `initLua_Utils`, `initLua_AudioControl`, `initLua_MainTimeline`,
 /// `initLua_EventTimeline`, `initLua_CustomTimelines`,
 /// `initLua_LevelControl`, `initLua_StyleControl`, `initLua_WallCreation`,
-/// `initLua_Steam`, `initLua_Deprecated`.
+/// `initLua_Deprecated` (the C++'s `initLua_Steam` group was retired by
+/// plan 002 issue 02c1).
 pub fn init_level_api(ctx: &LuaContext, state: &State) -> Result<(), LuaError> {
     let shared = SharedLua::new(ctx);
 
@@ -156,7 +158,6 @@ pub fn init_level_api(ctx: &LuaContext, state: &State) -> Result<(), LuaError> {
     level_control_level::register(ctx, state, shared)?;
     style_level::register(ctx, state)?;
     wall_creation::register(ctx, state)?;
-    steam::register(ctx, state)?;
     deprecated::register(ctx, state, shared)?;
     Ok(())
 }

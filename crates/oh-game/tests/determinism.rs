@@ -29,8 +29,9 @@
 //! * The C++ windowed loop (`#ifndef SSVOH_HEADLESS_TESTS`) has no Rust
 //!   counterpart (no window — the composition is headless, `window = false`).
 //! * The C++ `assets.addLocalProfile` / `pSetCurrent("testProfile")`:
-//!   oh-assets defers the profile *mutation* API, so the engine's `Profiles`
-//!   seam reports the same current profile (`TestProfiles` in `common`).
+//!   retired with the profiles seam by plan 002 issue 02c1 (no local
+//!   profile exists in the port — the replay's `playerName` is the
+//!   `no_profile` fallback, `death_create_replay_file`).
 //!
 //! # C++-derived pins in this file (the C++-derived evidence for the issue)
 //!
@@ -86,12 +87,14 @@ fn load_release() -> Arc<oh_assets::Assets> {
 /// C++-derived pins on the live run's replay file + its status (module docs
 /// carry each derivation).
 fn assert_replay_pins(rf: &ReplayFile, status: &oh_game::HexagonGameStatus) {
-    // C++ test source: `ProfileData{GAME_VERSION, "testProfile"}` +
-    // `pSetCurrent` → `death_createReplayFile` records the profile name.
+    // C++ `death_createReplayFile`'s `no_profile` fallback (HexagonGame.cpp:
+    // 995-997) — the C++ test's `pSetCurrent("testProfile")` is retired
+    // with the profiles seam (plan 002 issue 02c1: no local profile exists
+    // in the port, so the no-active-profile spelling is recorded).
     assert_eq!(
         rf.player_name.to_str(),
-        Some("testProfile"),
-        "C++ pSetCurrent(\"testProfile\")"
+        Some("no_profile"),
+        "the C++ no-active-profile fallback name"
     );
     // C++ test: `newGame(..., true /* firstPlay */, 1.f /* diffMult */, ...)`.
     assert!(rf.first_play, "C++ test passes firstPlay = true");

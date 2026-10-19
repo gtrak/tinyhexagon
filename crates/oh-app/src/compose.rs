@@ -21,7 +21,7 @@
 //! 4. build `GameApiState` / `State` with that backend + the `run_lua_file`
 //!    closure (the C++ `fRunLuaFile` lambda, `HGScripting.cpp:1107`),
 //! 5. `host.attach_state(state)` + `game.attach_state(state)` — after that
-//!    the engine and the 285 registered lambdas mutate ONE store.
+//!    the engine and the 284 registered lambdas mutate ONE store.
 //!
 //! # `ScriptHost: Send + Sync` given `mlua::Lua: !Send`
 //!
@@ -43,7 +43,7 @@
 //!
 //! The C++ `newGame` does `lua = Lua::LuaContext{}; initLua();` — a FRESH
 //! context per game. The composition reuses ONE context and re-runs
-//! `init_lua_api` + `init_level_api` on each `new_game`: redefining the 285
+//! `init_lua_api` + `init_level_api` on each `new_game`: redefining the 284
 //! globals is idempotent (every registered closure is stateless — it locks
 //! the shared `State`), and the engine clears `main_timeline` /
 //! `event_timeline` / `custom_timelines` / `walls` /
@@ -60,13 +60,11 @@ use std::sync::{Arc, OnceLock, RwLock};
 
 use oh_config::Config;
 use oh_data::{MusicData, PackData, StyleData};
-use oh_discord::Discord;
 use oh_game::hexagon_game::HexagonGame;
 use oh_game::lua_state::{GameApi, ReentrantMutex};
 use oh_game::renderer::Renderer;
 use oh_game::seams::{
-    Audio, NoJoystick, NullReplayStore, PcgCosmeticRng, Profiles, ReplayStore, ScriptError,
-    ScriptHost, SteamSink,
+    Audio, NoJoystick, NullReplayStore, PcgCosmeticRng, ReplayStore, ScriptError, ScriptHost,
 };
 use oh_game::{HexagonGameStatus, LevelStatus};
 use oh_lua::api::callbacks;
@@ -449,39 +447,6 @@ impl ScriptHost for LuaScriptHost {
     }
 }
 
-/// The engine's `Profiles` seam backed by the shared `oh_assets::Assets`
-/// (issue 029c1 — the C++'s ONE `HGAssets`, main.cpp:381/:434: the engine
-/// and the menu observe the SAME profile state, so a score the engine's
-/// death path sets during play is visible in the menu immediately, and the
-/// `mainClient` exit guard's `pSaveAll` persists it. The port shares ONE
-/// `Arc<Assets>` between this seam and the menu's `RealMenuAssets` — the
-/// same single-object semantics; `NullProfiles` remains the
-/// no-profile stand-in for tests).
-#[derive(Debug, Clone)]
-pub struct RealProfiles(Arc<oh_assets::Assets>);
-
-impl RealProfiles {
-    #[must_use]
-    pub fn new(assets: Arc<oh_assets::Assets>) -> Self {
-        Self(assets)
-    }
-}
-
-impl Profiles for RealProfiles {
-    fn any_local_profile_active(&self) -> bool {
-        self.0.any_local_profile_active()
-    }
-    fn current_local_profile_name(&self) -> String {
-        self.0.current_local_profile_name().unwrap_or_default()
-    }
-    fn get_local_score(&self, level_id: &str) -> f32 {
-        self.0.get_local_score(level_id)
-    }
-    fn set_local_score(&self, level_id: &str, score: f32) {
-        self.0.set_local_score(level_id, score);
-    }
-}
-
 /// One fully composed engine: `HexagonGame<GameApiState>` + its
 /// `LuaContext` + the shared `State` + the host.
 ///
@@ -526,33 +491,14 @@ impl Composed {
 ///
 /// `window` mirrors the C++ `mGameWindow != nullptr` (the step-(b) binary
 /// passes `false` — the windowed path is step (c)); `root` is the
-/// process-CWD equivalent the level-script paths resolve against;
-/// `profiles` is the engine's `Profiles` seam (the shipped compositions
-/// pass [`RealProfiles`] over the same `Arc<Assets>` the menu's
-/// `RealMenuAssets` holds — the C++'s single `HGAssets`; the step-(a)
-/// tests pass their `testProfile` stand-in); `steam` is the engine's Steam
-/// seam (issue
-/// 020 — `mainClient` passes the composition's `oh_steam::SteamManager`;
-/// `mainPrintLuaDocs`'s `nullptr /* steamManager */` is
-/// `NoneSteamSink`).
-#[allow(clippy::too_many_arguments)]
+/// process-CWD equivalent the level-script paths resolve against.
 #[must_use]
-pub fn compose_with(
-    assets: Arc<oh_assets::Assets>,
-    root: PathBuf,
-    window: bool,
-    profiles: Arc<dyn Profiles + 'static>,
-    steam: Arc<dyn SteamSink + 'static>,
-    discord: Option<Arc<dyn Discord + 'static>>,
-) -> Composed {
+pub fn compose_with(assets: Arc<oh_assets::Assets>, root: PathBuf, window: bool) -> Composed {
     compose_with_config(
         assets,
         root,
         window,
-        profiles,
         Arc::new(RwLock::new(Config::default())),
-        steam,
-        discord,
         None,                      // the headless composition's renderer (the C++'s `nullptr`)
         None, // the headless composition's audio (the C++'s `audio == nullptr`)
         Arc::new(NullReplayStore), // issue 029a1 — headless: disk-silent (the compose_with_config docs)
@@ -565,6 +511,10 @@ pub fn compose_with(
 /// game and the menu; the windowed composition passes its shared
 /// `Arc<RwLock<Config>>` so the menu's config writes — e.g. the debug
 /// toggle the `Tid::Pause` trigger body reads — reach the engine).
+///
+/// (Plan 002 issue 02c1 retired the engine's `profiles` / `steam` /
+/// `discord` arguments together with the seams — the remaining
+/// `HexagonGame::new` arguments are the ones below.)
 ///
 /// `renderer` — the engine's `Renderer` seam (the C++ `HexagonGame`
 /// ctor's renderer argument): the windowed composition passes the
@@ -594,8 +544,7 @@ pub fn compose_with(
 ///
 /// `joystick` — the engine's `Joystick` seam (29j1): the WINDOWED
 /// desktop composition passes the shared `crate::joystick::RealJoystick`
-/// (the gilrs poller — the C++ `sf::Joystick` controller-0 read; the
-/// same object the menu's `MenuJoystick` seam views, one global);
+/// (the gilrs poller — the C++ `sf::Joystick` controller-0 read);
 /// the Android / wasm / headless compositions keep `NoJoystick` (the
 /// C++'s `isConnected(0) == false` / headless state).
 #[allow(clippy::too_many_arguments)]
@@ -604,10 +553,7 @@ pub fn compose_with_config(
     assets: Arc<oh_assets::Assets>,
     root: PathBuf,
     window: bool,
-    profiles: Arc<dyn Profiles + 'static>,
     config: Arc<RwLock<Config>>,
-    steam: Arc<dyn SteamSink + 'static>,
-    discord: Option<Arc<dyn Discord + 'static>>,
     renderer: Option<Arc<dyn Renderer + 'static>>,
     audio: Option<Arc<dyn Audio + 'static>>,
     replay_store: Arc<dyn ReplayStore + 'static>,
@@ -620,18 +566,15 @@ pub fn compose_with_config(
 
     // Phase 1: the engine, with the (state-less) host.
     let game = HexagonGame::<GameApiState>::new(
-        steam,
         config.clone(),
         assets.clone(),
         audio, // C++ `Audio* audio` — `oh_audio::Audio` windowed; `None` headless (issue 025e)
-        profiles,
         replay_store, // issue 029a1 — the C++ `death_saveReplay`'s filesystem half (the fn docs)
         host.clone() as Arc<dyn ScriptHost>,
         joystick, // 29j1 — the C++ `Joystick` global's poller (the fn docs)
         Arc::new(PcgCosmeticRng::new()),
         window,
         renderer, // issue 25b SG5 (the window's touch sink) / the C++ headless `nullptr`
-        discord,  // C++ `discordManager` (main.cpp:264-269,416) — `None` headless
     );
 
     // Phase 2: the shared state with the engine itself as backend.

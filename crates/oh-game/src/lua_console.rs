@@ -955,15 +955,8 @@ mod tests {
             particles: Vec::new(),
             trail_particles: Vec::new(),
             swap_particles: Vec::new(),
-            fingerprint_file: None,
-            fingerprint_frame: 0,
-            fingerprint_last_draws: 0,
-            must_spawn_pb_particles: false,
             swap_particles_spawn_info: None,
-            next_pb_particle_spawn: 0.0,
-            pb_text_growth: 0.0,
             message_text: String::new(),
-            pb_text: String::new(),
             status_text: String::new(),
             fps_text: String::new(),
             time_text: String::new(),
@@ -1002,10 +995,10 @@ mod tests {
             random_input_rng: Pcg32Fast::from_seed(0),
             fast_forward_target: None,
             advance_tick_count: None,
-            time_until_rich_presence_update: 0.0,
-            // C++ `discordAttempt{1}` / `discordHung{false}` (HexagonGame.hpp:91,89).
-            discord_hung: false,
-            discord_attempt: 1,
+            // 030b fingerprint (test stand-in: OFF).
+            fingerprint_file: None,
+            fingerprint_frame: 0,
+            fingerprint_last_draws: 0,
         }
     }
 
@@ -1938,7 +1931,7 @@ mod tests {
 
     use crate::hexagon_game::HexagonGame;
     use crate::lua_state::ReentrantMutex;
-    use crate::seams::{NoJoystick, NoneSteamSink, NullProfiles, NullReplayStore, PcgCosmeticRng};
+    use crate::seams::{NoJoystick, NullReplayStore, PcgCosmeticRng};
 
     /// A bare headless engine (no Lua host: `NoScriptHost` stands in the
     /// C++ engine's always-present `Lua::LuaContext`).
@@ -1951,18 +1944,15 @@ mod tests {
         )
         .expect("_RELEASE tree");
         let game = HexagonGame::new(
-            Arc::new(NoneSteamSink),
             config,
             Arc::new(assets),
             None,
-            Arc::new(NullProfiles),
             Arc::new(NullReplayStore),
             host,
             Arc::new(NoJoystick),
             Arc::new(PcgCosmeticRng::new()),
             false,
             None, // C++ headless tests: no renderer
-            None, // C++ headless tests: no Discord manager
         );
         let state = Arc::new(ReentrantMutex::new(shared_state()));
         game.attach_state(state);

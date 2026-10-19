@@ -179,14 +179,120 @@ re-reading the whole history.
   untouched and depend on none of the removed crates — 08 re-checks the
   targets.
 
-### 02 — crate removal / engine de-scope (pending)
+### 02c1 — Steam/Discord/profiles/PB (LANDED)
 
-- Final `HexagonGame::new` signature:
-- Removed `GameApi` methods:
-- `draw_target.rs` API:
-- Lua globals removed/no-oped:
-- RNG-order note:
-- `th-app` keep-list / temporary stubs:
+- Removed: `oh-discord` (crate + root member + `oh-game`/`oh-app` deps);
+  the `SteamSink`/`NoneSteamSink` seam, `steam_manager` field/arg,
+  rich-presence calls, `a22_swapdeath` branches, `discord` field/arg,
+  `discord_attempt`/`discord_hung`, `time_until_rich_presence_update`,
+  `death_update_rich_presence`, all `set_rich_presence_*`; the
+  `Profiles`/`NullProfiles` seam + `RealProfiles` + `profiles` field/arg;
+  `should_save_score` / `death_save_score_if_needed` /
+  `death_save_score_if_needed_and_show_pb_effects`; the PB effect state
+  (`must_spawn_pb_particles`, `next_pb_particle_spawn`, `pb_text_growth`,
+  `pb_text`) + accessors; the profile-active restart/menu-escape branch;
+  `oh-app` `ConfigSaveGuard`/`ProfileSaveGuard`.
+  `score` / `custom_score` / `score_invalid` + the level-status score
+  override are UNTOUCHED.
+- Final signatures (02c2 still to de-scope replay):
+  `HexagonGame::new(config: Arc<RwLock<Config>>, assets,
+  audio: Option<Arc<dyn Audio + 'static>>,
+  replay_store: Arc<dyn ReplayStore + 'static>,
+  script_host: Arc<dyn ScriptHost + 'static>,
+  joystick: Arc<dyn Joystick + 'static>,
+  cosmetic_rng: Arc<dyn CosmeticRng + 'static>, window: bool,
+  renderer: Option<Arc<dyn Renderer + 'static>>) -> Self` —
+  `steam_manager`/`profiles`/`discord` gone.
+  `oh_app::compose::compose_with(assets, root, window)` and
+  `compose_with_config(assets, root, window, config,
+  renderer: Option<Arc<dyn Renderer + 'static>>,
+  audio: Option<Arc<dyn Audio + 'static>>,
+  replay_store: Arc<dyn ReplayStore + 'static>,
+  joystick: Arc<dyn Joystick + 'static>) -> Composed` —
+  `profiles`/`steam`/`discord` args gone.
+  Remaining `seams.rs`: `Audio`/`NoAudio`, `ReplayStore`/`NullReplayStore`,
+  `ScriptError`/`ScriptHost`/`NoScriptHost`, `Joystick`/`NoJoystick`,
+  `CosmeticRng`/`PcgCosmeticRng`.
+- Removed `GameApi` method: `unlock_achievement` (the `GameApi` mock impls
+  in `oh-game` `lua_state.rs`/`lua_console.rs`, `oh-game/tests/common`
+  and `oh-lua/tests/api.rs` all follow). `GameApi::in_replay` KEPT (02c2
+  removes it with replay).
+- Lua globals: `steam_unlockAchievement` removed (the `oh-lua` `api/steam.rs`
+  module + `mod steam` registration + menu no-op entry + metadata);
+  registered-global count 285 → 284 (the `284` doc references in oh-lua
+  are current).
+- Replay-name fallback (recorded): `new_game`'s last-replay path records
+  `String::new()` (the C++ `no_profile`-equivalent headless state); `death_create_replay_file`
+  records `"no_profile"` always. `determinism.rs`'s `assert_replay_pins`
+  player_name pin re-based to `"no_profile"`; its `stream_fixture()`
+  serialization fixture still carries `"testProfile"` (byte-oracle data,
+  not a seam).
+- RNG-order note: the removed PB-particle spawn drew 7× `CosmeticRng` per
+  spawn (x/rotation/scale/alpha + velocity/angular draws, every 2.75 s
+  while due) — those draws no longer occur. Surviving cosmetic draws:
+  swap/kill particles, the random music-segment pick, draw-time
+  camera-shake jitter. Simulation RNG + input/update order UNCHANGED.
+- `oh-app` lifecycle no-persistence state: public API is exactly
+  `create_folder_if_non_existant` + `load_and_reapply`; no config/
+  profile writes anywhere in `oh-app`.
+- ACCEPTED DEVIATION (supervisor ruling 2026-10-24): `oh-app/src/bridge.rs`
+  `AppDraw::new` keeps two inert `DrawState` initializers —
+  `pb_text: graphics::init_text(&font_bold, "", 65.0, zoom)` +
+  `pb_text_growth: 0.0` (lines 198-199). `oh_render::graphics::DrawState`
+  (02c3's scope) still carries both fields with no field-skipping
+  constructor, so the exhaustive literal must name them; dead defaults
+  until 02c3. CONSEQUENCE: `rg pb_text crates/oh-app/src` is expected to
+  hit EXACTLY those two lines until 02c3 — do not "fix" them in 02c2.
+  02c3 must remove the two lines + the `DrawState` fields + the
+  `oh-render` `text_draw`/`graphics` PB residue together.
+- 02c3/09: `oh-assets` still loads/saves profiles (`Assets::profile_save_all` /
+  `profile_set_current`, and the loader reads `Profiles/`); no engine/app
+  caller remains. Dead-surface cleanup, not a 02c1 seam.
+- Doc-comment residue (02c2/02c3/09 sweep): the `oh-lua` `api/mod.rs`
+  module doc names `steam_unlockAchievement` (C++ group note); the
+  `oh-app` `lifecycle.rs` docs mention the retired `Profiles/` folder
+  (one quotes the C++ log-message string the generic helper mirrors).
+- Removed tests: `oh-game/tests/discord_retry.rs` +
+  `oh-game/tests/pb_particle_rng_order.rs` (whole files); the
+  `go_to_menu_score.rs` no-profile death/restart `go_to_menu` test +
+  `NoLocalProfiles` fixture; the `oh-app` lifecycle save-guard test
+  modules (folder test retargeted to neutral `Data/`/`Packs/` folders);
+  the `oh-app/tests/bridge.rs` PB text-size assertion.
+  Surviving deterministic score/timing assertions unweakened.
+- For 02c2 (remove replay): `oh-replay` + `ReplayStore`/
+  `NullReplayStore` + `ActiveReplay` + `in_replay` +
+  `last_replay_data` + the replay record/playback branches +
+  `set_last_replay` + `save_replay` (gate now
+  `!in_replay() && !status.has_died`) + `death_create_replay_file` /
+  `death_send_and_save_replay` + `new_game`'s `execute_last_replay` param
+  all still present; `oh-app` `tests/bridge.rs` still pins
+  replay-seeded determinism through `set_last_replay` +
+  `oh_replay::ReplayFile` (adapt or drop that half WITHOUT weakening the
+  pass-order / frametime / texture assertions); `GameApi::in_replay` +
+  the `new_game`/`death` replay-name fallbacks go with it.
+- For 02c3 (fingerprint/RNG + final engine cleanup): the 030b
+  fingerprint path (`fingerprint_file`/`fingerprint_frame`/
+  `fingerprint_last_draws` in `hexagon_game.rs`, OFF by default) + the
+  `oh-render` `DrawState` PB fields (see accepted deviation) + the doc
+  residue above.
+- Gate 4/4 green (fmt/build/clippy/test): 63 suites, 552 passed / 0
+  failed / 1 ignored (the pre-existing `oh-lua` sandbox doc-test
+  ignore). 02b's tail was 569 passed; the 17-test delta is the removed
+  Discord/PB/lifecycle/PB-text/Steam coverage. `Cargo.lock`
+  regenerated (`oh-discord` entry gone). Host-only again (no
+  emscripten/android toolchains on this box — 08 re-checks the targets).
+
+### 02 — crate removal / engine de-scope (02c1 LANDED; 02c2/02c3 pending)
+
+- 02c2 (remove replay; remove `oh-replay`): see §02c1's "For 02c2"
+  note — the replay surface, `GameApi::in_replay` and the
+  replay-name fallbacks are 02c2's removal list.
+- 02c3 (remove the parity fingerprint/RNG + final engine cleanup):
+  fingerprint path + `oh-render` `DrawState` PB fields + the two inert
+  `bridge.rs` initializers + the doc residue (see §02c1).
+- `draw_target.rs` API / `th-app` keep-list: landed in 02a/02b (see
+  those sections); the composition signatures moved again in 02c1 (see
+  §02c1).
 
 ### 03 — rename (pending)
 

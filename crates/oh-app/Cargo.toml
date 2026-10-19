@@ -28,10 +28,6 @@ oh-assets = { path = "../oh-assets" }
 libc = "0.2"
 oh-replay = { path = "../oh-replay" }
 oh-rng = { path = "../oh-rng" }
-# The Discord manager seam the composition's `compose_with_config` carries
-# (the C++ `main.cpp:264-269` `discordManager`): the tiny runtime passes
-# `None` (the C++'s headless / no-manager state).
-oh-discord = { path = "../oh-discord" }
 # The real audio is on EVERY target: the `oh_render::audio::AudioDevice`
 # seam picks the backend per target (rodio on desktop/Android, emscripten's
 # OpenAL on the web), so `oh-audio` is a COMMON dep. Its `rodio` OGG decode

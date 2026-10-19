@@ -331,10 +331,6 @@ mod tests {
         assert_eq!(LuaMetadata::category_index_from_name("ct_create"), 8);
         assert_eq!(LuaMetadata::category_index_from_name("shdr_setUniformF"), 9);
         // No underscore / unknown prefix -> Miscellaneous.
-        assert_eq!(
-            LuaMetadata::category_index_from_name("steam_unlockAchievement"),
-            10
-        );
         assert_eq!(LuaMetadata::category_index_from_name("m_messageAdd"), 10);
         assert_eq!(LuaMetadata::category_index_from_name("onInit"), 10);
         assert_eq!(LuaMetadata::category_index_from_name("x_wall"), 10);

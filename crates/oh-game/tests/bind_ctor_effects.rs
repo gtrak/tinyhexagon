@@ -26,9 +26,7 @@ use oh_config::joystick;
 use oh_config::{Button, Combo, Config, Jid, JoystickPoll, Key, Tid, MAX_BINDS};
 use oh_game::hexagon_game::HexagonGame;
 use oh_game::lua_state::SharedState;
-use oh_game::seams::{
-    NoJoystick, NoScriptHost, NoneSteamSink, NullProfiles, NullReplayStore, PcgCosmeticRng,
-};
+use oh_game::seams::{NoJoystick, NoScriptHost, NullReplayStore, PcgCosmeticRng};
 
 fn release_dir() -> std::path::PathBuf {
     let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
@@ -89,13 +87,11 @@ fn game_ctor_runs_the_cpp_keyboard_sanity_and_joystick_bind_load() {
     // `loadAllJoystickBinds()` @:448 run on the shared config, before
     // anything else reads a bind).
     let _game: HexagonGame<SharedState> = HexagonGame::new(
-        Arc::new(NoneSteamSink),
         config.clone(),
         Arc::new(
             oh_assets::Assets::new(release_dir(), true, true).expect("_RELEASE loads headless"),
         ),
         None, // C++ `audio == nullptr`
-        Arc::new(NullProfiles),
         Arc::new(NullReplayStore),
         Arc::new(NoScriptHost),
         Arc::new(NoJoystick),
@@ -103,7 +99,6 @@ fn game_ctor_runs_the_cpp_keyboard_sanity_and_joystick_bind_load() {
         true, /* window: the C++ shipping composition; the ctor side
               effects themselves are NOT window-gated (only the
               per-frame joystick handlers are) */
-        None,
         None,
     );
 

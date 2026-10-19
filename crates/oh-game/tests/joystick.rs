@@ -22,7 +22,7 @@ use oh_config::joystick;
 use oh_config::{Jdir, Jid, JoystickPoll, TIME_STEP};
 use oh_game::seams::{Joystick, NullReplayStore, PcgCosmeticRng};
 
-use common::{capture_go_to_menu, compose_with, release_dir, TestProfiles};
+use common::{capture_go_to_menu, compose_with, release_dir};
 
 const PACK: &str = "ohvrvanilla_vittorio_romeo_cube_1";
 const LEVEL: &str = "ohvrvanilla_vittorio_romeo_cube_1_apeirogon";
@@ -89,7 +89,6 @@ fn joystick_controls_pipeline_synthetic_polls() {
         assets,
         release_dir(),
         true,
-        Arc::new(TestProfiles),
         Arc::new(NullReplayStore),
         joy.clone(),
         Arc::new(PcgCosmeticRng::new()),

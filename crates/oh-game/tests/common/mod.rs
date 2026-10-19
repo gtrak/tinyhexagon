@@ -1,8 +1,8 @@
 //! Test-side composition (issue 009 step c): a REAL
 //! `oh_game::seams::ScriptHost` over `oh-lua`, a real `AssetsApi` adapter
-//! over `oh_assets::Assets`, and the C++ test's `testProfile` profile seam —
-//! everything `determinism.rs` / `callback_order.rs` need to run
-//! `HexagonGame` headless with the level's `.lua` actually executing.
+//! over `oh_assets::Assets` — everything `determinism.rs` /
+//! `callback_order.rs` need to run `HexagonGame` headless with the level's
+//! `.lua` actually executing.
 //!
 //! # Two-phase build (DECISIONS.md D-013)
 //!
@@ -17,7 +17,7 @@
 //! 4. build `GameApiState` / `State` with that backend + the `run_lua_file`
 //!    closure (the C++ `fRunLuaFile` lambda, `HGScripting.cpp:1107`),
 //! 5. `host.attach_state(state)` + `game.attach_state(state)` — after that
-//!    the engine and the 285 registered lambdas mutate ONE store.
+//!    the engine and the 284 registered lambdas mutate ONE store.
 //!
 //! # `ScriptHost: Send + Sync` given `mlua::Lua: !Send`
 //!
@@ -39,7 +39,7 @@
 //!
 //! The C++ `newGame` does `lua = Lua::LuaContext{}; initLua();` — a FRESH
 //! context per game. The composition reuses ONE context and re-runs
-//! `init_lua_api` + `init_level_api` on each `new_game`: redefining the 285
+//! `init_lua_api` + `init_level_api` on each `new_game`: redefining the 284
 //! globals is idempotent (every registered closure is stateless — it locks
 //! the shared `State`), and the engine clears `main_timeline` /
 //! `event_timeline` / `custom_timelines` / `walls` /
@@ -58,8 +58,8 @@ use oh_data::{MusicData, PackData, StyleData};
 use oh_game::hexagon_game::HexagonGame;
 use oh_game::lua_state::{GameApi, ReentrantMutex};
 use oh_game::seams::{
-    CosmeticRng, Joystick, NoJoystick, NoneSteamSink, NullReplayStore, PcgCosmeticRng, Profiles,
-    ReplayStore, ScriptError, ScriptHost,
+    CosmeticRng, Joystick, NoJoystick, NullReplayStore, PcgCosmeticRng, ReplayStore, ScriptError,
+    ScriptHost,
 };
 use oh_game::{HexagonGameStatus, LevelStatus};
 use oh_lua::api::callbacks;
@@ -68,31 +68,6 @@ use oh_lua::api::{init_level_api, init_lua_api, State};
 use oh_lua::{LuaContext, LuaError};
 use oh_replay::ReplayFile;
 use oh_rng::RandomNumberGenerator;
-
-/// The C++ `ReplayExecution.t.cpp` profile:
-/// `ProfileData{GAME_VERSION, "testProfile"}` + `addLocalProfile` +
-/// `pSetCurrent("testProfile")`. oh-assets ports profile *loading* only —
-/// the mutation API (`addLocalProfile` / `pSetCurrent`) is deferred (see
-/// `oh_assets` module docs), so the engine's `Profiles` seam gets its own
-/// implementation reporting the C++ test's current profile ("testProfile"
-/// is what `death_createReplayFile` records as `player_name`).
-pub struct TestProfiles;
-
-impl Profiles for TestProfiles {
-    fn any_local_profile_active(&self) -> bool {
-        true
-    }
-
-    fn current_local_profile_name(&self) -> String {
-        "testProfile".to_string()
-    }
-
-    fn get_local_score(&self, _level_id: &str) -> f32 {
-        0.0
-    }
-
-    fn set_local_score(&self, _level_id: &str, _score: f32) {}
-}
 
 /// The `HGAssets` lookups the 007 lambdas perform, backed by the real
 /// `oh_assets::Assets` registry (mapping/lua-api.md §1/§6).
@@ -488,9 +463,9 @@ pub fn capture_go_to_menu(game: &HexagonGame<GameApiState>) -> Arc<std::sync::Mu
 
 /// Builds the composition for one engine instance (C++ test: one
 /// `HexagonGame` per `doTest` call, all sharing one `HGAssets`), with the
-/// C++ test's seam defaults: `TestProfiles`, `NullReplayStore`,
-/// `NoJoystick` (see [`compose_with`] for the parameterized form, used by
-/// the issue 029m 29d1 `go_to_menu` score-send tests).
+/// C++ test's seam defaults: `NullReplayStore`, `NoJoystick` (see
+/// [`compose_with`] for the parameterized form, used by the issue 029m
+/// 29d1 `go_to_menu` score-send tests).
 ///
 /// `window` mirrors the C++ `mGameWindow != nullptr` (the replay tests pass
 /// a null window in the headless loop); `root` is the process-CWD
@@ -502,27 +477,23 @@ pub fn compose(assets: Arc<oh_assets::Assets>, root: PathBuf, window: bool) -> C
         assets,
         root,
         window,
-        Arc::new(TestProfiles),
         Arc::new(NullReplayStore),
         Arc::new(NoJoystick),
         Arc::new(PcgCosmeticRng::new()),
     )
 }
 
-/// [`compose`] with injectable `Profiles` / `ReplayStore` / `Joystick` /
-/// `CosmeticRng` seams — the form tests that observe the engine's
-/// profile-dependent paths (issue 029m 29d1: the `go_to_menu` score send)
-/// and its cosmetic-RNG draw order (29d2: `makePBParticle`) use. `window` /
-/// `root` mean the same as in [`compose`]. `allow(dead_code)`: each test
-/// binary compiles this module separately and not all of them use this
-/// parameterized variant.
+/// [`compose`] with injectable `ReplayStore` / `Joystick` / `CosmeticRng`
+/// seams — the form tests that observe the engine's cosmetic-RNG draw
+/// order use (the PB particle test was retired in 02c1). `window` / `root` mean the same as
+/// in [`compose`]. `allow(dead_code)`: each test binary compiles this
+/// module separately and not all of them use this parameterized variant.
 #[allow(dead_code)]
 #[allow(clippy::too_many_arguments)]
 pub fn compose_with(
     assets: Arc<oh_assets::Assets>,
     root: PathBuf,
     window: bool,
-    profiles: Arc<dyn Profiles>,
     replay_store: Arc<dyn ReplayStore>,
     joystick: Arc<dyn Joystick>,
     cosmetic_rng: Arc<dyn CosmeticRng>,
@@ -532,7 +503,6 @@ pub fn compose_with(
         root,
         window,
         None, // C++ headless tests: no renderer
-        profiles,
         replay_store,
         joystick,
         cosmetic_rng,
@@ -552,7 +522,6 @@ pub fn compose_with_renderer(
     root: PathBuf,
     window: bool,
     renderer: Option<Arc<dyn oh_game::renderer::Renderer>>,
-    profiles: Arc<dyn Profiles>,
     replay_store: Arc<dyn ReplayStore>,
     joystick: Arc<dyn Joystick>,
     cosmetic_rng: Arc<dyn CosmeticRng>,
@@ -563,7 +532,6 @@ pub fn compose_with_renderer(
         window,
         Arc::new(RwLock::new(Config::default())),
         renderer,
-        profiles,
         replay_store,
         joystick,
         cosmetic_rng,
@@ -583,7 +551,6 @@ pub fn compose_with_config(
     window: bool,
     config: Arc<RwLock<Config>>,
     renderer: Option<Arc<dyn oh_game::renderer::Renderer>>,
-    profiles: Arc<dyn Profiles>,
     replay_store: Arc<dyn ReplayStore>,
     joystick: Arc<dyn Joystick>,
     cosmetic_rng: Arc<dyn CosmeticRng>,
@@ -595,18 +562,15 @@ pub fn compose_with_config(
 
     // Phase 1: the engine, with the (state-less) host.
     let game = HexagonGame::<GameApiState>::new(
-        Arc::new(NoneSteamSink),
         config.clone(),
         assets.clone(),
         None, // C++ `audio == nullptr`
-        profiles,
         replay_store,
         host.clone() as Arc<dyn ScriptHost>,
         joystick,
         cosmetic_rng,
         window,
         renderer,
-        None, // C++ headless tests: no Discord manager
     );
 
     // Phase 2: the shared state with the engine itself as backend.

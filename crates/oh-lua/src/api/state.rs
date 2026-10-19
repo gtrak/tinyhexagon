@@ -2,7 +2,7 @@
 //! (issue 007; shared storage moved to `oh_game::lua_state` by issue 009,
 //! DECISIONS.md D-013).
 //!
-//! Because the 285 lambdas and the engine update loop must mutate **one**
+//! Because the 284 lambdas and the engine update loop must mutate **one**
 //! store of `levelStatus` / `status` / `walls` / `rng` / timelines, the
 //! data lives in `oh-game` (this crate depends on it, so the other
 //! direction would be a cargo cycle):
@@ -170,7 +170,7 @@ pub trait AssetsApi: Send + Sync {
 /// for the `Arc`-shared `State` handle.
 pub type RunLuaFile = Arc<dyn Fn(&str, &SharedLua) -> Result<(), LuaError> + Send + Sync + 'static>;
 
-/// Everything the 285 registered functions read or write.
+/// Everything the 284 registered functions read or write.
 ///
 /// The gameplay data moved to [`SharedState`] (issue 009 / D-013) so the
 /// engine update loop in `oh-game` can share it; this wrapper keeps the

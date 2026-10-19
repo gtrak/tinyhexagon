@@ -7,13 +7,6 @@
 //! app-level issue, or a test) implements:
 //!
 //! * [`Audio`] — C++ `Audio* audio` (nullable).
-//! * [`Profiles`] — the C++ `HGAssets` local-profile/score surface
-//!   (`anyLocalProfileActive`, `getCurrentLocalProfile().getName()`,
-//!   `getLocalScore`, `setLocalScore`) — the full write/state surface is
-//!   now ported in `oh-assets` (issue 029c1); the shipping compositions
-//!   back this seam with `compose::RealProfiles` over the shared
-//!   `Arc<oh_assets::Assets>` the menu also holds (the C++'s single
-//!   `HGAssets`); [`NullProfiles`] is the test stand-in.
 //! * [`ReplayStore`] — C++ `death_saveReplay`'s `Replays/<levelId>/<diff>x/`
 //!   file write (the C++ server-send half always fails headless:
 //!   `hexagonClient == nullptr`).
@@ -26,7 +19,8 @@
 //!   (fed by the platform window in a later issue).
 //! * [`CosmeticRng`] — C++ `ssvu::getRndR/getRndI` (the SSVUtils *global*
 //!   thread-local `pcg32_fast`, NOT the game `random_number_generator`).
-//!   Only the windowed cosmetic-particle paths draw from it.
+//!   Only the windowed cosmetic paths (music-segment pick, camera-shake
+//!   jitter) draw from it.
 //!
 //! Every trait is `Send + Sync` because the engine stores the objects as
 //! `Arc<dyn …>` and the engine itself must be `Send + Sync` (it is the
@@ -86,49 +80,6 @@ impl Audio for NoAudio {
         false
     }
     fn set_current_music_pitch(&self, _: f32) {}
-}
-
-/// The C++ `HGAssets` local-profile/score surface (mapping `data-json.md`
-/// profile section): `currentProfilePtr` is non-null iff a profile is
-/// active, and scores live inside the active `ProfileData`.
-///
-/// The shipping compositions (oh-app `compose::RealProfiles`, issue
-/// 029c1) back this with the SAME `Arc<oh_assets::Assets>` the menu's
-/// `RealMenuAssets` holds — the C++'s single `HGAssets` (main.cpp:381/
-/// :434), so a score set here during play is visible in the menu
-/// immediately and persists through the `mainClient` exit save.
-/// [`NullProfiles`] remains the no-profile stand-in for tests (the C++'
-/// `currentProfilePtr == nullptr` state).
-pub trait Profiles: Send + Sync + 'static {
-    /// C++ `assets.anyLocalProfileActive()`.
-    fn any_local_profile_active(&self) -> bool;
-    /// C++ `assets.getCurrentLocalProfile().getName()` (C++ asserts a
-    /// profile is active; callers check `any_local_profile_active` first).
-    fn current_local_profile_name(&self) -> String;
-    /// C++ `assets.getLocalScore(id)` (`ProfileData::getScore` — missing id
-    /// is `0.f`).
-    fn get_local_score(&self, level_id: &str) -> f32;
-    /// C++ `assets.setLocalScore(id, score)` (`ProfileData::setScore`).
-    fn set_local_score(&self, level_id: &str, score: f32);
-}
-
-/// No-profile stand-in (`currentProfilePtr == nullptr`) — the test
-/// equivalent of the C++'s never-`pSetCurrent`ed state (the shipping
-/// compositions use `compose::RealProfiles` over the shared `Assets` store
-/// instead, issue 029c1).
-pub struct NullProfiles;
-
-impl Profiles for NullProfiles {
-    fn any_local_profile_active(&self) -> bool {
-        false
-    }
-    fn current_local_profile_name(&self) -> String {
-        String::new()
-    }
-    fn get_local_score(&self, _: &str) -> f32 {
-        0.0
-    }
-    fn set_local_score(&self, _: &str, _: f32) {}
 }
 
 /// C++ `death_saveReplay`'s filesystem half: write the compressed replay
@@ -446,58 +397,4 @@ impl CosmeticRng for PcgCosmeticRng {
         // C++ `getRndI`: `uniform_int_distribution{min, max - 1}`.
         uniform_int(&mut self.rng.lock(), min, max - 1)
     }
-}
-
-/// C++ `hg::Steam::steam_manager* steamManager` — the C++ `HexagonGame`'s
-/// FIRST constructor argument (main.cpp:415) / `MenuGame`'s value argument
-/// (main.cpp:434); the composition's Steam surface.
-///
-/// The composition wires `oh_steam::SteamManager` in here (issue 020):
-/// the `steam` cargo feature selects the real-SDK backend, and without it
-/// (or without a Steam client) the manager's `NoSteam` backend makes every
-/// call a logged no-op — the C++'s graceful-degradation model
-/// (`steamAttempt`/`steamHung` on `HexagonGame`, HexagonGame.hpp:90-92;
-/// the hung counter lives in the manager in the port, so the sink's
-/// `update_rich_presence_callbacks` carries it). The C++'s
-/// `steamManager == nullptr` null-equivalent (every call site is
-/// `steamManager != nullptr`-gated, e.g. HGUpdate.cpp:148,450,480,498)
-/// is [`NoneSteamSink`].
-///
-/// The methods are exactly the C++ call sites the composition drives:
-/// the engine's three (below, via the engine's `steam_manager` field) and
-/// the menu's two (`oh-menu` is extend-only — the composition calls them
-/// at the `MenuGame::init` lifecycle point, MenuGame.cpp:793-794).
-pub trait SteamSink: Send + Sync + 'static {
-    /// C++ `steamManager->set_rich_presence_in_game(nameStr, diffStr,
-    /// timeStr)` (HGUpdate.cpp:147-149).
-    fn set_rich_presence_in_game(&self, level_name: &str, difficulty_mult: &str, time: &str);
-    /// C++ `HexagonGame::updateRichPresenceCallbacks()`'s Steam half
-    /// (HexagonGame.cpp:477-495 — the C++'s `steamManager->
-    /// run_callbacks()` + `steamAttempt`/`steamHung` accounting).
-    fn update_rich_presence_callbacks(&self);
-    /// C++ `steamManager->unlock_achievement(id)` (HGUpdate.cpp:450/480/
-    /// 498 — `a22_swapdeath`; HexagonGame.cpp:1063 — `a24_onlinescore`,
-    /// online-client-only, inert in this port; HGScripting.cpp:850 — the
-    /// Lua `unlockAchievement` API, via the `GameApi` backend).
-    fn unlock_achievement(&self, achievement_id: &str);
-    /// C++ `steamManager.set_rich_presence_in_menu()` — called at the
-    /// `MenuGame::init` lifecycle point (MenuGame.cpp:793).
-    fn set_rich_presence_in_menu(&self);
-    /// C++ `steamManager.update_hardcoded_achievements()` — called at the
-    /// `MenuGame::init` lifecycle point (MenuGame.cpp:794).
-    fn update_hardcoded_achievements(&self);
-}
-
-/// C++ `steamManager == nullptr` — the engine's null-manager equivalent
-/// (every call site is a no-op; the C++ gates them with
-/// `steamManager != nullptr`).
-#[derive(Debug, Default, Clone, Copy)]
-pub struct NoneSteamSink;
-
-impl SteamSink for NoneSteamSink {
-    fn set_rich_presence_in_game(&self, _level_name: &str, _difficulty_mult: &str, _time: &str) {}
-    fn update_rich_presence_callbacks(&self) {}
-    fn unlock_achievement(&self, _achievement_id: &str) {}
-    fn set_rich_presence_in_menu(&self) {}
-    fn update_hardcoded_achievements(&self) {}
 }

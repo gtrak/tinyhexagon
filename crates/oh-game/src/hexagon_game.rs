@@ -41,7 +41,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use oh_config::{Config, TIME_STEP};
 use oh_data::{get_level_validator, LevelData, PackData, StyleData};
-use oh_discord::Discord;
 use oh_math::hg::{concat::format_ostream_f64, string::to_uppercase};
 use oh_math::ssvs::Vec2;
 use oh_replay::{compress_replay_file, InputBits, ReplayData, ReplayFile};
@@ -50,7 +49,7 @@ use oh_rng::{uniform_int, Pcg32Fast, RandomNumberGenerator, Seed};
 use crate::camera::Camera;
 use crate::lua_state::{ReentrantMutex, ReentrantMutexGuard, SharedState, SharedStore};
 use crate::renderer::Renderer;
-use crate::seams::{Audio, CosmeticRng, Joystick, Profiles, ReplayStore, ScriptHost, SteamSink};
+use crate::seams::{Audio, CosmeticRng, Joystick, ReplayStore, ScriptHost};
 use crate::{
     CPlayer, CWall, FastVertexVectorTris, HexagonGameStatus, LevelStatus, SpeedData, StateChange,
     Timeline2, Timeline2Runner,
@@ -256,16 +255,12 @@ pub struct EngineState {
     pub(crate) particles: Vec<Particle>,
     pub(crate) trail_particles: Vec<TrailParticle>,
     pub(crate) swap_particles: Vec<SwapParticle>,
-    pub(crate) must_spawn_pb_particles: bool,
     pub(crate) swap_particles_spawn_info: Option<SwapParticleSpawnInfo>,
-    pub(crate) next_pb_particle_spawn: f32,
-    pub(crate) pb_text_growth: f32,
 
-    // C++ `sf::Text messageText / pbText / (os -> status) / fpsText /
-    // timeText / replayText` — the string content only (fonts/layout are
+    // C++ `sf::Text messageText / (os -> status) / fpsText / timeText /
+    // replayText` — the string content only (fonts/layout are
     // render-backend concerns, issue 11).
     pub(crate) message_text: String,
-    pub(crate) pb_text: String,
     pub(crate) status_text: String,
     pub(crate) fps_text: String,
     pub(crate) time_text: String,
@@ -356,15 +351,6 @@ pub struct EngineState {
     pub(crate) fast_forward_target: Option<f64>,
     pub(crate) advance_tick_count: Option<i32>,
 
-    // C++ `timeUntilRichPresenceUpdate` (rich presence; the STEAM manager is
-    // still null — issue 20; the Discord manager is the `discord` seam).
-    pub(crate) time_until_rich_presence_update: f32,
-    // C++ `discordHung` / `discordAttempt` (HexagonGame.hpp:89,91) — the
-    // retry/hang state for the Discord `run_callbacks` (HexagonGame.cpp:
-    // 495-506); `discordAttempt` starts at `1`, `discordHung` at `false`.
-    pub(crate) discord_hung: bool,
-    pub(crate) discord_attempt: i8,
-
     // 030b fingerprint (OFF BY DEFAULT, additive-only; see
     // .agents/plans/001-rust-port/parity/cpp-fingerprint-definition.md):
     // `fingerprint_file == None` = disabled (the default) — `update` takes
@@ -400,10 +386,6 @@ impl<S: SharedStore> Clone for HexagonGame<S> {
 }
 
 pub(crate) struct Inner<S: SharedStore> {
-    // C++ `hg::Steam::steam_manager* steamManager` (the C++'s FIRST
-    // constructor argument, main.cpp:415) — the engine's Steam surface
-    // (issue 020; [`SteamSink`] / [`NoneSteamSink`]).
-    pub(crate) steam_manager: Arc<dyn SteamSink + 'static>,
     // The shared engine/Lua store (D-013). Attached after construction
     // because the composition's `GameApiState` needs `Arc<dyn GameApi>` =
     // this engine, which needs to exist first (two-phase, see
@@ -417,12 +399,6 @@ pub(crate) struct Inner<S: SharedStore> {
     pub(crate) config: Arc<RwLock<Config>>,
     // C++ `Audio* audio` (nullable).
     pub(crate) audio: Option<Arc<dyn Audio + 'static>>,
-    // C++ `HGAssets` local-profile/score surface.
-    pub(crate) profiles: Arc<dyn Profiles + 'static>,
-    // C++ `Discord::discord_manager* discordManager` (HexagonGame.hpp:88) —
-    // nullable: `main.cpp:264-269` emplaces it only when NOT headless, and
-    // `main.cpp:416` passes `has_value() ? &*discordManager : nullptr`.
-    pub(crate) discord: Option<Arc<dyn Discord + 'static>>,
     // C++ `death_saveReplay` file-write half.
     pub(crate) replay_store: Arc<dyn ReplayStore + 'static>,
     // C++ `Lua::LuaContext lua` / `initLua` / `runLuaFile`.
@@ -481,23 +457,12 @@ pub type DeathReplayCallback = Arc<dyn Fn(&ReplayFile) + Send + Sync + 'static>;
 /// `oh_app::windowed`).
 pub type GoToMenuCallback = Arc<dyn Fn(bool) + Send + Sync>;
 
-/// C++ `HexagonGame::SaveScoreIfNeededResult` (private enum).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SaveScoreIfNeededResult {
-    NoWindow,
-    ShouldNotSave,
-    NotPersonalBest,
-    PersonalBest,
-}
-
 impl<S: SharedStore> HexagonGame<S> {
     /// C++ `HexagonGame(steamManager, discordManager, assets, audio,
-    /// mGameWindow, hexagonClient)` — the discord/client managers have no
-    /// Rust backing yet (their call sites stay null-gated and therefore
-    /// inert; issues 17/21); `steam_manager` is the C++'s first argument
-    /// (issue 020: the `oh_steam::SteamManager` the composition hands the
-    /// engine, or the null-manager equivalent [`crate::seams::
-    /// NoneSteamSink`]).
+    /// mGameWindow, hexagonClient)` — the steam/discord/client managers
+    /// have no Rust backing (plan 002 issue 02c1 retired the Steam and
+    /// Discord seams; the client manager never landed), so the port's
+    /// constructor takes the remaining surfaces.
     ///
     /// When `window` is true the constructor emplaces the two cameras
     /// exactly like the C++ (background: center (0,0), size
@@ -509,18 +474,15 @@ impl<S: SharedStore> HexagonGame<S> {
     /// the store with `Arc<dyn GameApi>` = a clone of this engine).
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        steam_manager: Arc<dyn SteamSink + 'static>,
         config: Arc<RwLock<Config>>,
         assets: Arc<oh_assets::Assets>,
         audio: Option<Arc<dyn Audio + 'static>>,
-        profiles: Arc<dyn Profiles + 'static>,
         replay_store: Arc<dyn ReplayStore + 'static>,
         script_host: Arc<dyn ScriptHost + 'static>,
         joystick: Arc<dyn Joystick + 'static>,
         cosmetic_rng: Arc<dyn CosmeticRng + 'static>,
         window: bool,
         renderer: Option<Arc<dyn Renderer + 'static>>,
-        discord: Option<Arc<dyn Discord + 'static>>,
     ) -> Self {
         let (background_camera, overlay_camera) = if window {
             let c = config.read().expect("config poisoned");
@@ -576,12 +538,8 @@ impl<S: SharedStore> HexagonGame<S> {
             particles: Vec::new(),
             trail_particles: Vec::new(),
             swap_particles: Vec::new(),
-            must_spawn_pb_particles: false,
             swap_particles_spawn_info: None,
-            next_pb_particle_spawn: 0.0,
-            pb_text_growth: 0.0,
             message_text: String::new(),
-            pb_text: String::new(),
             status_text: String::new(),
             fps_text: String::new(),
             time_text: String::new(),
@@ -620,10 +578,6 @@ impl<S: SharedStore> HexagonGame<S> {
             random_input_rng: Pcg32Fast::from_seed(entropy_seed()),
             fast_forward_target: None,
             advance_tick_count: None,
-            time_until_rich_presence_update: 0.0,
-            // C++ `discordAttempt{1}` / `discordHung{false}` (HexagonGame.hpp:91,89).
-            discord_hung: false,
-            discord_attempt: 1,
             // 030b fingerprint: OFF by default (the C++ `fingerprintFile` is
             // nullptr until `setFingerprintPath`).
             fingerprint_file: None,
@@ -659,13 +613,10 @@ impl<S: SharedStore> HexagonGame<S> {
             .load_all_joystick_binds();
 
         Self(Arc::new(Inner {
-            steam_manager,
             state: std::sync::OnceLock::new(),
             assets,
             config,
             audio,
-            profiles,
-            discord,
             replay_store,
             script_host,
             joystick,
@@ -798,10 +749,12 @@ impl<S: SharedStore> HexagonGame<S> {
         } else {
             if e.active_replay.is_none() {
                 e.last_played_score = temp_replay_score;
-                // C++ `assets.getCurrentLocalProfile().getName()` — called
-                // unconditionally (the `no_profile` fallback lives in
-                // `death_createReplayFile`; NullProfiles reports "").
-                let rf_name = self.0.profiles.current_local_profile_name();
+                // C++ `assets.getCurrentLocalProfile().getName()` — the
+                // profiles seam was retired by plan 002 issue 02c1 (no
+                // local profile exists in the tiny runtime), so the
+                // replay's `playerName` is the neutral empty string
+                // (the C++'s `no_profile`-equivalent headless state).
+                let rf_name = String::new();
                 e.active_replay = Some(ActiveReplay::new(ReplayFile {
                     version: 0,
                     player_name: rf_name.into(),
@@ -870,7 +823,6 @@ impl<S: SharedStore> HexagonGame<S> {
 
         // Events cleanup.
         e.message_text.clear();
-        e.pb_text.clear();
         g.event_timeline.clear();
         // C++ `eventTimelineRunner = {};` (HexagonGame.cpp:669). Resetting the
         // timeline WITHOUT its runner leaves a stale `wait_start_tp` /
@@ -913,10 +865,7 @@ impl<S: SharedStore> HexagonGame<S> {
         e.must_start = false;
 
         // Particles cleanup.
-        e.pb_text_growth = 0.0;
-        e.must_spawn_pb_particles = false;
         e.swap_particles_spawn_info = None;
-        e.next_pb_particle_spawn = 0.0;
         e.particles.clear();
         e.trail_particles.clear();
         e.swap_particles.clear();
@@ -992,7 +941,6 @@ impl<S: SharedStore> HexagonGame<S> {
         // Set initial values for some status fields from Lua.
         g.status.pulse_delay += g.level_status.pulse_initial_delay;
         g.status.beat_pulse_delay += g.level_status.beat_pulse_initial_delay;
-        e.time_until_rich_presence_update = -1.0; // immediate update
 
         // C++ `newGame`'s "Prepare text for input hints on restart/
         // replay" (HexagonGame.cpp:758-821) — VERBATIM, window-gated
@@ -1142,31 +1090,10 @@ impl<S: SharedStore> HexagonGame<S> {
         self.est().message_text.clear();
         self.play_sound_override("go.ogg");
 
-        if !self.must_replay_input() {
-            // C++ (HGUpdate.cpp:512-524): `nameStr = nameFormat(name)`,
-            // `packStr = nameFormat(getPackName())`, `diffStr =
-            // diffFormat(difficultyMult)`, and — when `discordManager !=
-            // nullptr` — `set_rich_presence_in_game(nameStr + " [x" + diffStr
-            // + "]", packStr)` (dead defaults to false).
-            let name_str = self.name_format(&g.level_name);
-            let pack_str = self.name_format(&self.get_pack_name());
-            let diff_str = self.diff_format(g.difficulty_mult);
-            if let Some(discord) = self.0.discord.as_ref() {
-                discord.set_rich_presence_in_game(
-                    &format!("{name_str} [x{diff_str}]"),
-                    &pack_str,
-                    false,
-                );
-            }
-            // C++ `hexagonClient->trySendStartedGame` — the null client
-            // (issue 17; `HexagonClient::State::LoggedIn_Ready` gate).
-        } else {
-            // C++ (HGUpdate.cpp:536-541): the replay branch —
-            // `discordManager->set_rich_presence_on_replay()`.
-            if let Some(discord) = self.0.discord.as_ref() {
-                discord.set_rich_presence_on_replay();
-            }
-        }
+        // C++ `hexagonClient->trySendStartedGame` — the null client
+        // (issue 17; `HexagonClient::State::LoggedIn_Ready` gate). The
+        // Discord/Steam rich-presence halves of the C++'s
+        // `mustReplayInput()` branch were retired by plan 002 issue 02c1.
 
         // C++ `if(audio != nullptr && !Config::getNoMusic())` — NOTE: no
         // window gate in the C++.
@@ -1300,7 +1227,6 @@ impl<S: SharedStore> HexagonGame<S> {
 
         self.host_call_void("onDeath", self.0.script_host.run_on_death());
         self.death_shake_camera();
-        self.death_update_rich_presence();
         self.stop_level_music();
         self.death_flash_effect();
 
@@ -1322,8 +1248,6 @@ impl<S: SharedStore> HexagonGame<S> {
             self.log("Replay", "Attempting to send and save replay...\n");
             self.death_send_and_save_replay(&rf);
         }
-
-        self.death_save_score_if_needed_and_show_pb_effects();
 
         // C++ `if(window && Config::getAutoRestart())`.
         if self.0.window && self.config().get_auto_restart() {
@@ -1349,33 +1273,6 @@ impl<S: SharedStore> HexagonGame<S> {
         self.st().status.camera_shake = 45.0_f32 * c.get_camera_shake_multiplier();
     }
 
-    /// C++ `death_updateRichPresence()` (HexagonGame.cpp:847-886): the
-    /// `window == nullptr` gate (849-852) and the `inReplay()` gate (854-857),
-    /// then — when `discordManager != nullptr` —
-    /// `set_rich_presence_in_game(nameStr + " [x" + diffStr + "]",
-    /// "Survived " + timeStr + "s", true)` (878-886).
-    fn death_update_rich_presence(&self) {
-        // C++ `if(window == nullptr) return;` (HexagonGame.cpp:849-852).
-        if !self.0.window {
-            return;
-        }
-        // C++ `if(inReplay()) return;` (HexagonGame.cpp:854-857).
-        if self.in_replay() {
-            return;
-        }
-        if let Some(discord) = self.0.discord.as_ref() {
-            let g = self.st();
-            let name_str = self.name_format(&g.level_name);
-            let diff_str = self.diff_format(g.difficulty_mult);
-            let time_str = self.time_format(g.status.get_time_seconds() as f32);
-            discord.set_rich_presence_in_game(
-                &format!("{name_str} [x{diff_str}]"),
-                &format!("Survived {time_str}s"),
-                true,
-            );
-        }
-    }
-
     /// C++ `death_flashEffect()`.
     fn death_flash_effect(&self) {
         self.init_flash_effect(255, 255, 255);
@@ -1384,11 +1281,11 @@ impl<S: SharedStore> HexagonGame<S> {
 
     /// C++ `death_createReplayFile()` (verbatim).
     fn death_create_replay_file(&self) -> ReplayFile {
-        let rf_name = if self.0.profiles.any_local_profile_active() {
-            self.0.profiles.current_local_profile_name()
-        } else {
-            "no_profile".to_string()
-        };
+        // C++ `no_profile` fallback — the profiles seam was retired by
+        // plan 002 issue 02c1 (no local profile exists in the tiny
+        // runtime), so the replay's `playerName` is always the C++'s
+        // no-active-profile spelling.
+        let rf_name = "no_profile".to_string();
         let g = self.st();
         let e = self.est();
         ReplayFile {
@@ -1438,121 +1335,6 @@ impl<S: SharedStore> HexagonGame<S> {
         if !self.0.replay_store.save(&dir_path, &filename, &crf) {
             self.log("Replay", "Failure saving replay\n");
         }
-    }
-
-    /// C++ `death_saveScoreIfNeeded()` (verbatim).
-    fn death_save_score_if_needed(&self) -> SaveScoreIfNeededResult {
-        if !self.0.window {
-            return SaveScoreIfNeededResult::NoWindow;
-        }
-
-        if !self.should_save_score() {
-            return SaveScoreIfNeededResult::ShouldNotSave;
-        }
-
-        let level_data = self.level_data();
-        let validator_without_pack_id = level_data
-            .get_validator_without_pack_id(self.difficulty_mult())
-            .expect("levelData->getValidatorWithoutPackId(difficultyMult)");
-
-        let score = self.st().status.get_time_seconds();
-
-        let is_personal_best =
-            score > self.0.profiles.get_local_score(validator_without_pack_id) as f64;
-
-        if !is_personal_best {
-            return SaveScoreIfNeededResult::NotPersonalBest;
-        }
-
-        self.0
-            .profiles
-            .set_local_score(validator_without_pack_id, score as f32);
-        SaveScoreIfNeededResult::PersonalBest
-    }
-
-    /// C++ `death_saveScoreIfNeededAndShowPBEffects()` (verbatim).
-    fn death_save_score_if_needed_and_show_pb_effects(&self) {
-        let r = self.death_save_score_if_needed();
-
-        if matches!(r, SaveScoreIfNeededResult::NoWindow) {
-            return;
-        }
-
-        if matches!(
-            r,
-            SaveScoreIfNeededResult::ShouldNotSave | SaveScoreIfNeededResult::NotPersonalBest
-        ) {
-            self.play_sound_abort("gameOver.ogg");
-            return;
-        }
-
-        let mut e = self.est();
-        e.pb_text = "NEW PERSONAL BEST!".to_string();
-        e.must_spawn_pb_particles = true;
-        self.play_sound_abort("personalBest.ogg");
-    }
-
-    /// C++ `HexagonGame::SaveScoreIfNeededResult` lives at module scope
-    /// (Rust forbids type definitions inside impl blocks).
-    /// C++ `shouldSaveScore()` (verbatim, including the logs).
-    fn should_save_score(&self) -> bool {
-        if !self.0.profiles.any_local_profile_active() {
-            self.log(
-                "hg::HexagonGame::shouldSaveScore()",
-                "No local profile active, rejecting\n",
-            );
-            return false;
-        }
-
-        {
-            let mut cfg = self.0.config.write().expect("config poisoned");
-            if !cfg.is_eligible_for_score() {
-                self.log(
-                    "hg::HexagonGame::shouldSaveScore()",
-                    &format!(
-                        "Not saving score - not eligible - {} - {}",
-                        cfg.get_uneligibility_reason(),
-                        '\n'
-                    ),
-                );
-                return false;
-            }
-        }
-
-        let g = self.st();
-        if g.status.score_invalid {
-            self.log(
-                "hg::HexagonGame::shouldSaveScore()",
-                "Not saving score - score invalidated\n",
-            );
-            return false;
-        }
-
-        if g.level_status.tutorial_mode {
-            self.log(
-                "hg::HexagonGame::shouldSaveScore()",
-                "Not saving score - in tutorial mode\n",
-            );
-            return false;
-        }
-
-        if self.level_data().unscored {
-            self.log(
-                "hg::HexagonGame::shouldSaveScore()",
-                "Not saving score - unscored level\n",
-            );
-            return false;
-        }
-
-        if self.in_replay() {
-            self.log(
-                "hg::HexagonGame::shouldSaveScore()",
-                "Not saving score - currently in replay\n",
-            );
-            return false;
-        }
-
-        true
     }
 
     // ------------------------------------------------------------------
@@ -1802,10 +1584,13 @@ impl<S: SharedStore> HexagonGame<S> {
         }
     }
 
-    /// C++ `saveReplay()` (verbatim).
+    /// C++ `saveReplay()` — the C++ body's `shouldSaveScore()` gate was
+    /// the official-score/PB-eligibility check (retired with the profiles
+    /// seam, plan 002 issue 02c1); the surviving halves are its
+    /// in-replay reject (`inReplay` stays until 02c2) and the
+    /// `!hasDied` conjunct.
     pub fn save_replay(&self) {
-        if self.should_save_score() && !self.st().status.has_died {
-            self.death_save_score_if_needed(); // Saves local best
+        if !self.in_replay() && !self.st().status.has_died {
             let rf = self.death_create_replay_file();
             self.log("Replay", "Attempting to send and save replay...\n");
             self.death_send_and_save_replay(&rf);
@@ -2455,13 +2240,6 @@ impl<S: SharedStore> HexagonGame<S> {
         }
     }
 
-    /// C++ `pbTextGrowth` (the PB-text size sawtooth driven by
-    /// `updateText`).
-    #[must_use]
-    pub fn pb_text_growth(&self) -> f32 {
-        self.est().pb_text_growth
-    }
-
     /// C++ `styleData` (clone; the C++ reads the member in place).
     #[must_use]
     pub fn get_style_data(&self) -> StyleData {
@@ -2685,29 +2463,12 @@ impl<S: SharedStore> HexagonGame<S> {
     // verbatim)
     // ------------------------------------------------------------------
 
-    /// C++ `nameFormat(name)` — capitalizes the first char (returns the
-    /// formatted copy; the C++ mutates in place).
-    #[must_use]
-    pub(crate) fn name_format(&self, name: &str) -> String {
-        let mut s = name.to_string();
-        if let Some(first) = s.get_mut(0..1) {
-            first.make_ascii_uppercase();
-        }
-        s
-    }
-
     /// C++ `diffFormat(diff)` — `snprintf("%g")`: the C default 6-digit
     /// general format, which the codebase's oracle-pinned ostream
     /// formatter reproduces (mapping/oracle-vectors.md, format probe).
     #[must_use]
     pub(crate) fn diff_format(&self, diff: f32) -> String {
         format_ostream_f64(diff as f64)
-    }
-
-    /// C++ `timeFormat(time)` — `snprintf("%.3f")`.
-    #[must_use]
-    pub(crate) fn time_format(&self, time: f32) -> String {
-        format!("{time:.3}")
     }
 
     /// C++ `formatTime(x)` (HGGraphics.cpp file-local) —
@@ -2935,14 +2696,9 @@ impl<S: SharedStore> crate::GameApi for HexagonGame<S> {
         }
     }
 
-    // -- replay / steam ------------------------------------------------------
+    // -- replay -------------------------------------------------------------
     fn in_replay(&self) -> bool {
         HexagonGame::in_replay(self)
-    }
-
-    fn unlock_achievement(&self, achievement_id: &str) {
-        // C++ `steamManager->unlock_achievement(id)` (HGScripting.cpp:850).
-        self.0.steam_manager.unlock_achievement(achievement_id);
     }
 
     // -- error exit ----------------------------------------------------------

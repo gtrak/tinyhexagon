@@ -5,63 +5,21 @@
 //! file by issue 15 step (b) so the binary and the step (a) tests share
 //! ONE composition (the spec's dedup; the two-phase build and the
 //! `SharedLua` drop-order contract are documented there). What remains
-//! test-local: the C++ test's `testProfile` profile seam, the `_RELEASE`
-//! root idiom, the C++ `initText` font pair, and the recording
-//! `DrawTarget` for the stage-sequence assertions.
+//! test-local: the `_RELEASE` root idiom, the C++ `initText` font pair, and
+//! the recording `DrawTarget` for the stage-sequence assertions.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use oh_game::seams::Profiles;
-
 pub use oh_app::compose::{compose_with, Composed};
 
-/// The C++ `ReplayExecution.t.cpp` profile:
-/// `ProfileData{GAME_VERSION, "testProfile"}` + `addLocalProfile` +
-/// `pSetCurrent("testProfile")`. oh-assets ports profile *loading* only —
-/// the mutation API (`addLocalProfile` / `pSetCurrent`) is deferred (see
-/// `oh_assets` module docs), so the engine's `Profiles` seam gets its own
-/// implementation reporting the C++ test's current profile ("testProfile"
-/// is what `death_createReplayFile` records as `player_name`).
-///
-/// Test-local: the binary uses `oh_game::seams::NullProfiles` instead
-/// (the real `HGAssets` profile surface lands with issue 17).
-/// `allow(dead_code)`: each test binary compiles this module separately
-/// and not all of them drive a live replay (which is what reads the
-/// profile name).
-#[allow(dead_code)]
-pub struct TestProfiles;
-
-impl Profiles for TestProfiles {
-    fn any_local_profile_active(&self) -> bool {
-        true
-    }
-
-    fn current_local_profile_name(&self) -> String {
-        "testProfile".to_string()
-    }
-
-    fn get_local_score(&self, _level_id: &str) -> f32 {
-        0.0
-    }
-
-    fn set_local_score(&self, _level_id: &str, _score: f32) {}
-}
-
-/// The step-(a) test composition: the shared `oh_app::compose` build with
-/// the C++ test's `testProfile` seam. `allow(dead_code)`: not every test
-/// binary composes an engine (each compiles this module separately).
+/// The step-(a) test composition: the shared `oh_app::compose` build.
+/// `allow(dead_code)`: not every test binary composes an engine (each
+/// compiles this module separately).
 #[allow(dead_code)]
 #[must_use]
 pub fn compose(assets: Arc<oh_assets::Assets>, root: PathBuf, window: bool) -> Composed {
-    compose_with(
-        assets,
-        root,
-        window,
-        Arc::new(TestProfiles),
-        Arc::new(oh_game::seams::NoneSteamSink),
-        None, // no Discord (headless test)
-    )
+    compose_with(assets, root, window)
 }
 
 /// The `_RELEASE` root (the process-CWD equivalent; the same idiom as

@@ -23,7 +23,7 @@ use oh_game::seams::{Joystick, NullReplayStore, PcgCosmeticRng};
 
 mod common;
 
-use common::{compose_with_config, release_dir, TestProfiles};
+use common::{compose_with_config, release_dir};
 
 const PACK: &str = "ohvrvanilla_vittorio_romeo_cube_1";
 const LEVEL: &str = "ohvrvanilla_vittorio_romeo_cube_1_apeirogon";
@@ -72,7 +72,6 @@ fn new_game_builds_the_cpp_restart_replay_hints_verbatim() {
         true, /* window — the C++'s `window != nullptr` gate */
         config.clone(),
         None,
-        Arc::new(TestProfiles),
         Arc::new(NullReplayStore),
         joystick,
         Arc::new(PcgCosmeticRng::new()),
@@ -210,7 +209,6 @@ fn new_game_builds_the_cpp_restart_replay_hints_verbatim() {
         false, /* headless — the C++'s `window == nullptr` */
         config.clone(),
         None,
-        Arc::new(TestProfiles),
         Arc::new(NullReplayStore),
         Arc::new(VendorJoystick { vendor: vendor2 }),
         Arc::new(PcgCosmeticRng::new()),

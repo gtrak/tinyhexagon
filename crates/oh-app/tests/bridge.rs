@@ -92,7 +92,7 @@ fn always_spin_right_replay() -> oh_replay::ReplayFile {
     }
     oh_replay::ReplayFile {
         version: 0,
-        player_name: "testProfile".into(),
+        player_name: "player".into(),
         seed: 0,
         data,
         pack_id: PACK.into(),
@@ -379,8 +379,10 @@ fn on_render_stage_first_frame_frametime_is_the_cpp_inf() {
 // the render state every frame — the pre-fix port never called
 // `text_draw::update_text`, so every `Text` kept its constructor size
 // forever (status 19 = 25/1.27, message 29 = 38/1.27 left-anchored at
-// (0, 0), PB a static 51 = 65/1.27, replay 15 = 20/1.27) and the
-// engine's `pb_text_growth` was copied but unconsumed.
+// (0, 0), PB a static 51 = 65/1.27, replay 15 = 20/1.27).
+// (The C++'s PB-text sawtooth half was retired with the PB effect by plan
+// 002 issue 02c1 — the render `DrawState` still advances/resizes the inert
+// empty `pbText` until the 02c3/09 oh-render sweep.)
 // ---------------------------------------------------------------------
 
 /// The bridge applies the C++ per-frame sizes/origins (the `updateText`
@@ -415,8 +417,7 @@ fn the_bridge_applies_the_per_frame_text_sizes_and_origins() {
     // (HGGraphics.cpp:545-550, `(size / zoomFactor * textScaling)`
     // truncated): time 70 → 55, status 20 → 15 (the ctor kept 19 =
     // 25/1.27), message 32 → 25 (the ctor kept 29 = 38/1.27),
-    // pb 64 → 50 + sin(growth) × 10 (the ctor kept a static 51 =
-    // 65/1.27), replay 16 → 12 (the ctor kept 15 = 20/1.27).
+    // replay 16 → 12 (the ctor kept 15 = 20/1.27).
     assert_eq!(st.time_text.get_character_size(), 55);
     assert_eq!(
         st.text.get_character_size(),
@@ -436,14 +437,6 @@ fn the_bridge_applies_the_per_frame_text_sizes_and_origins() {
     assert!(
         st.message_text.get_origin().x > 0.0,
         "the message text is centred (the C++'s getGlobalWidth/2 origin, :567 — the ctor left it at (0, 0))"
-    );
-    // PB: 50 + sin(20 × 0.25 × 0.08 = 0.4 rad) × 10 = 50 + 3.89 =
-    // 53.89 → 53 — consuming the engine's sawtooth (the pre-fix port
-    // copied `pb_text_growth` into the state but never read it).
-    assert_eq!(
-        st.pb_text.get_character_size(),
-        53,
-        "64/1.27 → 50 + sin(0.4) × 10, not the ctor's static 51"
     );
     // showFPS off (Config::default) + no replay UI → the fps / replay
     // texts keep their ctor sizes (the C++'s `getShowFPS()` /

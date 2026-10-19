@@ -60,7 +60,6 @@ fn windowed_with_fps(fps: f32) -> (common::Composed, Arc<AtomicU32>) {
         common::release_dir(),
         true,
         Some(renderer),
-        Arc::new(common::TestProfiles),
         Arc::new(NullReplayStore),
         Arc::new(NoJoystick),
         Arc::new(PcgCosmeticRng::new()),
