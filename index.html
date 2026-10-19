@@ -1,10 +1,12 @@
 <!doctype html>
 <!--
-  oh-web (issue 26c W5, D-029) - the browser page for the REAL composition:
-  oh_app::client::main_client (headless = false) boots config + assets over
-  the _RELEASE tree preloaded into emscripten MEMFS at /RELEASE, the
-  oh-render emscripten window over this <canvas id="c">, the engine +
-  MenuGame, dispatches to the MENU, and drives it via request_animation_frame.
+  th-web (issue 26c W5, D-029) - the browser page of the RETIRED W5
+  composition (plan 002 issue 02a stubbed the web entry; the tiny
+  runtime's web page lands in Issue 08 with the real entry): the retired
+  web boot (headless = false) booted config + assets over the _RELEASE
+  tree preloaded into emscripten MEMFS at /RELEASE, the th-render
+  emscripten window over this <canvas id="c">, the engine + MenuGame,
+  dispatched to the MENU, and drove it via request_animation_frame.
 
   SERVE (static, no build step): copy the THREE build artifacts next to this
   file (the .data is the --preload-file package - a missing one shows
@@ -12,17 +14,17 @@
 
       python3 -m http.server 8000 --directory <this folder>
 
-  (Artifact names: the loader is `oh-web.js` (MODULARIZE + EXPORT_ES6,
+  (Artifact names: the loader is `tinyhexagon.js` (MODULARIZE + EXPORT_ES6,
   default-exports the Module factory) but emcc names the wasm after the
-  object file - `oh_web.wasm` (underscore); the loader's locateFile looks
-  for exactly `oh_web.wasm` beside `oh-web.js`. The `_RELEASE` tree is
-  packed into `oh_web.data` and fetched relative to this page.)
+  object file - `tinyhexagon.wasm` (underscore); the loader's locateFile looks
+  for exactly `tinyhexagon.wasm` beside `tinyhexagon.js`. The `_RELEASE` tree is
+  packed into `tinyhexagon.data` and fetched relative to this page.)
 
   URL: http://localhost:8000/
   (Any static file server works - the page is plain ES-module + three files.)
 
   THE CANVAS (issue 32 - the REAL window size): the canvas fills the
-  viewport (the CSS box), and the oh-render emscripten window sizes
+  viewport (the CSS box), and the th-render emscripten window sizes
   ITSELF to that box x the device pixel ratio (the 025g "config size !=
   real size" lesson - the menu layout + every hit test run in the real
   size, and a browser resize keeps it current through the page's
@@ -34,10 +36,10 @@
 
   Expected browser console (the W5 real-composition boot - lane 026
   re-verified 2026-10-17; lane 048 adds the persistence gate's lines):
-      oh-web: boot started (after __wasm_call_ctors)
-      oh-web: awaiting the IndexedDB load (the page's FS.syncfs) before the composition boots
-      oh-web: user data restored from IndexedDB (IDBFS /userdata, autoPersist on)
-      oh-web: persisted user data ready (IDBFS /userdata) - booting the composition
+      th-web: boot started (after __wasm_call_ctors)
+      th-web: awaiting the IndexedDB load (the page's FS.syncfs) before the composition boots
+      th-web: user data restored from IndexedDB (IDBFS /userdata, autoPersist on)
+      th-web: persisted user data ready (IDBFS /userdata) - booting the composition
       [web] main_client entry (t=0)
       [web] config loaded
       [web] assets loaded
@@ -46,14 +48,14 @@
       [web] engine + menu composed (the four callback links bound)
       [web] client built (window + engine + menu)
       [web] rAF loop scheduled (the browser owns the frames)
-      oh-web: main_client returned 0 (the rAF loop keeps driving the menu)
-      oh-web: module loaded
+      th-web: main_client returned 0 (the rAF loop keeps driving the menu)
+      th-web: module loaded
       status booted=true;exit_code=0;ticks=<n>   (every 2s; ticks advance ~30 per poll)
   NOTE (lane 026): the composition's Rust `println!`/`eprintln!` lines do NOT
   land in the browser console - the emscripten fd 1/2 writes fall into the
   default `/dev/stdout -> /dev/tty` null path (no visible sink in this glue).
-  The `[channel]` lines above reach the console through the `oh-game`
-  `log_sink` hook (`oh-web`'s `boot()` installs the browser-console sink
+  The `[channel]` lines above reach the console through the `th-game`
+  `log_sink` hook (`th-web`'s `boot()` installs the browser-console sink
   before `main` runs) - the engine's event-driven lines (Lua errors, the
   `[lua]` channel, replay, ...) route through the SAME sink.
   The canvas shows the MENU (the composition's first representative
@@ -67,7 +69,7 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>SSVOpenHexagon (web)</title>
+    <title>tinyhexagon</title>
     <style>
       /* The canvas IS the window (issue 32 §2.3): its CSS box fills the
          viewport; the port's emscripten window measures it (x the device
@@ -125,7 +127,7 @@
     </style>
   </head>
   <body>
-    <!-- The canvas oh-web's boot looks up: id "c" (the 26c.1 selector
+    <!-- The canvas th-web's boot looks up: id "c" (the 26c.1 selector
          contract). The width/height attributes are the INITIAL backing
          store only - the boot's real-size measurement (the CSS box x the
          device pixel ratio) resizes them at context creation, and the
@@ -134,7 +136,7 @@
     <!-- issue 046 (F32) - the hidden-but-focusable IME input: the phone's
          soft keyboard's target (a mobile browser raises the on-screen
          keyboard ONLY for a focused editable element; the canvas's
-         keydown listener never gets one). The oh-render emscripten window
+         keydown listener never gets one). The th-render emscripten window
          get-or-creates it (this declaration is the committed shell; the
          Rust fallback covers a page that predates it) and re-applies the
          attribute contract below (the Rust side is the single source of
@@ -172,10 +174,10 @@
       // MODULARIZE + EXPORT_ES6 (the 26c.1 recipe): the default export is
       // the Module factory; it resolves once the wasm + the wasm-bindgen
       // glue (including Rust main via addOnInit) have initialized.
-      import Module from "./oh-web.js";
+      import Module from "./tinyhexagon.js";
 
       // issue 048 (F34 / D-039) - durable user data (IndexedDB, via
-      // emscripten IDBFS): the Rust boot (oh-web's `main`) does NOT run
+      // emscripten IDBFS): the Rust boot (th-web's `main`) does NOT run
       // the composition synchronously - it calls `ohWebPersistBoot` and
       // waits for this glue to finish, so the persisted user data is in
       // place BEFORE the composition reads config.json / Profiles. The
@@ -189,7 +191,7 @@
       // writes land in IndexedDB unchanged). WHAT DOES NOT: the preloaded
       // _RELEASE read-only content (22 MB) stays MEMFS - IDBFS is NEVER
       // mounted over /RELEASE, or a returning player would run a STALE
-      // _RELEASE (persisted at deploy N) against a new oh_web.wasm (deploy
+      // _RELEASE (persisted at deploy N) against a new tinyhexagon.wasm (deploy
       // N+1). First run: /userdata is seeded from the shipped
       // config.json (the C++'s "the user starts from the shipped config"
       // shape) - a later deploy's shipped config does NOT clobber the
@@ -197,7 +199,7 @@
       const cfg = {};
       globalThis.ohWebPersistBoot = (done) => {
         const fail = (why) => {
-          console.warn("oh-web: persistence OFF (" + why + ") - session-only MEMFS");
+          console.warn("th-web: persistence OFF (" + why + ") - session-only MEMFS");
           done();
         };
         const FS = cfg.FS;
@@ -235,7 +237,7 @@
               FS.symlink("/userdata/config.json", "/RELEASE/config.json");
               FS.symlink("/userdata/Profiles", "/RELEASE/Profiles");
               FS.symlink("/userdata/Replays", "/RELEASE/Replays");
-              console.log("oh-web: user data restored from IndexedDB (IDBFS /userdata, autoPersist on)");
+              console.log("th-web: user data restored from IndexedDB (IDBFS /userdata, autoPersist on)");
               done();
             } catch (e) { fail("setup: " + e); }
           }, (e) => fail("syncfs load: " + e));
@@ -249,7 +251,7 @@
       // #[wasm_bindgen] exports (status / save_session) + the runtime
       // methods (FS / IDBFS, the -sEXPORTED_RUNTIME_METHODS exports).
       globalThis.ohWebModule = mod;
-      console.log("oh-web: module loaded");
+      console.log("th-web: module loaded");
       // issue 048 (F34 / D-039) - the web session's way-out persist: D-029's
       // rAF loop means the C++'s exit-save guards already dropped at
       // composition (the boot-time config), so the page re-fires them at the
@@ -261,9 +263,9 @@
       // close - a "sync at the end of main" design would have lost the data
       // on a phone.
       const flushSession = () => {
-        try { mod.save_session(); } catch (e) { console.warn("oh-web: save_session failed", e); }
+        try { mod.save_session(); } catch (e) { console.warn("th-web: save_session failed", e); }
         const F = cfg.FS;
-        if (F) F.syncfs(false, () => {}, (e) => console.warn("oh-web: final syncfs failed", e));
+        if (F) F.syncfs(false, () => {}, (e) => console.warn("th-web: final syncfs failed", e));
       };
       document.addEventListener("visibilitychange", () => { if (document.hidden) flushSession(); });
       window.addEventListener("pagehide", flushSession);
@@ -324,14 +326,14 @@
       // grant/deny of the transient user activation - the headless
       // CDP probe cannot grant it, the operator's real tap does -
       // surfaces as the promise's REJECTION). This listener routes
-      // the fullscreen rejections to the [oh-web-fs] console line (the
+      // the fullscreen rejections to the [th-web-fs] console line (the
       // wiring's async evidence the probe greps) and swallows the
       // unhandled-rejection console pollution (only FULLSCREEN
       // rejections - anything else stays unhandled, as before).
       window.addEventListener('unhandledrejection', (ev) => {
         const reason = String(ev.reason && (ev.reason.message || ev.reason));
         if (/fullscreen/i.test(reason)) {
-          console.log(`[oh-web-fs] promise rejected: ${reason}`);
+          console.log(`[th-web-fs] promise rejected: ${reason}`);
           ev.preventDefault();
         }
       });
