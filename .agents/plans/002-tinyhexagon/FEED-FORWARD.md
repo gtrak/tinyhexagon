@@ -416,6 +416,16 @@ re-reading the whole history.
 
 ### 07 — app tiny runtime (pending)
 
+- Desktop-mode probe (upstream `228a4cfb`, landed in the fork's
+  `oh-app`): the tiny `main` calls
+  `oh_app::desktop_mode::run_probe_child_if_requested(&argv)` at the top
+  (before any FS/config/window work — exit with the returned code when it
+  returns `Some`); `load_and_reapply` is called with
+  `DesktopModeSource::Lazy` (both the windowed and the headless branch —
+  the C++ `mainClient` does the load + reapply once). The probe child is
+  the ONLY `VideoMode::get_desktop_mode` caller (winit 0.30 allows one
+  `EventLoop` per process — the `oh-render` `types.rs` doc paragraph +
+  the `oh-app::desktop_mode` module docs).
 - Composition signature:
 - Journey table:
 - Touch mapping:
@@ -426,7 +436,20 @@ re-reading the whole history.
 
 ### 08 — Android/web/packaging (pending)
 
-- Android entry:
+- Android entry: pass `DesktopModeSource::Fixed(VideoMode::new(0, 0))`
+  to `load_and_reapply` (winit's monitor API exists only inside a RUNNING
+  event loop and the activity's loop is consumed by the game's own `run`
+  — inert: both auto-resolution flags default false and the platform
+  window is screen-sized independently of the config values).
+- Windowed smoke/gate/package: `tools/smoke-windowed.sh` exists (default
+  binary `${CARGO_TARGET_DIR:-target}/debug/tinyhexagon`, adapted header
+  notes); the windowed gate stage (tools/gate.sh) and the windowed
+  package smoke (tools/package.sh) land HERE once the `tinyhexagon`
+  binary exists. The CI display packages (xvfb, libgl1-mesa-dri,
+  libegl1, libegl-mesa0 + the winit X11 -dev libs) are already in
+  `tools/ci-deps.sh` (upstream `228a4cfb` + `dcd9fdeb`). NOTE:
+  `tools/smoke-windowed.sh` still asserts the old `[::mainClient] Finished`
+  string; that half is inert until 07/08 adapts it to the tiny loop.
 - Web boot/audio-unlock export:
 - Artifact names:
 - Target degradations:

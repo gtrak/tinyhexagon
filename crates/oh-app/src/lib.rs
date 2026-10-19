@@ -22,6 +22,9 @@
 //! * [`compose`] — the headless engine composition (the two-phase
 //!   `HexagonGame` build over a real `oh-lua` `ScriptHost` + the real
 //!   `oh_assets::Assets` registry);
+//! * [`desktop_mode`] — the desktop-mode probe child (the winit
+//!   single-`EventLoop` fix; the `get_desktop_mode` display query runs in
+//!   a spawned child process, the `--oh-desktop-mode-probe` arg);
 //! * [`draw_target`] — the reusable GL draw target extracted from the
 //!   retired windowed module (`GlDrawTarget` over a live `GlParts`, the
 //!   no-op `NullDrawTarget`, the 029n1 (K6) pack-shader provider);
@@ -38,6 +41,13 @@
 pub mod bridge;
 pub mod camera;
 pub mod compose;
+// The desktop-mode probe child (the winit single-EventLoop fix — the
+// module docs): the `get_desktop_mode` display query runs in a spawned
+// child process (the `--oh-desktop-mode-probe` arg) so the game process's
+// single winit `EventLoop` stays free for the window. Compiles on every
+// target (the android/emscripten arms return the zero mode / no-op — the
+// platform bodies are cfg'd inside the module).
+pub mod desktop_mode;
 pub mod draw_target;
 #[cfg(not(any(target_os = "android", target_family = "wasm")))]
 pub mod joystick;

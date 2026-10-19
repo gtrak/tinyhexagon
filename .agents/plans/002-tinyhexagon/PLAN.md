@@ -1,6 +1,6 @@
 # 002 — tinyhexagon
 
-Status: APPROVED (execution in progress; issues 000–001 and 02a–02c3 landed 2026-10-19; Issue 03 next)
+Status: APPROVED (issues 000–001 and 02a–02c3 landed; upstream HWM dcd9fdeb synced 2026-10-19; Issue 03 next)
 Owner: operator; orchestrator: this session
 Plan file: `.agents/plans/002-tinyhexagon/PLAN.md`
 Issues: `00-*.md` … `09-*.md` in this folder
