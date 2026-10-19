@@ -878,6 +878,81 @@ re-reading the whole history.
   gh-pages site follows; the ci.yml fork-guards use
   `github.repository == 'gtrak/tinyhexagon'` since 03).
 
+### 08a — web (emscripten) tiny entry (DONE — 2026-10-19, final pass fix 4: `#status` visually hidden; probe 19/19, audio=live, gate 567)
+
+- Shared tiny entry: `th_app::tiny::{run, tiny_web, web_status,
+  web_request_audio_unlock}` (host `run_windowed` is a thin caller); the
+  emscripten boot is `th-web` (`src/main.rs`'s `__wasm_call_ctors()` first,
+  then `src/web.rs`'s `boot()`), with `#[wasm_bindgen] status()` (the real
+  game's status line → the page's `window.ohStatus` / `#status` 1 s poll)
+  and `#[wasm_bindgen(js_name = "resumeAudio")] resume_audio()` —
+  first-gesture audio unlock, guarded by `navigator.userActivation.isActive`
+  read inside the gesture (headless CDP grants no activation → fallback
+  clock stays; a real tap flips to live — the 10-19 Chrome 148 probe run
+  granted activation for the synthetic keydown, so it measured `audio=live`;
+  the fallback guard is intact for no-activation environments). The shell
+  (`crates/th-web/site/index.html`): canvas + `#status` + first
+  `pointerdown`/`keydown` fires `resumeAudio()` once (`[shell] audio unlock
+  requested` log), `visibilitychange`→visible re-fire; no IME/text/IDBFS/
+  persistence. Fix 4: the `#status` line is visually hidden in the page
+  CSS (`display: none` — the element + 1 s poll stay, so `ohStatus()` /
+  the probe's `#status` contract is unchanged; the game is text-free),
+  and the page does NOT declare `#fs` (the `th-render` emscripten
+  window's get-or-create fallback creates it — the faint top-right `⛶`).
+- web-sys 0.3.106 signatures the 08a guard needs: `Window::navigator()`
+  returns `Navigator` (NOT `Option` — use `.map`, not `.and_then`);
+  `Navigator::user_activation()` returns `UserActivation` (not Option/Result);
+  `UserActivation::is_active() -> bool`. th-app's emscripten web-sys features
+  are `Window, Document, Element, Event, Navigator, UserActivation`.
+- `js_sys::JsValue` is a PRIVATE re-import in js-sys 0.3.106 (E0603) — use
+  `wasm_bindgen::JsValue` (the prelude import) for `web_sys::console::log_*`.
+- Do not put `///` doc comments on the `extern "C" { fn __wasm_call_ctors(); }`
+  block in `th-web/src/main.rs` (unused_doc_comments warning; gate is
+  `-D warnings`).
+- RESOLVED (2026-10-19, the three 08a fixes; full evidence in
+  `.agents/tasks/plan-002/issue-008a-report.md`):
+  1. Fix 1 — the emscripten compile errors (the `navigator()` `.and_then` →
+     `.map`; the 4× E0603 `js_sys::JsValue` → prelude `JsValue`; the
+     `///`-on-`extern` block → `//`; a fmt collapse).
+  2. Fix 2 — vendored cpal 0.15.3 (`src/lib.rs` +
+     `src/host/emscripten/mod.rs`): the `BufferSize` emscripten wasm-ABI
+     triple must delegate to `Option<FrameCount>` (0.2.129 conventions:
+     [OPTIONAL, U32] descriptor — the empty registry `describe()` made the
+     CLI's `Descriptor::decode` panic "len is 0" on
+     `__wbindgen_describe___wbg_get_streamconfig_buffer_size` — and the
+     single-`f64` `2^53-1`-sentinel `Option<u32>` ABI), and the callback's
+     `SampleFormat` must be captured by the timer closure instead of
+     crossing the JS timer (the 0.2.129 timer coerced the JS argument to
+     u32 `0` = `I8` → "host supplied incorrect sample type"). Keep the
+     vendor scheme (root `[patch.crates-io] cpal`) — the 0.18.2 registry
+     cpal that rodio pulls is NOT patched.
+  3. Fix 3 — vendored cpal emscripten host connect direction:
+     `AudioDestinationNode` has 0 outputs, so the registry source's
+     `context.destination().connect_with_audio_node(&node)` panics
+     (IndexSizeError: output index (0) exceeds number of outputs (0)); it
+     must be `node.connect_with_audio_node(&context.destination())` (the
+     direction `host/webaudio/mod.rs:363` already uses). This was the last
+     panic: `tools/package-web.sh` green → probe **19/19 PASS**, clean
+     console (no errors / no 4xx-5xx / no failed loads), baseline
+     `audio=fallback` → post-gesture `audio=live`, screenshot
+     `.agents/evidence/08a/08a-web-probe.png` (real game: meadow background,
+     white ball, HUD chips, status line). Host gate: **567 passed / 0
+     failed** (baseline). No commit yet (working-tree diff only).
+   4. Fix 4 (final pass) — P2 cleanups: the child-visible `#status` line
+      hidden (`display: none` in the page CSS — the probe contract is
+      unchanged); the unused direct `js-sys` dep dropped from `th-web`
+      (`JsValue` rides the `wasm-bindgen` prelude — `Cargo.lock`'s
+      `th-web` entry loses it); the stale `#fs` doc in `th-render`'s
+      `window.rs` corrected (the shipped page does NOT declare it — the
+      get-or-create fallback creates it); the stale "No caller yet" in
+      `web_fullscreen.rs` (`tiny_web` calls `install_sinks`); the stale
+      "headless probe stays fallback" notes in `tiny.rs` + the page
+      (the 10-19 Chrome 148 run measured `audio=live` — activation
+      granted — while the no-activation fallback guard remains). Re-
+      verified: probe **19/19 PASS**, `audio=live`, clean console,
+      screenshot `.agents/evidence/08a/08a-web-probe-fix4.png` (no status
+      text); host gate **567 passed / 0 failed** (baseline).
+
 ### 09 — tuning/docs (pending)
 
 - Final tunables:

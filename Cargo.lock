@@ -2720,7 +2720,10 @@ dependencies = [
 name = "th-web"
 version = "0.1.0"
 dependencies = [
+ "th-app",
+ "th-game",
  "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]

@@ -1,6 +1,6 @@
 # Issue 08 — Android and web entries + packaging/CI/release names
 
-**Status:** PROPOSED
+**Status:** 08a LANDED (web entry; probe 19/19, gate 567). 08b (Android) + 08c (packaging/CI) IN PROGRESS.
 **Depends:** 07
 
 ## Objective

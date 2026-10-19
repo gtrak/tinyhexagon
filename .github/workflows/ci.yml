@@ -30,12 +30,13 @@ name: CI
 #                   the full release build + the serve-dir staging + zip —
 #                   the SAME command the release workflow runs; per push
 #                   it is the compile proof, the release workflow uploads
-#                   the artifact) + the BROWSER SMOKE (issue 03c: the
+#                   the artifact) + the BROWSER SMOKE (issue 08a: the
 #                   headless-Chrome CDP probe tools/web-stub-probe.mjs
-#                   against the staged _WEB — the stub's EXECUTION proof,
-#                   the pages deploy's gate, its screenshot the evidence
-#                   artifact). On default-branch pushes it ALSO hands
-#                   the staged _WEB directory to the pages job (artifact).
+#                   against the staged _WEB — the tiny entry's EXECUTION
+#                   proof, the pages deploy's gate, its screenshot the
+#                   evidence artifact). On default-branch pushes it ALSO
+#                   hands the staged _WEB directory to the pages job
+#                   (artifact).
 #   pages         — Issue 040 — the CONTINUOUS gh-pages deploy: every push
 #                   to the default branch publishes the wasm build, so
 #                   https://gtrak.github.io/tinyhexagon/ always
@@ -190,17 +191,18 @@ jobs:
       - name: Build + stage
         run: bash tools/package-web.sh
 
-      # Issue 03c — the BROWSER SMOKE (the stub's EXECUTION proof, the
-      # pages deploy's gate): the headless-Chrome CDP probe
+      # Issue 08a — the BROWSER SMOKE (the tiny entry's EXECUTION proof,
+      # the pages deploy's gate): the headless-Chrome CDP probe
       # (tools/web-stub-probe.mjs) against the STAGED _WEB (a local
       # static server, the same serve shape the page ships in). The
       # runner's preinstalled google-chrome is the browser (OH_CHROME
       # pins it for the probe's own launch; no setup action — the probe
-      # is DOM / status-based, not version-sensitive pixels). A
-      # FAILING probe fails THIS job, and the pages job (needs: wasm)
-      # never deploys a page the browser cannot run. The assertions are
-      # DOM / status-based ON PURPOSE: headless SwiftShader's WebGL is
-      # flaky (the issue's risk note) and the stub draws nothing.
+      # waits on the `status()` line's `booted=true;started=true` and
+      # sends one held key press — status-based, not version-sensitive
+      # pixels; a headless CDP input grants no user activation, so the
+      # synth stays on its fallback clock there — the 041 measurement).
+      # A FAILING probe fails THIS job, and the pages job (needs: wasm)
+      # never deploys a page the browser cannot run.
       - name: Browser smoke (the stub's headless-Chrome CDP probe)
         run: |
           python3 -m http.server 8080 --bind 127.0.0.1 --directory target/package/web/_WEB &
@@ -209,9 +211,9 @@ jobs:
           for i in $(seq 1 40); do curl -sf http://127.0.0.1:8080/ -o /dev/null && break; sleep 0.5; done
           OH_CHROME=/usr/bin/google-chrome node tools/web-stub-probe.mjs http://127.0.0.1:8080/ --shot=target/web-stub.png
 
-      # Issue 03c — the stub screenshot (the browser-execution evidence,
+      # Issue 08a — the entry screenshot (the browser-execution evidence,
       # uploaded per push/PR: the local sibling's artifact).
-      - name: Upload the stub screenshot (evidence)
+      - name: Upload the entry screenshot (evidence)
         uses: actions/upload-artifact@v4
         with:
           name: web-stub-screenshot

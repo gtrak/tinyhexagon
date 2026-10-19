@@ -1,18 +1,32 @@
 #!/usr/bin/env node
-// tools/web-stub-probe.mjs — the stub wasm's browser smoke (plan 002
-// issue 03c): launch headless Chrome over CDP, navigate to the staged /
-// live page, wait for the stub's status to LAND, assert the DOM /
-// status contract, capture a screenshot, and exit 0 only when every
+// tools/web-stub-probe.mjs — the tiny entry's browser smoke (plan 002
+// issue 08a; the 03c stub probe evolved IN PLACE — same file, same CLI,
+// same CI invocation): launch headless Chrome over CDP, navigate to the
+// staged / live page, wait for the real game to BOOT + START (the
+// `status()` line reaching `booted=true;started=true`), assert the DOM /
+// status contract, send ONE held key press (the first gesture — it must
+// reach the frame's edge AND exercise the `resumeAudio()` export's
+// path), re-assert, capture a screenshot, and exit 0 only when every
 // assertion passes.
 //
 // Why this exists: the CI's `wasm` job proves the emscripten COMPILE
-// (tools/package-web.sh); this proves the stub EXECUTES in a real
-// browser — the page's `window.ohStatus()` / `#status` poll must leave
-// empty under the stub wasm (the `#[wasm_bindgen] status()` export),
-// and the `pages` job deploys only if this passes (it needs: the wasm
-// job). The assertions are DOM / status-based ON PURPOSE: headless
-// SwiftShader's WebGL is flaky (the issue's risk note) and the stub
-// draws nothing (the canvas may be black — the runtime lands in 07/08).
+// (tools/package-web.sh); this proves the tiny runtime EXECUTES in a
+// real browser — the shared `th_app::tiny` boot over the preloaded
+// `_RELEASE` MEMFS tree, the journey's stages, the player's steering,
+// the synth's live-vs-fallback state, and the first-gesture
+// audio-unlock export (the 08 shell's half). The assertions are
+// status-based (the `#status` poll): headless SwiftShader's WebGL is
+// flaky for pixel assertions, but the rAF loop drives the SIMULATION
+// regardless — the `status()` line is the game's own state.
+//
+// The audio-unlock expectation under the probe: a headless CDP input
+// grants NO user activation (the 041 measurement), so the Rust guard
+// (`navigator.userActivation.isActive`) keeps the fallback clock
+// running — `audio=fallback` is the CORRECT probe outcome (a crash on
+// the rejected `AudioContext.resume()` promise — cpal 0.15.3's
+// emscripten `spawn_local` panic arm — would surface as a console
+// exception and fail the gate). A real browser's first tap / key flips
+// the line to `audio=live` (the 05a handoff).
 //
 // No npm dependencies (Node >= 22 has a global WebSocket); the CDP
 // launch / connect reuses tools/web-probe.mjs's approach (the OH_CHROME
@@ -27,20 +41,37 @@
 //             the live-page half points at
 //             https://gtrak.github.io/tinyhexagon/).
 // --shot    — the screenshot's path (default target/web-stub.png).
-// --timeout — the module-resolve wait in seconds (default 60: the
-//             `.data` is the 22 MB `--preload-file` package, so the
-//             wait is the MODULE RESOLVE, not the page load).
+// --timeout — the boot wait in seconds (default 120: the `.data` is the
+//             22 MB `--preload-file` package + the engine's boot —
+//             assets, config, Luau, the first frame).
 //
 // Assertions (exit 0 only when ALL pass):
-//   * `document.title` contains `tinyhexagon`
-//   * a `<canvas>` exists with non-zero width / height
-//   * `window.ohStatus()` and `#status` both contain `tinyhexagon`
-//   * no console errors / exceptions (a `/favicon.ico` 404 is
-//     tolerated — the same tolerance as tools/web-probe.mjs; GitHub
-//     Pages serves no favicon and it is not the page's asset)
+//   * the game boots + starts: `#status` reaches
+//     `booted=true;started=true` (a `booted=false;error=...` line
+//     fails the wait FAST with the recorded reason)
+//   * the baseline status: `started=true`, `stage` an integer ≥ 0,
+//     `angle` finite, `audio` ∈ {live, fallback}, `help=auto`
+//     (no input sent yet — the helping hand is still armed)
+//   * one held `A` key press (the first gesture, ~1.2 s):
+//     `help=off` (any input disables the helping hand — the input
+//     reached the frame's edge), `ticks` advanced (the sim ran),
+//     `angle` turned counter-clockwise (the steer reached the engine),
+//     `audio` still ∈ {live, fallback} (the `resumeAudio()` export's
+//     path ran without a crash — headless: no activation, no flip;
+//     a real tap would flip it to `live`)
+//   * the page's first-gesture wiring fired: a `[shell] audio unlock
+//     requested` console log (the page's `keydown` listener called the
+//     export)
+//   * `document.title` contains `tinyhexagon`; a `<canvas>` exists
+//     with non-zero width / height; `window.ohStatus()` + `#status`
+//     both contain `tinyhexagon` + `booted=true`
+//   * no console errors / exceptions (a `/favicon.ico` 404 + the boot's
+//     autoplay "AudioContext was not allowed to start" warning are
+//     tolerated — the OpenAL SFX device's pre-gesture AudioContext,
+//     expected before the first gesture)
 //   * no 4xx/5xx responses and no failed loads (a `/favicon.ico` 404
-//     and the browser's OWN canceled aborts are tolerated — a canceled
-//     load is never a server failure; an uncanceled one still fails)
+//     and the browser's OWN canceled aborts are tolerated)
+//   * a screenshot captured (the browser-execution evidence)
 
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -49,7 +80,7 @@ import { writeFileSync, existsSync, mkdirSync } from 'node:fs';
 const argv = process.argv.slice(2);
 const url = argv.find((a) => !a.startsWith('--')) || 'http://127.0.0.1:8080/';
 const shotPath = (argv.find((a) => a.startsWith('--shot=')) || '').slice(7) || 'target/web-stub.png';
-const timeoutSecs = Number((argv.find((a) => a.startsWith('--timeout=')) || '').slice(10) || 60);
+const timeoutSecs = Number((argv.find((a) => a.startsWith('--timeout=')) || '').slice(10) || 120);
 
 const CHROME = process.env.OH_CHROME
   || ['/home/gary/.agent-browser/browsers/chrome-148.0.7778.97/chrome',
@@ -112,7 +143,7 @@ ws.addEventListener('message', (ev) => {
 });
 const send = (method, params = {}) => new Promise((r) => { const i = ++id; pending.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); });
 await new Promise((r) => ws.addEventListener('open', r));
-await send('Runtime.enable'); await send('Network.enable'); await send('Page.enable');
+await send('Runtime.enable'); await send('Network.enable'); await send('Page.enable'); await send('Input.enable');
 // Disable the cache outright: the probe measures what the server is
 // serving RIGHT NOW (the lane-058 stale-bytes lesson — the fresh
 // per-run user-data-dir is the second half of that).
@@ -123,47 +154,113 @@ await send('Network.setCacheDisabled', { cacheDisabled: true });
 // (tools/web-probe.mjs's shape).
 await send('Page.navigate', { url });
 
-// The wait: the stub's status must LAND (the issue's risk note — the
-// module RESOLVE, not the page load: the 22 MB `.data` preloads during
-// the factory's boot). `window.ohStatus` is defined the moment the
-// module scope resumes after `await Module()`; `#status` leaves empty
-// within 1 s of that (the page's poll).
-let settled = null;
-const deadline = Date.now() + timeoutSecs * 1000;
-while (Date.now() < deadline) {
+// The status line (the `#status` poll's text, parsed into fields):
+// `tinyhexagon web: booted=true;ticks=...;stage=...;started=...;angle=...;audio=...;help=...`
+// (or `...;booted=false;error=...` on a failed boot).
+const readStatus = async () => {
   const r = await send('Runtime.evaluate', { expression: `(() => {
-    const ok = typeof window.ohStatus === 'function';
     let oh = '';
-    if (ok) { try { oh = window.ohStatus() || ''; } catch { oh = ''; } }
+    if (typeof window.ohStatus === 'function') { try { oh = window.ohStatus() || ''; } catch { oh = ''; } }
     const s = document.getElementById('status');
-    return JSON.stringify({ ok, oh, statusText: s ? s.textContent : '' });
+    return JSON.stringify({ oh, statusText: s ? s.textContent : '', title: document.title,
+      canvas: (() => { const c = document.querySelector('canvas'); return c ? { w: c.width, h: c.height } : null; })() });
   })()`, returnByValue: true });
-  try {
-    const v = JSON.parse(r.result?.result?.value ?? 'null');
-    if (v && v.ok && v.oh && v.statusText) { settled = v; break; }
-  } catch { /* the evaluate failed — keep waiting */ }
+  try { return JSON.parse(r.result?.result?.value ?? 'null'); } catch { return null; }
+};
+const parseLine = (line) => {
+  const f = {};
+  // The status line carries the `tinyhexagon web: ` display prefix before
+  // the first field (`th-app/src/tiny.rs`'s `status_line` — both the
+  // success and the `booted=false;error=` forms); without stripping it the
+  // first segment parses as the key `tinyhexagon web: booted`, not `booted`.
+  for (const part of String(line || '').replace(/^tinyhexagon web:\s*/, '').split(';')) {
+    const i = part.indexOf('=');
+    if (i > 0) f[part.slice(0, i).trim()] = part.slice(i + 1).trim();
+  }
+  return f;
+};
+
+// The wait: the game must BOOT and START (the 08a contract — not the
+// 03c's module-resolve-only wait: the `status()` line's
+// `booted=true;started=true` IS the engine's own "the journey is
+// running" signal: the 22 MB `.data` preloads during the factory's
+// boot, the assets / config / Luau composition follows, and the first
+// recorded frame flips `started`). A `booted=false;error=...` line
+// fails the wait FAST (the recorded reason is the diagnostic).
+let baseline = null;
+const deadline = Date.now() + timeoutSecs * 1000;
+let lastLine = '';
+while (Date.now() < deadline) {
+  const v = await readStatus();
+  if (v) lastLine = v.statusText || v.oh;
+  const f = parseLine(lastLine);
+  if (f.booted === 'false' && f.error) {
+    chrome.kill('SIGKILL');
+    console.error(`web-stub-probe: FAIL — the boot recorded a failure: ${f.error}`);
+    console.error(`  console errors: ${errors.filter((e) => !/favicon/i.test(e)).map((e) => e.slice(0, 160)).join(' | ') || 'none'}`);
+    process.exit(1);
+  }
+  if (f.booted === 'true' && f.started === 'true') { baseline = { line: lastLine, f }; break; }
   await sleep(500);
 }
-if (!settled) {
+if (!baseline) {
   chrome.kill('SIGKILL');
-  console.error(`web-stub-probe: FAIL — the stub status never landed within ${timeoutSecs}s (the module resolve / the page's poll)`);
-  const real = errors.filter((e) => !/favicon/i.test(e));
-  console.error(`  console errors: ${real.length ? real.map((e) => e.slice(0, 160)).join(' | ') : 'none'}`);
+  console.error(`web-stub-probe: FAIL — the game never reached booted=true;started=true within ${timeoutSecs}s`);
+  console.error(`  last status  : ${lastLine || '(empty — the module never resolved)'}`);
+  console.error(`  console errors: ${errors.filter((e) => !/favicon/i.test(e)).map((e) => e.slice(0, 160)).join(' | ') || 'none'}`);
   console.error(`  last logs     : ${logs.slice(-5).join(' | ') || '(none)'}`);
   process.exit(1);
 }
 
-// The assertions (DOM / status-based — see the header).
-const a = await send('Runtime.evaluate', { expression: `(() => {
-  const c = document.querySelector('canvas');
-  return JSON.stringify({
-    title: document.title,
-    canvas: c ? { w: c.width, h: c.height } : null,
-    ohStatus: (typeof window.ohStatus === 'function') ? window.ohStatus() : null,
-    statusText: (document.getElementById('status') || { textContent: '' }).textContent || '',
-  });
-})()`, returnByValue: true });
-const page = JSON.parse(a.result?.result?.value ?? '{}');
+// The baseline assertions (the game is running before ANY input):
+// started, the journey's stage, the angle's finiteness, the synth's
+// state, the helping hand still armed (the probe's own input comes
+// next — `help=auto` is the no-input-yet observable).
+const stageNum = Number(baseline.f.stage);
+const angleNum = Number(baseline.f.angle);
+const baseChecks = [
+  ['baseline: started=true (the engine started the game)', baseline.f.started === 'true'],
+  ['baseline: stage is an integer >= 0', Number.isInteger(stageNum) && stageNum >= 0],
+  ['baseline: angle is finite', Number.isFinite(angleNum)],
+  ['baseline: audio in {live, fallback}', ['live', 'fallback'].includes(baseline.f.audio)],
+  ['baseline: help=auto (the helping hand is armed before any input)', baseline.f.help === 'auto'],
+];
+
+// The first-gesture input step: hold `A` ~1.2 s (the CDP's raw key
+// down/up — the page's `window` keydown listener fires the
+// `resumeAudio()` export in the SAME dispatch). Headless CDP input
+// grants NO user activation (the 041 measurement), so the Rust guard
+// keeps the fallback clock — `audio` stays `fallback`; what MUST
+// happen is: no crash (the export's path ran) + the steer reached the
+// frame's edge (help off, ticks advancing, the angle turning
+// counter-clockwise).
+const k = (type, extra = {}) => send('Input.dispatchKeyEvent', Object.assign({
+  type, key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65,
+}, extra));
+await k('rawKeyDown');
+await sleep(1200);
+await k('keyUp');
+// Settle: let a few frames record AFTER the keyup (the post-read must
+// see the input's effects + the export's path, not a mid-press frame).
+await sleep(800);
+const post = await readStatus();
+const pf = parseLine(post?.statusText || post?.oh || '');
+const postAngle = Number(pf.angle);
+const inputChecks = [
+  ['input: help=off (any input disabled the helping hand — the input reached the frame)', pf.help === 'off'],
+  ['input: ticks advanced (the sim ran through the key press)', Number(pf.ticks) > Number(baseline.f.ticks)],
+  ['input: angle turned counter-clockwise (the A steer reached the engine)', Number.isFinite(postAngle) && postAngle < 0],
+  ['input: audio still in {live, fallback} (the resumeAudio() export ran without a crash)', ['live', 'fallback'].includes(pf.audio)],
+  ['input: the page fired the unlock export ([shell] audio unlock requested logged)',
+    logs.some((l) => /\[shell\] audio unlock requested/.test(l))],
+];
+
+// The DOM / status contract (the 03c half, now the real game's).
+const page = post || {};
+const titleOk = /tinyhexagon/.test(page.title || '');
+const canvasOk = !!page.canvas && page.canvas.w > 0 && page.canvas.h > 0;
+const ohOk = /tinyhexagon/.test(post?.oh || '') && /booted=true/.test(post?.oh || '');
+const statusOk = /tinyhexagon/.test(page.statusText || '') && /booted=true/.test(page.statusText || '');
 
 // The screenshot (the browser-execution evidence — the CI uploads it,
 // the orchestrator's live-page run reads it with the local model's
@@ -182,26 +279,35 @@ chrome.kill('SIGKILL');
 // Pages serves no favicon and it is not the page's asset) — including
 // the favicon's CANCELED `net::ERR_ABORTED` (the browser's own abort
 // after the 404; a canceled load is never a server failure, while an
-// UNCANCELED one — a refused connection, a dropped fetch — is).
-const realErrors = errors.filter((e) => !/favicon/i.test(e));
+// UNCANCELED one — a refused connection, a dropped fetch — is). The
+// boot's autoplay warning ("The AudioContext was not allowed to
+// start") is the OpenAL SFX device's pre-gesture AudioContext — the
+// 08a shell's EXPECTED first line (the device resumes itself on the
+// first gesture; the synth's fallback clock covers the gap).
+const TOLERATED = /(favicon|AudioContext.*not allowed to start|AudioCtx.*not allowed to start|autoplay)/i;
+const realErrors = errors.filter((e) => !TOLERATED.test(e));
 const realBad = bad.filter((b) => !/favicon/.test(b));
 const realFailed = failed
   .filter((f) => !/favicon/i.test(f.url))
   .filter((f) => !(f.canceled && /ERR_ABORTED/.test(f.text)))
   .map((f) => `${f.text} (${f.type}) ${f.url}`);
 const checks = [
-  ['title contains "tinyhexagon"', /tinyhexagon/.test(page.title || '')],
-  ['a <canvas> exists with non-zero width/height', !!page.canvas && page.canvas.w > 0 && page.canvas.h > 0],
-  ['window.ohStatus() contains "tinyhexagon"', /tinyhexagon/.test(page.ohStatus || '')],
-  ['#status contains "tinyhexagon"', /tinyhexagon/.test(page.statusText || '')],
-  ['no console errors (favicon tolerated)', realErrors.length === 0],
+  ['the game booted + started (status line reached booted=true;started=true)', baseline.f.booted === 'true' && baseline.f.started === 'true'],
+  ...baseChecks,
+  ...inputChecks,
+  ['document.title contains "tinyhexagon"', titleOk],
+  ['a <canvas> exists with non-zero width/height', canvasOk],
+  ['window.ohStatus() contains "tinyhexagon" + "booted=true"', ohOk],
+  ['#status contains "tinyhexagon" + "booted=true"', statusOk],
+  ['no console errors (favicon + the boot autoplay warning tolerated)', realErrors.length === 0],
   ['no 4xx/5xx responses (favicon tolerated)', realBad.length === 0],
   ['no failed loads (favicon / canceled aborts tolerated)', realFailed.length === 0],
   [`screenshot captured (${shotPath})`, shotOk],
 ];
 const pass = checks.every(([, ok]) => ok);
 console.log(`web-stub-probe: ${url}`);
-console.log(`  status   : ${page.ohStatus ?? '(ohStatus unreachable)'}`);
+console.log(`  baseline : ${baseline.line}`);
+console.log(`  post     : ${post?.statusText || post?.oh || '(unreachable)'}`);
 for (const [name, ok] of checks) console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${name}`);
 console.log(`  console  : ${realErrors.length ? realErrors.map((e) => e.slice(0, 160)).join(' | ') : 'no errors'}`);
 console.log(`  non-200  : ${realBad.length ? realBad.join(' | ') : 'none'}`);

@@ -65,9 +65,17 @@ linker = "x86_64-linux-android28-clang"
 #   root — build from the repo root so it resolves) is packed into the build
 #   and unpacked into emscripten MEMFS at `/RELEASE` BEFORE `main` runs.
 #   emscripten's `std::fs` (the emscripten libc) then reads master's
-#   `_RELEASE` content unchanged, so `th-web`'s `main` passes
-#   `Path::new("/RELEASE")` as `main_client`'s `base_dir` (config.json,
-#   Packs/, Assets/, the fonts).
+#   `_RELEASE` content unchanged; plan 002 issue 08a's boot (`th_app::tiny::`
+#   `tiny_web`) uses the fixed `/RELEASE` root (the desktop bin's
+#   `resolve_game_root` walk has no web twin — the preload point IS the
+#   root: config.json, Packs/, Assets/, the fonts).
+# - plan 002 issue 08a — the tiny web entry's NO-persistence contract:
+#   the IDBFS flags the retired adult shell's `ohWebPersistBoot` glue
+#   needed are GONE (the 03c stub dropped the page's persistence glue
+#   already; the 08a shell carries none): the tiny runtime persists
+#   nothing — no config / profile / replay writes — so the read-only
+#   `_RELEASE` content stays in MEMFS, `Module.FS` needs no export, and
+#   there is no `FS.syncfs` / IndexedDB mount to await before boot.
 # Target-scoped: zero effect on the desktop / android builds. (Deliberately
 # NO `[build] target` line — the desktop gate keeps its host default.)
 [target.wasm32-unknown-emscripten]
@@ -85,22 +93,6 @@ rustflags = [
   "-Clink-arg=-sMIN_WEBGL_VERSION=2",
   "-Clink-arg=--preload-file=_RELEASE@/RELEASE",
   "-Clink-arg=-sFORCE_FILESYSTEM=1",
-  # Web user-data persistence (issue 048 / F34 / D-039): IDBFS - the
-  # IndexedDB-backed filesystem the PAGE mounts at /userdata (site/index.html's
-  # `ohWebPersistBoot` glue, which the Rust boot's `main` awaits through
-  # `FS.syncfs(true, ...)` BEFORE the composition reads config.json /
-  # Profiles). `-lidbfs.js` links the IDBFS implementation (without it
-  # `FS.mount(IDBFS, ...)` has nothing to mount - the runtime `FS.syncfs`
-  # check in `tools/web-persist-probe.mjs` is the acceptance, not this
-  # flag's presence); `-sEXPORTED_RUNTIME_METHODS=FS,IDBFS` puts `Module.FS`
-  # / `Module.IDBFS` on the factory's config object so the page's glue can
-  # mount / symlink / sync. The read-only `_RELEASE` content STAYS in MEMFS -
-  # IDBFS is never mounted over /RELEASE (a persisted copy would serve a
-  # STALE `_RELEASE` to returning players after the next deployment); only
-  # the writable paths (`config.json`, `Profiles/`, `Replays/`) are
-  # symlinked into the mount.
-  "-Clink-arg=-lidbfs.js",
-  "-Clink-arg=-sEXPORTED_RUNTIME_METHODS=FS,IDBFS",
   # Memory (issue 36): emcc's default is a FIXED heap with ALLOW_MEMORY_GROWTH
   # OFF, so any allocation that outgrows it is a FATAL ABORT rather than a
   # growth - observed as `memory allocation of 8388608 bytes failed` +

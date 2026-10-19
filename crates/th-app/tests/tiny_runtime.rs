@@ -229,6 +229,12 @@ fn the_reset_restarts_the_stage_without_changing_it() {
 fn left_and_right_input_change_the_player_angle() {
     let assets = load_release();
     let mut rt = kid_runtime(assets, false);
+    // 08a: the helping hand is armed before any input (the web probe's
+    // `help=auto` baseline observable).
+    assert!(
+        !rt.help_disabled(),
+        "the helping hand is armed before any input"
+    );
 
     // A (or LEFT) held → counter-clockwise.
     let mut ev = FrameEvents::default();
@@ -238,6 +244,12 @@ fn left_and_right_input_change_the_player_angle() {
     }
     let ccw = rt.game().get_player_angle();
     assert!(ccw < 0.0, "A steers counter-clockwise (angle {ccw})");
+    // 08a: ANY input disables the helping hand for the session (the web
+    // probe's `help=off` after-input observable).
+    assert!(
+        rt.help_disabled(),
+        "any input disables the helping hand for the session"
+    );
 
     // D (or RIGHT) held → clockwise, re-crossing zero.
     let mut ev = FrameEvents::default();

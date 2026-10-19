@@ -1350,15 +1350,17 @@ impl Window {
             None => return base,
         };
         // issue 046 (F32) — the hidden-but-focusable IME input (`#ime`)
-        // (the `web_ime_input_get_or_create` docs): the phone's soft
-        // keyboard's focus target (a mobile browser raises it ONLY for a
-        // focused editable element) + its `input` / `compositionend`
-        // feed (the `attach_web_ime_listeners` below). `None` = the no-DOM
-        // edge (the web `SoftInput` controller's no-op arm — the
-        // `th-app` `WebIme`'s `None` arm).
+        // (the `web_ime_input_get` docs — 08a's get-only half): the
+        // phone's soft keyboard's focus target (a mobile browser raises
+        // it ONLY for a focused editable element) + its `input` /
+        // `compositionend` feed (the `attach_web_ime_listeners` below).
+        // `None` = the page declares no `#ime` (the 08a tiny shell's
+        // normal case — no text entry) or the no-DOM edge (the web
+        // `SoftInput` controller's no-op arm — the `th-app` `WebIme`'s
+        // `None` arm).
         let ime: Option<web_sys::HtmlInputElement> = web_sys::window()
             .and_then(|w| w.document())
-            .and_then(|d| web_ime_input_get_or_create(&d));
+            .and_then(|d| web_ime_input_get(&d));
         // issue 046 (F33) — the fullscreen button (`#fs`) (the
         // `web_fs_button_get_or_create` docs): the config's `fullscreen`
         // value's web applier (the `th-app`'s click sink — the browser
@@ -3601,41 +3603,41 @@ fn attach_web_listeners(
 ///   device flow) + a **16 px font** (a smaller font makes iOS zoom the
 ///   page on focus — the operator's target is Android Chrome, where the
 ///   floor is harmless);
-/// * **get-or-create** (the committed shell, `crates/th-web/site/
-///   index.html`, declares `#ime` — the element created by Rust is the
-///   fallback for a page that predates it, the `#c` canvas's "the page
-///   MUST provide it" contract mirrored with a Rust-side create):
-///   the attribute + style contract is re-applied either way (the Rust
-///   side is the single source of truth — the page's copy is the
-///   discoverability twin).
+/// * **get-only** (plan 002 issue 08a — the 042/052 get-OR-CREATE
+///   retires with the shell it served): the tiny web shell has NO text
+///   entry, so it does not declare `#ime` and this returns `None` for
+///   it — the soft-input controller's `None` arm (the no-op). The
+///   attribute + style contract is still re-applied on a page-declared
+///   `#ime` (the Rust side is the single source of truth — the page's
+///   copy is the discoverability twin).
 ///
-/// Returns `None` only when the page has no `document` / `body` at all
-/// (the canvas is present here, so this is the no-DOM edge — the web
+/// Returns `None` when the page declares no `#ime` (the tiny shell's
+/// normal case) or has no `document` at all (the no-DOM edge — the web
 /// `SoftInput` controller's no-op arm).
 #[cfg(target_os = "emscripten")]
-fn web_ime_input_get_or_create(document: &web_sys::Document) -> Option<web_sys::HtmlInputElement> {
-    let existing = document
+fn web_ime_input_get(document: &web_sys::Document) -> Option<web_sys::HtmlInputElement> {
+    // plan 002 issue 08a — GET-only (the 042/052 get-OR-CREATE retires
+    // with the shell it served): the tiny web shell (`th-web`'s
+    // `site/index.html`) has NO text entry (the 08 contract: "no IME,
+    // no `#ime`, no text entry"), so the page does not declare `#ime`
+    // and Rust no longer auto-creates the hidden input either (a DOM
+    // element the contract says must not exist). `th-web`'s shell is
+    // the only emscripten window consumer — a page that DOES declare
+    // `#ime` still gets the attribute / style contract (re-applied
+    // below) + the IME feed (the get half is kept).
+    let el = document
         .get_element_by_id("ime")
-        .map(|el| el.unchecked_into::<web_sys::HtmlInputElement>());
-    let el = match existing {
-        Some(el) => el,
-        None => {
-            let el = document.create_element("input").ok()?;
-            let body = document.body()?;
-            body.append_child(&el).ok()?;
-            el.unchecked_into::<web_sys::HtmlInputElement>()
-        }
-    };
-    // The attribute contract (the docs) — re-applied on the page-declared
-    // element too (the committed shell carries the same values; a stale /
-    // custom page is brought back to the contract). The typed setters
-    // (the `type` / `inputmode` / `autocomplete` / `spellcheck` web-sys
-    // exposes) + `set_attribute` for the two web-sys 0.3.106 has no typed
-    // setter for (`autocapitalize` / `enterkeyhint` — the same DOM
-    // attributes, the generic attribute route) + the `style` attribute
-    // (web-sys exposes the `style` declaration read-only — the attribute
-    // is the write route; the SAME string the committed shell's inline
-    // style carries).
+        .map(|el| el.unchecked_into::<web_sys::HtmlInputElement>())?;
+    // The attribute contract (the docs) — re-applied on the
+    // page-declared element (a stale / custom page is brought back to
+    // the contract). The typed setters (the `type` / `inputmode` /
+    // `autocomplete` / `spellcheck` web-sys exposes) + `set_attribute`
+    // for the two web-sys 0.3.106 has no typed setter for
+    // (`autocapitalize` / `enterkeyhint` — the same DOM attributes, the
+    // generic attribute route) + the `style` attribute (web-sys exposes
+    // the `style` declaration read-only — the attribute is the write
+    // route; the SAME string the committed shell's inline style
+    // carries).
     el.set_type("text");
     el.set_input_mode("text");
     el.set_autocomplete("off");
@@ -3660,26 +3662,27 @@ fn web_ime_input_get_or_create(document: &web_sys::Document) -> Option<web_sys::
 /// web applier's button (the `th-app`'s click sink's target — the
 /// `set_fullscreen_click_sink` docs).
 ///
-/// The committed shell declares it (the page's `<button id="fs">` + its
-/// stylesheet's contract: the TOP-RIGHT corner (issue 055 — the
-/// operator's "on top right and stay present", overriding 046's
-/// bottom-right + the game-state `display: none`: losing the button is
-/// exactly what stranded the operator after the browser's own fullscreen
-/// exit), the 44px touch target, the translucent / subtle look,
-/// `touch-action: manipulation`, `pointer-events: auto` on itself only,
-/// `display: none` by DEFAULT — the shell's gate JS shows it (in EVERY
-/// state, below the F31 action row's 12..76 REAL-px band — the collision
-/// resolution: the row's REPLAY / RESTART / PAUSE are the game's own
-/// top-right buttons, a DOM button over them would swallow their
-/// touches — the exact failure 046 avoided)). A
-/// found element is left AS-IS (its styling is the shell stylesheet's —
-/// the committed shell is the supported page; unlike the `#ime`'s
-/// text contract, a stale `#fs` cannot corrupt the input, only look
-/// different). The absent-element fallback CREATES it: the full inline
-/// style contract (the committed shell's values) + the `⛶` glyph + the
-/// `aria-label` — WITHOUT a `display` override (the fallback page lacks
-/// the shell's gate JS — the button is visible and working, just
-/// ungated: the committed shell is the supported page).
+/// The shipped page (the 08a tiny shell — `th-web`'s
+/// `site/index.html`) does NOT declare it: this get-or-create's
+/// absent-element fallback is the button's source there — it CREATES
+/// it with the full inline style contract (the committed shell's `#fs`
+/// values: the TOP-RIGHT corner (issue 055 — the operator's "on top
+/// right and stay present", overriding 046's bottom-right + the
+/// game-state `display: none`: losing the button is exactly what
+/// stranded the operator after the browser's own fullscreen exit), the
+/// 44px touch target, the translucent / subtle look,
+/// `touch-action: manipulation`, `pointer-events: auto` on itself
+/// only) + the `⛶` glyph + the `aria-label` — WITHOUT a `display`
+/// override (the tiny shell lacks the committed shell's gate JS — the
+/// button is visible and working, just ungated; the committed shell's
+/// `display: none`-by-default + gate JS's in-EVERY-state showing below
+/// the F31 action row's 12..76 REAL-px band is that page's own
+/// collision resolution: the row's REPLAY / RESTART / PAUSE are the
+/// game's own top-right buttons, a DOM button over them would swallow
+/// their touches — the exact failure 046 avoided). A found element (a
+/// custom page that DOES declare `#fs`) is left AS-IS (its styling is
+/// the page stylesheet's; unlike the `#ime`'s text contract, a stale
+/// `#fs` cannot corrupt the input, only look different).
 #[cfg(target_os = "emscripten")]
 fn web_fs_button_get_or_create(document: &web_sys::Document) -> Option<web_sys::Element> {
     if let Some(existing) = document.get_element_by_id("fs") {

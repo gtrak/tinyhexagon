@@ -1,6 +1,6 @@
 [package]
 name = "th-web"
-description = "The emscripten (web) entry crate (plan 002): the tinyhexagon stub entry (wasm-bindgen status/save_session; the minimal page) — the real tiny runtime web entry lands in Issue 08"
+description = "The tinyhexagon web (emscripten) entry (plan 002 issue 08a): the tiny runtime's browser boot over the preloaded _RELEASE MEMFS tree + the probe hooks (status / resumeAudio)"
 version.workspace = true
 edition.workspace = true
 
@@ -12,16 +12,21 @@ edition.workspace = true
 name = "tinyhexagon"
 path = "src/main.rs"
 
-# Issue 02a: the emscripten target dependencies (th-app / th-game /
-# js-sys / web-sys — the adult W5 boot's stack) were removed with the
-# stub; Issue 08 re-adds the real ones for the tiny runtime's web entry.
-#
-# Issue 03c: the stub now EXECUTES in the browser — its two probe
-# exports (status / save_session, src/main.rs) need wasm-bindgen on the
-# emscripten target. The version matches Cargo.lock (the CI installs the
-# same wasm-bindgen-cli — the -sWASM_BINDGEN link flag makes emcc run
-# the CLI over the linked wasm, so a version drift fails the build
-# loudly, tools/package-web.sh's pre-check). Host-target builds stay
-# dep-free (the cfg keeps the host workspace green without it).
+# The emscripten target dependencies (issue 08a re-adds the real ones for
+# the tiny runtime's web entry — the 03c stub's lone wasm-bindgen
+# dependency becomes the stack's glue): `th-app` (the shared tiny entry
+# + the `web_fullscreen` sinks), `th-game` (the browser-console log sink
+# routing), `wasm-bindgen` / `web-sys` (the two probe exports
+# + the log routing — the canvas / GL / input stay owned by the
+# `th-render` emscripten layer's `Window`, which the tiny boot composes
+# over). `JsValue` rides the `wasm-bindgen` prelude (the direct `js-sys`
+# dep was unused — removed in fix 4). The versions match Cargo.lock (the CI installs the same
+# wasm-bindgen-cli — the `-sWASM_BINDGEN` link flag makes emcc run the
+# CLI over the linked wasm, so a version drift fails the build loudly,
+# `tools/package-web.sh`'s pre-check). Host-target builds stay
+# dep-free (the `cfg` keeps the host workspace green without them).
 [target.'cfg(target_os = "emscripten")'.dependencies]
+th-app = { path = "../th-app" }
+th-game = { path = "../th-game" }
 wasm-bindgen = "0.2.129"
+web-sys = { version = "0.3.106", features = ["console"] }

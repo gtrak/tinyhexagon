@@ -2,9 +2,9 @@
 # source (registry src index.crates.io, cpal 0.15.3; the registry
 # extraction artifacts `.cargo-ok` / `.cargo_vcs_info.json` + the
 # author's `Cargo.lock` dropped; LICENSE kept). Changes vs the registry
-# source — ONE change, confined to the emscripten wasm-ABI layer in
-# `src/lib.rs` (everything else byte-identical, all other hosts
-# untouched):
+# source — confined to the emscripten wasm-ABI layer (`src/lib.rs` +
+# `src/host/emscripten/mod.rs`; everything else byte-identical, all
+# other hosts untouched):
 #   * `BufferSize` gained the `FromWasmAbi` impl its `IntoWasmAbi` impl
 #     always implied (wasm-bindgen >= 0.2.9x-era derives on
 #     `StreamConfig` require both directions on every field).
@@ -12,6 +12,32 @@
 #     `Option<u32>::into_abi()` (the trailing call no longer type-checks
 #     under wasm-bindgen 0.2.129); the match now returns `Option<u32>`
 #     directly (identical encoding: None = Default, Some(fc) = Fixed).
+#   * plan 002 issue 08a fix 2 — the whole `BufferSize` emscripten
+#     wasm-ABI triple now delegates to `Option<FrameCount>` (=`u32`) the
+#     way the 0.18.2 registry cpal does:
+#     `WasmDescribe` writes [OPTIONAL, U32] (the registry source's empty
+#     body made the 0.2.129 CLI's `Descriptor::decode` panic on the
+#     empty slice, "len is 0", descriptor.rs:324), and the `Abi` of
+#     `FromWasmAbi` / `IntoWasmAbi` is `Option<u32>`'s own 0.2.129 ABI
+#     (a single `f64` with the `2^53 - 1` sentinel) instead of the
+#     pre-0.2.129 `Option<u32>`-as-`Abi` (whose two-word `WasmRet`
+#     return did not match the descriptor's `f64` glue).
+#   * `src/host/emscripten/mod.rs` (08a fix 2, runtime half): the
+#     `SampleFormat` the output-stream callback's `Data` carries is now
+#     captured by the timer closure instead of crossing the JS timer as
+#     a `Closure<FnOnce() -> SampleFormat>` argument (the 0.2.129 timer
+#     invocation coerced the JS function argument to the `SampleFormat`
+#     u32 ABI `0` = `I8`, and the typed wrapper in `traits.rs` panicked
+#     "host supplied incorrect sample type" on the live audio callback).
+#   * `src/host/emscripten/mod.rs` (08a fix 3, runtime half): the
+#     output-stream callback's `AudioBufferSourceNode` now connects FROM the
+#     source node TO the destination (`node.connect_with_audio_node(&context
+#     .destination())`). The registry source connected the other way
+#     (`context.destination().connect_with_audio_node(&node)`), which
+#     panics at runtime — `AudioDestinationNode` has 0 outputs, so the
+#     browser rejects it with an IndexSizeError ("output index (0) exceeds
+#     number of outputs (0)"); the webaudio host already uses the correct
+#     direction (host/webaudio/mod.rs:363).
 # Reason: the wasm32-unknown-emscripten cross-target spike (05b) — cpal
 # 0.15.3 is the last 0.15.x and its emscripten host does not compile
 # against the workspace's wasm-bindgen 0.2.129 (th-web + the installed

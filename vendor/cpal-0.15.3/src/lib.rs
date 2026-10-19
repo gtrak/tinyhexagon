@@ -236,20 +236,41 @@ pub enum BufferSize {
     Fixed(FrameCount),
 }
 
+// 08a fix 2 (the wasm-bindgen 0.2.129 CLI descriptor panic) — the
+// emscripten wasm-ABI triple must be mutually consistent, and with the
+// 0.2.129 conventions:
+//   * `WasmDescribe` delegates to `Option<FrameCount>` (= `Option<u32>`):
+//     the bytes [OPTIONAL, U32] are what the CLI's `Descriptor::decode`
+//     interprets for `__wbg_get_streamconfig_buffer_size` — the registry
+//     source's empty body wrote zero bytes and the CLI panicked on the
+//     empty slice (`descriptor.rs:324`, "len is 0").
+//   * `FromWasmAbi` / `IntoWasmAbi` delegate their `Abi` to
+//     `Option<FrameCount>`'s (0.2.129: a single `f64` with `2^53 - 1`
+//     as the `None` sentinel — the `type_wasm_native_f64_option`
+//     convention), the same word shape the macro-generated
+//     `WasmRet<Abi>` getter returns and the CLI's OPTIONAL+U32 adapter
+//     (`OptionF64Sentinel`) consumes. The 05b `Option<u32>`-as-`Abi`
+//     declaration (the pre-0.2.129 convention) type-checked, but its
+//     two-word `WasmRet` return (a hidden return pointer) did not match
+//     the descriptor's `f64` glue.
+// The 0.18.2 registry cpal ships this exact shape (there too
+// `FrameCount = u32`; all three impls delegate to `Option<FrameCount>`).
 #[cfg(target_os = "emscripten")]
 impl wasm_bindgen::describe::WasmDescribe for BufferSize {
-    fn describe() {}
+    fn describe() {
+        <Option<FrameCount> as wasm_bindgen::describe::WasmDescribe>::describe();
+    }
 }
 
-// 05b emscripten ABI patch (see Cargo.toml provenance block): the
-// `FromWasmAbi` half of the round trip — required by the wasm-bindgen
-// derive on `StreamConfig` (field `buffer_size`). Encoding is the mirror
-// of `IntoWasmAbi` below.
+// 05b emscripten ABI patch (see Cargo.toml provenance block), completed by
+// 08a fix 2: the `FromWasmAbi` half of the round trip — required by the
+// wasm-bindgen derive on `StreamConfig` (field `buffer_size`). Encoding is
+// the mirror of `IntoWasmAbi` below.
 #[cfg(target_os = "emscripten")]
 impl wasm_bindgen::convert::FromWasmAbi for BufferSize {
-    type Abi = Option<u32>;
+    type Abi = <Option<FrameCount> as wasm_bindgen::convert::FromWasmAbi>::Abi;
     unsafe fn from_abi(abi: Self::Abi) -> Self {
-        match abi {
+        match Option::<FrameCount>::from_abi(abi) {
             None => Self::Default,
             Some(fc) => Self::Fixed(fc),
         }
@@ -258,16 +279,17 @@ impl wasm_bindgen::convert::FromWasmAbi for BufferSize {
 
 #[cfg(target_os = "emscripten")]
 impl wasm_bindgen::convert::IntoWasmAbi for BufferSize {
-    type Abi = Option<u32>;
+    type Abi = <Option<FrameCount> as wasm_bindgen::convert::IntoWasmAbi>::Abi;
     fn into_abi(self) -> Self::Abi {
-        // 05b emscripten ABI patch: the registry source ended with
-        // `.into_abi()` on the `Option<u32>`, which no longer
-        // type-checks under wasm-bindgen 0.2.129; the match already
-        // produces the ABI value directly (same encoding).
+        // 08a fix 2: route through `Option<FrameCount>`'s 0.2.129 `f64`
+        // sentinel ABI (the 05b match body already produced the right
+        // `Option<u32>` value; only the `Abi` type moved to the
+        // convention's `f64` word).
         match self {
             Self::Default => None,
             Self::Fixed(fc) => Some(fc),
         }
+        .into_abi()
     }
 }
 

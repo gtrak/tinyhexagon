@@ -261,13 +261,21 @@ impl StreamTrait for Stream {
     }
 }
 
+// 08a fix 2 (wasm-bindgen 0.2.129 runtime ABI): `sample_format` is
+// captured by value (it is `Copy`) instead of crossing the JS timer as a
+// `Closure<FnOnce() -> SampleFormat>` argument — the 0.2.129 timer
+// invocation converts a JS function argument to the `SampleFormat` u32
+// ABI, where a JS function coerces to `0` (`I8`), so the callback's
+// `Data` carried the wrong sample format and the typed wrapper in
+// `traits.rs` panicked ("host supplied incorrect sample type").
 fn audio_callback_fn<D>(
     mut data_callback: D,
-) -> impl FnOnce(Stream, StreamConfig, SampleFormat, u32)
+    sample_format: SampleFormat,
+) -> impl FnOnce(Stream, StreamConfig, u32)
 where
     D: FnMut(&mut Data, &OutputCallbackInfo) + Send + 'static,
 {
-    |stream, config, sample_format, buffer_size_frames| {
+    move |stream, config, buffer_size_frames| {
         let sample_rate = config.sample_rate.0;
         let buffer_size_samples = buffer_size_frames * config.channels as u32;
         let audio_ctxt = &stream.audio_ctxt;
@@ -321,9 +329,14 @@ where
             .create_buffer_source()
             .expect("The buffer source node could not be created");
         node.set_buffer(Some(&buffer));
-        context
-            .destination()
-            .connect_with_audio_node(&node)
+        // 08a fix 3 — connect the source node TO the destination:
+        // `AudioDestinationNode` has 0 outputs, so the registry source's
+        // `context.destination().connect_with_audio_node(&node)` panics at
+        // runtime (IndexSizeError: output index (0) exceeds number of
+        // outputs (0)); `node.connect_with_audio_node(&destination)` is the
+        // WebAudio direction the webaudio host uses (webaudio/mod.rs:363).
+        node
+            .connect_with_audio_node(&context.destination())
             .expect("Could not connect the audio node to the destination");
         node.start().expect("Could not start the audio node");
 
@@ -353,14 +366,13 @@ fn set_timeout<D>(
 {
     let window = web_sys::window().expect("Not in a window somehow?");
     window
-        .set_timeout_with_callback_and_timeout_and_arguments_4(
-            &Closure::once_into_js(audio_callback_fn(data_callback))
+        .set_timeout_with_callback_and_timeout_and_arguments_3(
+            &Closure::once_into_js(audio_callback_fn(data_callback, sample_format))
                 .dyn_ref::<js_sys::Function>()
                 .expect("The function was somehow not a function"),
             time,
             &stream.into(),
             &((*config).clone()).into(),
-            &Closure::once_into_js(move || sample_format),
             &buffer_size_frames.into(),
         )
         .expect("The timeout could not be set");

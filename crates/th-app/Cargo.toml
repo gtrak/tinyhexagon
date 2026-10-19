@@ -79,9 +79,16 @@ gilrs = "0.11"
 # `fullscreenEnabled` read) + `Element` (the `documentElement`'s
 # `requestFullscreen`) + `Event` (the transition-edge DOM signal the
 # web entry's listener rides, Issue 08).
+# plan 002 issue 08a — the first-gesture audio unlock's guard
+# (`src/tiny.rs`'s `web_request_audio_unlock`): `Navigator` +
+# `UserActivation` (the `navigator.userActivation.isActive` read — the
+# autoplay policy's "is this call inside a user activation" check; the
+# legacy `document.hasUserActivation` is not in web-sys 0.3.106).
 web-sys = { version = "0.3.106", features = [
   "Window",
   "Document",
   "Element",
   "Event",
+  "Navigator",
+  "UserActivation",
 ] }

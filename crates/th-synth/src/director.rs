@@ -192,6 +192,17 @@ impl MusicDirector {
         self.try_start_live();
     }
 
+    /// The live-engine state (05a's boot contract; plan 002 08a: the web
+    /// `status()` line's `audio=` half): `true` while the live
+    /// `MusicEngine` runs, `false` while the fallback clock runs (the
+    /// web's boot state until the first-gesture unlock; desktop: `true`
+    /// from [`start`](Self::start)'s moment when the device is
+    /// available, `false` on the device-failure fallback).
+    #[must_use]
+    pub fn is_live(&self) -> bool {
+        self.live.is_some()
+    }
+
     /// The fallback-only constructor (the web's boot state; host tests).
     fn new_fallback() -> Self {
         let stage = 0u32;
