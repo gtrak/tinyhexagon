@@ -135,6 +135,28 @@ impl CCustomWallManager {
         self.destroy_unchecked(cw_handle);
     }
 
+    /// plan 002 issue 04a — the soft-collision half of `handle_collision`
+    /// (the kid runtime's no-death path): destroy every live collidable
+    /// custom wall that overlaps `p_pos` — the same alive set
+    /// `handle_collision` walks (the handle is in use and `canCollide` is
+    /// set). Returns how many walls were killed. The tiny pack should not
+    /// rely on custom walls; this exists so a soft collision with one
+    /// kills the wall (not the player).
+    #[must_use]
+    pub fn soft_kill_overlapping(&mut self, p_pos: &Vec2) -> usize {
+        let mut killed = 0;
+        for h in 0..self.custom_walls.len() as CCustomWallHandle {
+            if !self.handle_available[h as usize]
+                && self.custom_walls[h as usize].get_can_collide()
+                && self.custom_walls[h as usize].is_overlapping(p_pos)
+            {
+                self.destroy_unchecked(h);
+                killed += 1;
+            }
+        }
+        killed
+    }
+
     // --- Setters ---------------------------------------------------------
 
     pub fn set_vertex_pos(&mut self, h: CCustomWallHandle, vertex_idx: i32, pos: Vec2) {

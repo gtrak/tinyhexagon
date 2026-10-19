@@ -437,14 +437,82 @@ re-reading the whole history.
   `[th-render]` / `[th-web-fs]` / `[th-audio]`, `--th-desktop-mode-probe`
   (`th_app::desktop_mode::PROBE_ARG` + `tools/smoke-windowed.sh`).
 
-### 04 — engine kid changes (pending)
+### 04 — engine kid changes (04a LANDED, 04b pending)
 
-- Soft collision API/bump accessor:
-- `set_difficulty_mult` range:
-- `apply_music_beat` / `StyleData::apply_beat_hue`:
-- `DrawOptions` shape:
-- Wall-gap API:
-- Tests added:
+- Soft collision API/bump accessor: `set_soft_collisions` /
+  `soft_collisions`; `bump_serial() -> u64` — one increment per killed
+  wall + `flash_effect = max(·, 120.0)`; see the §04a log entry.
+- `set_difficulty_mult` range: `clamp(0.1, 4.0)` on the shared
+  `difficultyMult` (all existing speed/delay/style paths read it).
+- `apply_music_beat` / `StyleData::apply_beat_hue`: (04b)
+- `DrawOptions` shape: (04b)
+- Wall-gap API: `WallGap { center_angle, half_width_angle, radius }` +
+  pure `compute_wall_gaps(&[CWall])` (`th-game::wall`, crate-root
+  re-export) + `HexagonGame::wall_gaps()` /
+  `nearest_gap_angle(player_angle) -> Option<f32>`; see §04a.
+- Tests added: `tests/soft_collisions.rs` (9) + `tests/wall_gaps.rs`
+  (9); 509 → 527 passed (04a; the 1 ignored is the pre-existing th-lua
+  sandbox doc-test).
+
+### 04a — engine kid mechanics (LANDED)
+
+- API (final): `HexagonGame::set_soft_collisions(bool)` /
+  `soft_collisions()` / `set_difficulty_mult(f32)` (writes the shared
+  `difficultyMult`, clamped `0.1..=4.0`) / `bump_serial() -> u64` /
+  `wall_gaps() -> Vec<WallGap>` / `nearest_gap_angle(player_angle) ->
+  Option<f32>`; `WallGap { center_angle, half_width_angle, radius }` +
+  pure `compute_wall_gaps(&[CWall])` in `th-game::wall` (re-exported at
+  the crate root); `CWall::kill()` (sets the existing `killed` flag —
+  the existing `retain` drops the wall after the update) +
+  `CWall::angle_span() -> Option<(start, end, radius)>` from the two
+  distance vertices (angles normalized to `[0, TAU)`);
+  `CCustomWallManager::soft_kill_overlapping(&Vec2) -> usize`.
+- State: `EngineState.soft_collisions` (init false) + `bump_serial` (init
+  0); the kid composition (07) calls `set_soft_collisions(true)` once.
+  Non-kid path byte-identical (every added line is `soft`-gated; no
+  update reordering — the second "always deadly" round is simply
+  skipped in soft mode).
+- Bump semantics: per killed wall (CWall: first collision round; custom
+  wall: the manager kill count) set
+  `status.flash_effect = max(·, 120.0)` + `bump_serial += n`; a killed
+  wall is retained out, so repeated updates never double-bump. The app
+  compares serial deltas (05 synth-duck / 07 slow-motion + SFX); the
+  death flash (255) is untouched and sets no bump.
+- Gap algorithm: per-wall span from `v0`/`v1` (atan2 → `[0, TAU)`, may
+  wrap the seam; `None` on degenerate vertices), flatten → sort → merge
+  (EPS 1e-5 rad, tracking the bounding wall radius at each merged edge)
+  → complement; gap `radius` = min of the two bounding walls' radii
+  (the gap closes once the nearer bound reaches it); gaps ordered by
+  start angle; empty / fully-covered ring → `[]`. `nearest_gap_angle`:
+  signed diff normalized to `[-PI, PI]`, smallest |distance|, exact ties
+  keep the first gap in order, `None` when no gap.
+- Custom-wall limitation: `handle_collision` returns one bool, so the
+  soft path re-derives the hit set as "alive + `canCollide` +
+  overlapping the post-push player position" (the pushes still run; a
+  `deadly` custom wall is killed too — soft = no death by design). The
+  tiny pack (06) should not rely on custom walls.
+- RNG-order: unchanged (the soft branch draws no game RNG; the
+  non-soft path is untouched).
+- Tests: 18 new — `tests/soft_collisions.rs` (9: soft vs non-soft CWall
+  twins — flash 120 vs 255, wall vs player death, moving wall dying on
+  the SAME tick in both modes, one-bump-per-killed-wall + no
+  double-bump + two-walls-in-one-frame, custom-wall twins, difficulty
+  write + clamp) + `tests/wall_gaps.rs` (9: `angle_span` incl. seam
+  wrap, gap centres/widths incl. the 0/TAU-seam gap, sparse-ring order,
+  full/empty ring, engine delegation + nearest-gap picks). Gate 4/4
+  green: 62 suites, 527 passed / 0 failed / 1 ignored (baseline at
+  `5740e9bc` measured in a temp worktree: 509 — the delta is exactly
+  the 18 new tests).
+- No commit made (orchestrator commits).
+- For 04b: `status.pulse` / `beat_pulse` stay engine-driven (the kid
+  beat API is additive — do not rewrite the pulse path); `DrawOptions`
+  gating lives in the th-app bridge / th-render — 04a touched no
+  text/draw surface.
+- For 07: call `set_soft_collisions(true)` once after composition; poll
+  `bump_serial()` for slow-motion/SFX/duck; steer the helping hand with
+  `nearest_gap_angle(get_player_angle())` (or widest of `wall_gaps()`);
+  drive the stage arc with live `set_difficulty_mult` (engine clamps
+  0.1..=4.0, the app owns the 0.55..1.15 arc).
 
 ### 05 — synth (pending)
 

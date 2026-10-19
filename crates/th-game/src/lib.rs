@@ -53,4 +53,4 @@ pub use status::{HexagonGameStatus, StateChange};
 pub use ticker::Ticker;
 pub use timeline::{Timeline2, Timeline2Runner};
 pub use vertex_batch::FastVertexVectorTris;
-pub use wall::CWall;
+pub use wall::{compute_wall_gaps, CWall, WallGap};

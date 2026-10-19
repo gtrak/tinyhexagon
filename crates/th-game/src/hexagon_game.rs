@@ -49,10 +49,13 @@ use crate::camera::Camera;
 use crate::lua_state::{ReentrantMutex, ReentrantMutexGuard, SharedState, SharedStore};
 use crate::renderer::Renderer;
 use crate::seams::{Audio, CosmeticRng, Joystick, ScriptHost};
+use crate::wall::{compute_wall_gaps, WallGap};
 use crate::{
     CPlayer, CWall, FastVertexVectorTris, HexagonGameStatus, LevelStatus, SpeedData, StateChange,
     Timeline2, Timeline2Runner,
 };
+
+use th_math::ssvu::math::{PI, TAU};
 
 /// C++ `HexagonGame::GameExecutionResult`.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -293,6 +296,12 @@ pub struct EngineState {
     // C++ fast-forward / tick-advance test hooks.
     pub(crate) fast_forward_target: Option<f64>,
     pub(crate) advance_tick_count: Option<i32>,
+
+    // plan 002 issue 04a (kid mode): the soft (no-death) collision flag
+    // and the bump serial (one increment per wall killed by a soft
+    // collision — the app's slow-motion / SFX / synth-duck trigger).
+    pub(crate) soft_collisions: bool,
+    pub(crate) bump_serial: u64,
 }
 
 fn entropy_seed() -> u64 {
@@ -496,6 +505,8 @@ impl<S: SharedStore> HexagonGame<S> {
             random_input_rng: Pcg32Fast::from_seed(entropy_seed()),
             fast_forward_target: None,
             advance_tick_count: None,
+            soft_collisions: false,
+            bump_serial: 0,
         };
 
         // C++ `HexagonGame` ctor's "Keyboard binds" section
@@ -950,6 +961,37 @@ impl<S: SharedStore> HexagonGame<S> {
 
         g.level_status.rotation_speed *= -1.0_f32;
         g.status.fast_spin = g.level_status.fast_spin;
+    }
+
+    /// plan 002 issue 04a — live difficulty setter (the kid runtime's
+    /// stage arc): writes the shared `difficultyMult` the speed/delay/
+    /// style paths already read (e.g. `getSpeedMultDM`,
+    /// `getMusicDMSyncFactor`), clamped to `[0.1, 4.0]`.
+    pub fn set_difficulty_mult(&self, mult: f32) {
+        self.st().difficulty_mult = mult.clamp(0.1, 4.0);
+    }
+
+    /// plan 002 issue 04a — enable the soft (no-death) collisions: a wall
+    /// collision kills the wall (flash + one bump) instead of the player.
+    /// The kid composition calls this once after construction; default
+    /// `false` (the classic lethal path).
+    pub fn set_soft_collisions(&self, enabled: bool) {
+        self.est().soft_collisions = enabled;
+    }
+
+    /// plan 002 issue 04a — the soft-collision flag.
+    #[must_use]
+    pub fn soft_collisions(&self) -> bool {
+        self.est().soft_collisions
+    }
+
+    /// plan 002 issue 04a — the bump serial: incremented exactly once per
+    /// wall killed by a soft collision (CWall or custom wall). The app
+    /// compares it against its last-seen value and fires the slow-motion /
+    /// SFX / synth-duck once per physical bump.
+    #[must_use]
+    pub fn bump_serial(&self) -> u64 {
+        self.est().bump_serial
     }
 
     /// C++ `sideChange(mSideNumber)` (verbatim).
@@ -2000,6 +2042,35 @@ impl<S: SharedStore> HexagonGame<S> {
             m_curve,
             m_hue_mod,
         ));
+    }
+
+    /// plan 002 issue 04a — the wall complement arcs (the gaps the kid
+    /// runtime's "helping hand" steers through): delegates to
+    /// [`compute_wall_gaps`] over the live walls.
+    #[must_use]
+    pub fn wall_gaps(&self) -> Vec<WallGap> {
+        let g = self.st();
+        compute_wall_gaps(&g.walls)
+    }
+
+    /// plan 002 issue 04a — the gap centre nearest `player_angle` (the
+    /// signed difference is normalized to `[-PI, PI]` before comparing
+    /// distances); `None` when there is no gap. Exact ties keep the first
+    /// gap in the returned order (gaps are ordered by start angle). The
+    /// app may instead read [`Self::wall_gaps`] and pick the widest /
+    /// nearest itself.
+    #[must_use]
+    pub fn nearest_gap_angle(&self, player_angle: f32) -> Option<f32> {
+        let mut best: Option<(f32, f32)> = None; // (|distance|, centre)
+        for g in self.wall_gaps() {
+            let diff = (g.center_angle - player_angle).rem_euclid(TAU);
+            let diff = if diff > PI { diff - TAU } else { diff };
+            match best {
+                Some((d, _)) if diff.abs() >= d => {}
+                _ => best = Some((diff.abs(), g.center_angle)),
+            }
+        }
+        best.map(|(_, c)| c)
     }
 
     // ------------------------------------------------------------------

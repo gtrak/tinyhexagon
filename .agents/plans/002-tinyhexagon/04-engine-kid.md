@@ -1,8 +1,13 @@
 # Issue 04 — Engine kid alterations
 
-**Status:** PROPOSED
+**Status:** PARTIAL — 04a LANDED; 04b pending
 **Depends:** 03
-**Unblocks:** 07
+**Unblocks:** 05, 07
+
+**Execution split (2026-10-19):** **04a** = soft collision, difficulty
+setter, bump accessor and wall gaps (engine mechanics); **04b** = beat
+palette/pulse and `DrawOptions` text suppression (visual/render). The
+contract below is the umbrella; the sub-issue task specs carry the detail.
 
 ## Objective
 

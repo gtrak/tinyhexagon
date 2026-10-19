@@ -473,6 +473,9 @@ impl<S: SharedStore> HexagonGame<S> {
     /// then the (identically ordered) collision decisions, keeping every
     /// C++ statement's effect and order.
     fn update_walls(&self, m_ft: FT) {
+        // plan 002 issue 04a — the soft (no-death) collision flag, read
+        // once (the non-soft path below is unchanged).
+        let soft = self.est().soft_collisions;
         let radius = self.get_radius();
         // C++ `const float radiusSquared{status.radius * status.radius + 8.f};`
         let radius_squared = radius * radius + 8.0_f32;
@@ -498,6 +501,18 @@ impl<S: SharedStore> HexagonGame<S> {
             };
             // If there is no collision skip to the next wall.
             if !overlapping {
+                continue;
+            }
+
+            // plan 002 issue 04a — soft: the wall dies instead of the
+            // player (flash + one bump per killed wall; the existing
+            // `retain` drops it after this update). No push, no death.
+            if soft {
+                let mut g = self.st();
+                g.walls[i].kill();
+                g.status.flash_effect = f32::max(g.status.flash_effect, 120.0_f32);
+                self.est().bump_serial += 1;
+                collided = true;
                 continue;
             }
 
@@ -533,6 +548,13 @@ impl<S: SharedStore> HexagonGame<S> {
             return;
         }
 
+        // plan 002 issue 04a — soft: the first round already handled every
+        // collision (kill + bump); the second "always deadly" round must
+        // not run.
+        if soft {
+            return;
+        }
+
         // Second round, always deadly...
         for i in 0..self.st().walls.len() {
             let overlapping = {
@@ -560,7 +582,31 @@ impl<S: SharedStore> HexagonGame<S> {
             )
         };
         if hit {
-            self.perform_player_kill();
+            if self.est().soft_collisions {
+                // plan 002 issue 04a — soft: the custom wall(s) that hit
+                // the player die instead of the player (flash + one bump
+                // per killed wall).
+                self.kill_soft_custom_walls();
+            } else {
+                self.perform_player_kill();
+            }
+        }
+    }
+
+    /// plan 002 issue 04a — the soft-collision half of
+    /// [`Self::update_custom_walls`]: kill the collidable custom wall(s)
+    /// that overlap the player's (post-push) position; flash + one bump
+    /// per killed wall, no player death.
+    fn kill_soft_custom_walls(&self) {
+        let p_pos = self.get_player_position();
+        let killed = {
+            let mut g = self.st();
+            g.cw_manager.soft_kill_overlapping(&p_pos)
+        };
+        if killed > 0 {
+            let mut g = self.st();
+            g.status.flash_effect = f32::max(g.status.flash_effect, 120.0_f32);
+            self.est().bump_serial += killed as u64;
         }
     }
 

@@ -1,6 +1,6 @@
 # 002 — tinyhexagon
 
-Status: APPROVED (issues 000–001 and 02a–03 landed; upstream HWM dcd9fdeb synced 2026-10-19; Issue 04 next)
+Status: APPROVED (issues 000–001 and 02a–03 and 04a landed; upstream HWM dcd9fdeb synced 2026-10-19; 04b next)
 Owner: operator; orchestrator: this session
 Plan file: `.agents/plans/002-tinyhexagon/PLAN.md`
 Issues: `00-*.md` … `09-*.md` in this folder
@@ -140,19 +140,20 @@ web `th-web` emscripten bin. All use the same `th-render`/`bridge` path.
 | 02c2 | Remove replay; remove `oh-replay`; bridge replay UI/tests | 02c1 | LANDED |
 | 02c3 | Remove parity fingerprint/RNG; remove `oh-render` replay/PB fields; final engine cleanup | 02c2 | LANDED |
 | 03 | Rename `oh-` → `th-`; rename artifacts | 02c3 | LANDED |
-| 04 | Engine kid alterations (soft collision, difficulty, beat, text, gaps) | 03 | PROPOSED |
+| 04a | Engine kid mechanics: soft collision, difficulty setter, bump, wall gaps | 03 | LANDED |
+| 04b | Beat palette/pulse + `DrawOptions` text suppression | 03 | PROPOSED |
 | 05 | `th-synth` cross-target spike + music director | 03 | PROPOSED |
 | 06 | Tiny content pack (`_RELEASE/Packs/tiny`) | 03 | PROPOSED |
-| 07 | `th-app` tiny runtime/loop + renderer integration (desktop) | 04, 05, 06 | PROPOSED |
+| 07 | `th-app` tiny runtime/loop + renderer integration (desktop) | 04a, 04b, 05, 06 | PROPOSED |
 | 08 | Android/web entries + packaging/CI/release names | 07 | PROPOSED |
 | 09 | Tuning, docs, gate, playtests | 08 | PROPOSED |
 
 Dependency graph:
 
 ```
-00 ── 01 ── 02a ── 02b ── 02c1 ── 02c2 ── 02c3 ── 03 ──┬── 04 ──┐
-                               ├── 05 ──┼── 07 ── 08 ── 09
-                               └── 06 ──┘
+00 ── 01 ── 02a ── 02b ── 02c1 ── 02c2 ── 02c3 ── 03 ──┬── 04a ── 04b ──┐
+                               ├── 05 ─────────┼── 07 ── 08 ── 09
+                               └── 06 ─────────┘
 ```
 
 05 and 06 may run in parallel after 03, subject to the one-writer-per-worktree

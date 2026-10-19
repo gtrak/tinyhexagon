@@ -989,6 +989,8 @@ mod tests {
             random_input_rng: Pcg32Fast::from_seed(0),
             fast_forward_target: None,
             advance_tick_count: None,
+            soft_collisions: false,
+            bump_serial: 0,
         }
     }
 

@@ -5,7 +5,7 @@
 //! (D-000). Vertex order is **nw(0), sw(1), se(2), ne(3)**.
 
 use th_math::hg::color::{transform_hue, Color};
-use th_math::ssvs::vector2::{get_mag, get_orbit_rad};
+use th_math::ssvs::vector2::{get_mag, get_orbit_rad, get_rad};
 use th_math::ssvs::Vec2;
 use th_math::ssvu::math::TAU;
 use th_math::FT;
@@ -238,6 +238,136 @@ impl CWall {
     pub fn is_dead(&self) -> bool {
         self.killed
     }
+
+    /// plan 002 issue 04a — mark the wall killed. The soft-collision
+    /// branch of `update_walls` uses this (the wall dies instead of the
+    /// player); the existing `is_dead`/`retain` drops the wall after the
+    /// update.
+    pub fn kill(&mut self) {
+        self.killed = true;
+    }
+
+    /// plan 002 issue 04a — the wall's angular span about the world
+    /// origin, derived from the two distance vertices
+    /// (`vertex_positions[0]` / `[1]` — the C++ ctor's `angleN` /
+    /// `angleP` orbit points, both at the wall's current radius):
+    /// `(start, end, radius)` with both angles normalized to `[0, TAU)`
+    /// and the span running from `start` to `end` in the
+    /// increasing-angle direction (it may wrap the `0`/`TAU` seam; the
+    /// width `(end - start) mod TAU` is positive for a live wall).
+    ///
+    /// `None` when the two distance vertices are degenerate (coincident,
+    /// or sharing one angle — no defined span).
+    #[must_use]
+    pub fn angle_span(&self) -> Option<(f32, f32, f32)> {
+        let v0 = self.vertex_positions[0];
+        let v1 = self.vertex_positions[1];
+        if v0 == v1 {
+            return None;
+        }
+        let start = get_rad(&v0).rem_euclid(TAU);
+        let end = get_rad(&v1).rem_euclid(TAU);
+        let width = (end - start).rem_euclid(TAU);
+        if width == 0.0 {
+            return None;
+        }
+        Some((start, end, get_mag(&v0)))
+    }
+}
+
+/// plan 002 issue 04a — a gap in the wall ring: a complement arc between
+/// (merged) wall spans, the opening the kid runtime's "helping hand"
+/// steers the player through. `center_angle` is in `[0, TAU)` radians
+/// and the gap runs from `center_angle - half_width_angle` to
+/// `center_angle + half_width_angle` (wrapping the `0`/`TAU` seam when
+/// needed); `radius` is the smaller of the two bounding walls' radii —
+/// the gap closes once the nearer bound reaches the player.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WallGap {
+    pub center_angle: f32,
+    pub half_width_angle: f32,
+    pub radius: f32,
+}
+
+/// plan 002 issue 04a — the complement arcs of `walls` (pure over the
+/// wall list): each wall's [`CWall::angle_span`] is collected,
+/// overlapping or touching spans are merged, and the remaining arcs of
+/// `[0, TAU)` are returned as `WallGap`s (ordered by start angle). An
+/// empty slice, or a ring whose walls fully cover the circle, yields an
+/// empty vec.
+#[must_use]
+pub fn compute_wall_gaps(walls: &[CWall]) -> Vec<WallGap> {
+    // A gap narrower than this is vertex-angle noise (atan2/cos
+    // round-off), not a drivable opening.
+    const EPS: f32 = 1e-5;
+
+    // (start, width, radius): the span runs from `start` in the
+    // increasing-angle direction (it may wrap the seam); width > 0.
+    let spans: Vec<(f32, f32, f32)> = walls
+        .iter()
+        .filter_map(|w| {
+            w.angle_span()
+                .map(|(s, e, r)| (s, (e - s).rem_euclid(TAU), r))
+        })
+        .collect();
+    if spans.is_empty() {
+        return Vec::new();
+    }
+
+    // Flatten to [0, TAU) intervals (a wrapping span becomes two:
+    // [start, TAU) + [0, start + width - TAU)); tuple: (start, end,
+    // radius-at-start-edge, radius-at-end-edge).
+    let mut intervals: Vec<(f32, f32, f32, f32)> = Vec::with_capacity(spans.len() + 1);
+    for (s, w, r) in spans {
+        let e = s + w;
+        if e <= TAU + EPS {
+            intervals.push((s, e.min(TAU), r, r));
+        } else {
+            intervals.push((s, TAU, r, r));
+            intervals.push((0.0, e - TAU, r, r));
+        }
+    }
+    intervals.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.total_cmp(&b.1)));
+
+    // Merge overlapping or touching intervals: (start, end, radius at the
+    // min-start edge, radius at the max-end edge).
+    let mut merged: Vec<(f32, f32, f32, f32)> = Vec::with_capacity(intervals.len());
+    for (s, e, r, _) in intervals {
+        if let Some(m) = merged.last_mut() {
+            if s <= m.1 + EPS {
+                if e > m.1 + EPS {
+                    m.1 = e;
+                    m.3 = r;
+                }
+                continue;
+            }
+        }
+        merged.push((s, e, r, r));
+    }
+
+    // The complement: every interior gap + the seam gap (the last
+    // interval's end to the first interval's start, across the seam),
+    // dropped when it is no wider than EPS (the bounds touch). Each gap's
+    // radius is the min of the two bounding walls' radii.
+    let n = merged.len();
+    let mut gaps: Vec<WallGap> = Vec::with_capacity(n);
+    for i in 0..n {
+        let (g0, g1, r0, r1) = if i + 1 < n {
+            (merged[i].1, merged[i + 1].0, merged[i].3, merged[i + 1].2)
+        } else {
+            (merged[i].1, merged[0].0 + TAU, merged[i].3, merged[0].2)
+        };
+        let width = g1 - g0;
+        if width <= EPS {
+            continue;
+        }
+        gaps.push(WallGap {
+            center_angle: (g0 + 0.5 * width).rem_euclid(TAU),
+            half_width_angle: 0.5 * width,
+            radius: r0.min(r1),
+        });
+    }
+    gaps
 }
 
 impl Wall for CWall {
