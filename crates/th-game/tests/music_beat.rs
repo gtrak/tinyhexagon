@@ -110,25 +110,25 @@ fn the_beat_shimmer_is_tiny_and_deterministic() {
         "phase 0: base hue is the dominant (exact) term"
     );
 
-    // Quarter-phase on both cycles: +1.5° (two half-amplitude sines at
-    // their maxima).
+    // Quarter-phase on both cycles: +6° (two half-amplitude sines at
+    // their maxima; 09-taste widened the shimmer from 1.5°).
     let c = fixture(&assets);
     c.game.apply_music_beat(0.25, 0.25, 0.0, HUE_BASE);
     c.game.update(TIME_STEP, 1.0);
     let hue = c.game.get_style_data().get_current_hue();
     assert!(
-        (hue - (HUE_BASE + 1.5)).abs() < 0.01,
-        "shimmer at quarter-phase ≈ +1.5° (got {hue})"
+        (hue - (HUE_BASE + 6.0)).abs() < 0.01,
+        "shimmer at quarter-phase ≈ +6° (got {hue})"
     );
 
-    // Three-quarter phase: −1.5°.
+    // Three-quarter phase: −6°.
     let c = fixture(&assets);
     c.game.apply_music_beat(0.75, 0.75, 0.0, HUE_BASE);
     c.game.update(TIME_STEP, 1.0);
     let hue = c.game.get_style_data().get_current_hue();
     assert!(
-        (hue - (HUE_BASE - 1.5)).abs() < 0.01,
-        "shimmer at three-quarter phase ≈ −1.5° (got {hue})"
+        (hue - (HUE_BASE - 6.0)).abs() < 0.01,
+        "shimmer at three-quarter phase ≈ −6° (got {hue})"
     );
 }
 

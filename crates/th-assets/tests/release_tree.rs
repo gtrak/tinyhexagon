@@ -49,9 +49,10 @@ fn real_tree_pack_count_is_nine() {
 fn real_tree_headless_load_info_counts() {
     let a = load_headless();
     let li = a.get_load_results();
-    // music `.json` (24) + style `.json` (36); no `.ogg`/shaders in headless.
-    assert_eq!(li.assets, 60);
-    assert_eq!(li.levels, 40);
+    // music `.json` (24) + style `.json` (37, incl. the 09-taste journey);
+    // no `.ogg`/shaders in headless.
+    assert_eq!(li.assets, 61);
+    assert_eq!(li.levels, 41);
     // The shipped tree is well-formed: no load errors.
     assert!(li.error_messages.is_empty(), "{:?}", li.error_messages);
 }
@@ -190,8 +191,8 @@ fn headless_false_loads_assets_json_and_shaders() {
     let a = Assets::new(release_dir(), false, false).expect("_RELEASE loads full");
     let li = a.get_load_results();
     // 4 shaders + 24 music json + 36 style json.
-    assert_eq!(li.assets, 64);
-    assert_eq!(li.levels, 40);
+    assert_eq!(li.assets, 65);
+    assert_eq!(li.levels, 41);
 
     // assets.json populated the storage (all listed files exist in _RELEASE).
     // Note the ids are the EXACT strings from assets.json (they keep their

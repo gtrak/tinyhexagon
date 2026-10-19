@@ -1,0 +1,12 @@
+{
+    "id": "journey",
+    "name": "journey",
+    "description": "",
+    "author": "tinyhexagon",
+    "menuPriority": 0,
+    "selectable": true,
+    "styleId": "journey",
+    "musicId": "nullMusicId",
+    "luaFile": "Scripts/Levels/journey.lua",
+    "unscored": true
+}

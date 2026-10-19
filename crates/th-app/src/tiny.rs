@@ -51,8 +51,9 @@ use crate::draw_target::{AssetsPackShaderProvider, GlDrawTarget};
 use crate::journey::Journey;
 use crate::touch::{icon_at, icon_position, Icon, TouchState, ICON_SIZE};
 
-/// The tiny pack (06): `tinyhexagon_tinyhexagon_tiny_1` — the levels are
-/// `{PACK}_{meadow,river,stars}` (the journey's level cycle).
+/// The tiny pack (06): `tinyhexagon_tinyhexagon_tiny_1` — the run's level is
+/// `{PACK}_journey` (the 09-taste continuous journey; the old
+/// meadow/river/stars levels stay in the pack as reference content).
 pub const PACK: &str = "tinyhexagon_tinyhexagon_tiny_1";
 
 /// The fixed engine tick rate (240 Hz — the C++ `TICKS_PER_SECOND`): one
@@ -202,8 +203,9 @@ impl TinyRuntime {
         );
 
         // 04a: the kid composition enables the soft (no-death) collisions
-        // ONCE after composition; then stage 0 (the meadow level @ 0.55×)
-        // starts now (the kid's run never waits for input to start).
+        // ONCE after composition; then stage 0 (the journey level at the
+        // 09-taste 0.45× start) begins now (the kid's run never waits for
+        // input to start).
         composed.game.set_soft_collisions(true);
         let journey = Journey::new();
         composed
@@ -345,6 +347,13 @@ impl TinyRuntime {
             && self.help_idle >= HELP_IDLE_S
             && self.composed.game.get_status().started;
 
+        // 09-taste: the continuous difficulty ramp — written every frame,
+        // so the wall speed/delay rise smoothly instead of in 30-s steps
+        // (the old stage-step 0.55..1.15 was barely visible).
+        self.composed
+            .game
+            .set_difficulty_mult(self.journey.difficulty());
+
         // -- 3. The fixed 240 Hz engine ticks (dt clamp + bump timescale) -
         self.accumulator += dt;
         let tick = 1.0 / TICKS_PER_SECOND;
@@ -403,10 +412,15 @@ impl TinyRuntime {
         // -- 7. The beat palette (EVERY frame — the 04b P2: `beat_hue` is
         //      never cleared, so the app keeps feeding it) ----------------
         let beat = self.music.tick(dt);
+        // 09-taste: a synthesized pulse on top of the live envelope, so the
+        // colours and the central polygon pulse even on the web's fallback
+        // clock (the 08a boot) and during quiet passages. The style clamps
+        // to its own pulse_max.
+        let visual_energy = (beat.energy * 0.7 + (1.0 - beat.beat_phase).powf(2.5) * 0.45).min(1.4);
         self.composed.game.apply_music_beat(
             beat.beat_phase,
             beat.bar_phase,
-            beat.energy,
+            visual_energy,
             self.journey.base_hue(),
         );
 
@@ -446,32 +460,25 @@ impl TinyRuntime {
             self.journey.difficulty(),
         );
         self.composed.game.start();
+        // The manual restart restores the CURRENT stage's shape (the level
+        // script's `onInit` authored 6; the 09-taste schedule may be 4/3/…).
+        self.composed.game.set_sides(self.journey.sides());
         self.journey.reset_elapsed();
         self.bump_remaining = 0.0;
         self.sfx(SFX_RESET);
     }
 
-    /// The stage-up (the journey's transition work): every 2 stages the
-    /// level changes (the `meadow` / `river` / `stars` cycle) → a fresh
-    /// `new_game` with the new level + the stage's multiplier; otherwise
-    /// the live `set_difficulty_mult` (the same level). The music stage
-    /// updates (05a's layer unlocks: 0 pad+drone, 2 pluck, 5 bell, 8 bass,
-    /// 11 shimmer, 14 heartbeat, 17 supersaw), the burst flashes, the
-    /// stage-up SFX plays.
+    /// The stage-up (the journey's transition work — 09-taste: NO
+    /// `new_game`, so the arena, walls, player and level script carry over):
+    /// the arena shape changes every 2 stages (the 6→4→3→5→6→7→4→8→5→6
+    /// tour, applied when walls are on screen — the old walls keep their
+    /// geometry, the next walls use the new one), the music stage updates
+    /// (layer unlock / chord mode / BPM / brightness), and a soft flash +
+    /// `levelUp.ogg` mark it. The difficulty itself is continuous in
+    /// [`Self::frame`], not a step here.
     fn stage_up(&mut self, stage: u32) {
         if stage.is_multiple_of(2) {
-            self.composed.game.new_game(
-                PACK,
-                &self.journey.level_id(PACK),
-                false,
-                self.journey.difficulty(),
-            );
-            // The kid's run never waits for input to start the new level.
-            self.composed.game.start();
-        } else {
-            self.composed
-                .game
-                .set_difficulty_mult(self.journey.difficulty());
+            self.composed.game.set_sides(self.journey.sides());
         }
         self.music.set_stage(stage);
         // The stage-up burst: the engine's flash (no reusable wall-burst

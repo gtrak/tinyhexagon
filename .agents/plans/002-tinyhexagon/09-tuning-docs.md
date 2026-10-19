@@ -1,6 +1,6 @@
 # Issue 09 — Tuning, docs, gate and playtests
 
-**Status:** PROPOSED
+**Status:** IN PROGRESS (09-taste feel pass landed; final tuning/docs/playtests pending)
 **Depends:** 08
 
 ## Objective
@@ -15,15 +15,19 @@ feel is the deliverable.
 All tunables live in `th-app/src/journey.rs` (and the tiny styles/levels):
 
 - Stage duration 30 s; 20 stages; plateau after stage 20.
-- `difficulty = 0.55 + 0.03 * min(stage, 20)`.
-- `bpm = 70 + 1.5 * min(stage, 20)`.
-- Layer unlocks at stages 0, 2, 5, 8, 11, 14, 17.
-- Level cycle every 2 stages.
-- Base hue +47° every 6 stages.
+- `difficulty = 0.45 + 0.085 * t`, `t = stage + elapsed/30` (0.45..2.15;
+  written every frame). **09-taste landed.**
+- `bpm = 70 + 2.5 * t` (cap 120).
+- Music layers: pluck 0, bell 2, bass 3, kick 4, shimmer 7, saw 11
+  (bar-wise chord progression + arpeggios + an evolving kick).
+- One continuous `journey` level (no mid-run `new_game`); the shape tour
+  `[6,6,4,4,3,3,5,5,6,6,7,7,4,4,8,8,5,5,6,6,6]`.
+- Base hue `(100 + 28*t) mod 360`, dynamic hues/background, 6° beat
+  shimmer, a synthesized beat pulse on the fallback clock.
 - Soft-collision `timescale`/duration, duck depth/recovery, flash decay,
   particle counts, icon size/placement, SFX volumes.
 - Helping-hand idle delay (2 s) and steering speed.
-- The first wall delay (~3 s) and the first stage's gap width.
+- The first wall wait (~1 s after spawn: `l_setWallSpawnDistance(1050)`, `t_wait(30)`).
 
 Playtest target: a 4–6 year old who cannot read can start, rotate, understand
 the first collision without distress, and still be playing after 5 minutes.

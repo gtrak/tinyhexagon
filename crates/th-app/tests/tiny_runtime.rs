@@ -49,11 +49,12 @@ fn idle_events() -> FrameEvents {
 /// 60 s run is exactly `60 * 64` frames).
 const DT: f32 = 1.0 / 64.0;
 
-/// The 60 s simulated run (65 s here — 5 s into the stage-2 level, so
-/// the frame's wall batch is live): no panic, the stage advances at 30 s
-/// (same level — `set_difficulty_mult`) and 60 s (the level change —
-/// `new_game` on the river level), no `has_died` (the soft collisions),
-/// and the frame carries the wall / player / background / flash batches.
+/// The 60 s simulated run (65 s here — 5 s into stage 2, so the frame's
+/// wall batch is live): no panic, the stage advances at 30 s and 60 s
+/// (09-taste: the continuous journey — NO `new_game`, the same journey
+/// level throughout; the shape becomes a square at stage 2), no
+/// `has_died` (the soft collisions), and the frame carries the wall /
+/// player / background / flash batches.
 #[test]
 fn the_sixty_second_run_advances_the_stage_and_never_dies() {
     let assets = load_release();
@@ -76,17 +77,19 @@ fn the_sixty_second_run_advances_the_stage_and_never_dies() {
         "the soft collisions never set has_died"
     );
     assert!(rt.game().get_status().started, "the run is live");
-    // The stage-2 (even) transition ran `new_game` on the river level
-    // with the stage-2 multiplier. The engine's `LevelData` carries the
-    // level's short id (the JSON's `"id"`) + the full pack id; the
-    // registry's `{pack}_{level}` key is what `new_game` takes.
+    // 09-taste: the same journey level the whole run (no level swap).
     let level = rt.game().get_level_data();
     assert_eq!(level.pack_id, PACK, "the tiny pack");
-    assert_eq!(level.id, "river", "stage 2 plays the river level");
+    assert_eq!(level.id, "journey", "the single continuous journey level");
+    // The continuous ramp at stage 2 + 5 s (the last frame's pre-advance
+    // value, so allow one frame of lag).
+    let expected = 0.45 + 0.085 * (2.0 + 5.0 / 30.0);
     assert!(
-        (rt.game().difficulty_mult() - 0.61).abs() < 1e-6,
-        "the stage-2 multiplier (0.55 + 0.03 × 2)"
+        (rt.game().difficulty_mult() - expected).abs() < 1e-3,
+        "the continuous stage-2 multiplier"
     );
+    assert_eq!(rt.journey.sides(), 4, "stage 2 is a square");
+    assert_eq!(rt.game().get_sides(), 4, "the arena changed shape");
 
     // The frame carries the scene: the wall + the player batches (plus
     // the background and the flash polygon).
@@ -101,8 +104,8 @@ fn the_sixty_second_run_advances_the_stage_and_never_dies() {
         })
         .collect();
     assert!(
-        counts.contains(&18),
-        "the background (6 sides × 3): {counts:?}"
+        counts.contains(&12),
+        "the background (4 sides × 3 at stage 2): {counts:?}"
     );
     assert!(
         counts.iter().any(|c| *c > 0 && *c % 4 == 0),
@@ -129,11 +132,10 @@ fn a_forced_collision_bumps_without_dying_and_applies_the_timescale() {
 
     let mut bumped = false;
     for _ in 0..(20 * 64) {
-        // The level's first pattern spawns its walls ~3 s in (the script's
-        // `t_wait(180)`); at meadow's 0.55× speed multiplier the walls then
-        // take ~12 s more to travel the default 1600 px spawn distance in,
-        // so the first soft bump lands ~16 s in (seed-0 stream) — the 20 s
-        // budget covers it.
+        // The journey's first pattern spawns its walls 0.5 s in (the
+        // script's `t_wait(30)`); at the 0.45× start they take ~16 s to
+        // travel the default 1600 px spawn distance in, so the first soft
+        // bump lands ~17 s in (seed-0 stream) — the 20 s budget covers it.
         rt.frame(DT, &idle_events());
         if rt.game().bump_serial() > 0 {
             bumped = true;
@@ -163,15 +165,15 @@ fn a_forced_collision_bumps_without_dying_and_applies_the_timescale() {
 
 /// The reset (the icon's mouse click): the stage is unchanged, the stage
 /// clock resets, and the engine ran `new_game` + `start` on the SAME
-/// level + multiplier (the stage-0 meadow @ 0.55×) — the player angle
-/// re-zeroes (the fresh `CPlayer`).
+/// journey level + continuous multiplier — the player angle re-zeroes
+/// (the fresh `CPlayer`).
 #[test]
 fn the_reset_restarts_the_stage_without_changing_it() {
     let assets = load_release();
     let mut rt = kid_runtime(assets, false);
     rt.game().state_handle().lock().rng = RandomNumberGenerator::new(0);
 
-    // Play 5 s into stage 0 (the meadow level @ 0.55×).
+    // Play 5 s into stage 0 (the journey level).
     for _ in 0..(5 * 64) {
         rt.frame(DT, &idle_events());
     }
@@ -194,20 +196,20 @@ fn the_reset_restarts_the_stage_without_changing_it() {
     let up = idle_events();
     rt.frame(DT, &up);
 
-    // No stage change (still 0 — the meadow @ 0.55×); the stage clock
-    // restarted (two frames' worth); the engine re-zeroed the game.
+    // No stage change (still 0 — the journey); the stage clock restarted
+    // (two frames' worth); the engine re-zeroed the game.
     assert_eq!(rt.journey.stage, 0, "no stage change");
     assert!(
         (rt.journey.elapsed - 2.0 * DT).abs() < 1e-6,
         "the stage clock restarted"
     );
     assert!(
-        (rt.game().difficulty_mult() - 0.55).abs() < 1e-6,
-        "the stage-0 multiplier"
+        (rt.game().difficulty_mult() - 0.45).abs() < 1e-3,
+        "the stage-0 multiplier (0.45 + a frame of ramp)"
     );
     assert_eq!(
         rt.game().get_level_data().id,
-        "meadow",
+        "journey",
         "`new_game` re-ran on the same level"
     );
     assert!(
@@ -402,13 +404,12 @@ fn the_run_writes_no_config_profiles_or_replays() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// The journey's accelerated 10-minute run (07's verification): 600 s of
-/// real time reaches the stage-20 plateau and holds it (no further
-/// difficulty / tempo / hue / level increase) — the stage-up WORK the
-/// runtime performs per transition is pinned by the 65 s run above
-/// (both the even `new_game` and the odd `set_difficulty_mult` halves of
-/// the first two transitions); the table itself is the journey module's
-/// territory.
+/// The journey's accelerated 10-minute run: 600 s of real time reaches
+/// the stage-20 plateau and holds it (no further difficulty / tempo /
+/// hue / shape increase) — the stage-up WORK the runtime performs per
+/// transition is pinned by the 65 s run above (09-taste: no `new_game`,
+/// the continuous level + shape change); the table itself is the journey
+/// module's territory.
 #[test]
 fn the_ten_minute_run_reaches_stage_20_and_plateaus() {
     let mut journey = th_app::journey::Journey::new();
@@ -443,8 +444,8 @@ fn the_ten_minute_run_reaches_stage_20_and_plateaus() {
     assert_eq!(th_app::journey::bpm_for_stage(20), bpm);
     assert_eq!(th_app::journey::base_hue_for_stage(20), hue);
     assert!(
-        (th_app::journey::difficulty_for_stage(20) - 1.15).abs() < 1e-6
-            && (th_app::journey::bpm_for_stage(20) - 100.0).abs() < 1e-6,
+        (th_app::journey::difficulty_for_stage(20) - 2.15).abs() < 1e-6
+            && (th_app::journey::bpm_for_stage(20) - 120.0).abs() < 1e-6,
         "the plateau's capped values"
     );
 }

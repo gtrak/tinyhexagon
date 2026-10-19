@@ -966,3 +966,37 @@ re-reading the whole history.
   `.gitignore` rule `crates/oh-parity/oh030b-corpus/` (dead since 02).
 - 06 P2: `release_tree.rs`'s priority-0 comment still says workshopexample is the last selectable (tiny is also priority 0); update/assert both. The tiny_pack test does not assert the first wall at ~3 s or each level's styleId resolution — 07/09 tuning coverage.
 - Plan closed/archived:
+
+### 09-taste — journey feel pass (LANDED 2026-10-19; 572/0)
+
+- Operator feedback: drones, abrupt/empty transitions, flat difficulty,
+  always a hexagon, tame colors. Implemented directly in main (not a
+  worker): report `.agents/tasks/plan-002/issue-009-taste-report.md`.
+- **Continuous level**: `stage_up` no longer calls `new_game`; the run is
+  `{pack}_journey` for all 20 stages. `journey.lua` picks patterns from
+  the live `u_getDifficultyMult`; `l_setWallSpawnDistance(1050)`,
+  `l_setDelayMult(1.05)`, `onLoad t_wait(30)`; the base pattern library's
+  trailing waits shortened (the old 1.65–1.75 delay and 6.5× tails left
+  holes).
+- **Difficulty**: `0.45 + 0.085*t` (0.45..2.15), written every frame
+  before the engine ticks; BPM `70 + 2.5*t` (120). Level
+  `l_setSpeedMult(0.55)`, `l_setSpeedMax(2.5)` → ~2.7× wall speed.
+- **Shapes**: `sides_for_stage` = 6,6,4,4,3,3,5,5,6,6,7,7,4,4,8,8,5,5,6,6,6;
+  `set_sides` at even stages (old walls keep geometry → a warp, flash
+  masks it); reset restores the stage shape.
+- **Music**: `director.rs` bar-wise chord progression (major/minor from
+  stage 8) on pad/drone/bass/kick; arp=1 on pluck/bell/shimmer/lead; kick
+  pattern 2→4→5→7→9 hits; LFO movement; unlocks 0/2/3/4/7/11; root shift
+  every 3 stages. The 05 8-track graph is unchanged.
+- **Colors**: new `journey` style (hue 0..360, dynamic arena/walls/3
+  background hues with `dynamic_darkness` > 1 = darker, white player,
+  pulse 1.4), continuous `(100 + 28*t) mod 360` hue, 6° beat shimmer,
+  synthesized pulse (`0.7·energy + 0.45·(1−beat_phase)^2.5`, ≤1.4) so the
+  fallback clock still pulses.
+- Evidence: `.agents/evidence/09/stage2.png` (stage 2: cyan square arena,
+  red complementary walls, dark hue-washed background, white player);
+  host gate **572/0**.
+- P2: listen/playtest the arp/mix by ear; the shape warp at stage marks;
+  the first 10 s with a child; the base pattern library is global (the
+  reference levels are denser too); the live web deploy/audio check; 08b/
+  08c remain separate.

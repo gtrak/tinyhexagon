@@ -61,7 +61,7 @@ use th_math::ssvu::math::{PI, TAU};
 /// the engine adds on top of the app's base hue in [`HexagonGame::apply_music_beat`];
 /// small on purpose so the app-computed stage hue stays the dominant term
 /// (the two half-amplitude beat/bar sines sum to ± this value).
-const BEAT_HUE_SHIMMER_DEG: f32 = 1.5;
+const BEAT_HUE_SHIMMER_DEG: f32 = 6.0;
 
 /// C++ `HexagonGame::GameExecutionResult`.
 #[derive(Debug, Clone, Copy, PartialEq)]

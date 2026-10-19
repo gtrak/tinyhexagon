@@ -1,5 +1,6 @@
 //! plan 002 issue 06 — the `tiny` content pack: `Assets` loads the pack
-//! and all three levels, and each level runs 30 s headless with soft
+//! and all four levels (the three 06 reference levels + the 09-taste
+//! continuous `journey`), and each runs 30 s headless with soft
 //! collisions (no Lua error, no death) keeping the authored six sides
 //! and the per-level speed/delay flavour.
 //!
@@ -24,6 +25,7 @@ const LEVELS: &[(&str, f32, f32)] = &[
     ("meadow", 0.55, 1.75),
     ("river", 0.62, 1.70),
     ("stars", 0.70, 1.65),
+    ("journey", 0.55, 1.05),
 ];
 
 /// The bridge test's `_RELEASE` load idiom.
@@ -36,8 +38,8 @@ fn tiny_pack_loads_and_runs() {
     let assets = load_release();
     let root = release_dir();
 
-    // The pack and all three level ids must be present in the loaded
-    // Assets (the styles load with their levels via `styleId`).
+    // The pack and every level id must be present in the loaded Assets
+    // (the styles load with their levels via `styleId`).
     assert!(assets.is_valid_pack_id(PACK), "the tiny pack loads");
     for (level, _, _) in LEVELS {
         let level_id = format!("{PACK}_{level}");

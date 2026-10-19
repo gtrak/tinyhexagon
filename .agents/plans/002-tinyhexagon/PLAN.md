@@ -1,6 +1,6 @@
 # 002 — tinyhexagon
 
-Status: APPROVED (issues 000–001, 02a–03, 04a–04b, 03c–03d, 05a–05b, 06, 07 and 08a landed; upstream HWM dcd9fdeb synced 2026-10-19; 08b/08c next)
+Status: APPROVED (issues 000–001, 02a–03, 04a–04b, 03c–03d, 05a–05b, 06, 07, 08a and 09-taste landed; upstream HWM dcd9fdeb synced 2026-10-19; 08b/08c + 09 final next)
 Owner: operator; orchestrator: this session
 Plan file: `.agents/plans/002-tinyhexagon/PLAN.md`
 Issues: `00-*.md` … `09-*.md` in this folder
@@ -149,7 +149,7 @@ web `th-web` emscripten bin. All use the same `th-render`/`bridge` path.
 | 06 | Tiny content pack (`_RELEASE/Packs/tiny`) | 03 | LANDED |
 | 07 | `th-app` tiny runtime/loop + renderer integration (desktop) | 04a, 04b, 05a, 06 | LANDED |
 | 08 | Android/web entries + packaging/CI/release names | 07, 05b | 08a LANDED; 08b/08c IN PROGRESS |
-| 09 | Tuning, docs, gate, playtests | 08 | PROPOSED |
+| 09 | Tuning, docs, gate, playtests | 08 | IN PROGRESS (09-taste landed) |
 
 Dependency graph:
 

@@ -1,0 +1,28 @@
+{
+    "id": "journey",
+
+    "hue_min": 0,
+    "hue_max": 360,
+    "hue_increment": 0.0,
+    "hue_ping_pong": false,
+
+    "pulse_min": 0.0,
+    "pulse_max": 1.4,
+    "pulse_increment": 0.0,
+
+    "3D_depth": 0,
+    "3D_skew": 0.0,
+    "3D_spacing": 0.0,
+
+    "main": { "main": true, "dynamic": true, "value": [255,255,255,255], "pulse": [55,55,55,0] },
+    "player_color": { "main": true, "dynamic": false, "hue_shift": 0, "value": [255,255,255,255], "pulse": [0,0,0,0] },
+    "wall_color": { "main": false, "dynamic": true, "dynamic_offset": false, "dynamic_darkness": 1.0, "hue_shift": 180, "value": [255,255,255,255], "pulse": [25,25,25,0] },
+    "cap_color": { "legacy": true, "index": 0 },
+
+    "colors":
+    [
+        { "main": false, "dynamic": true, "dynamic_offset": false, "dynamic_darkness": 2.4, "hue_shift": 0, "value": [20,30,20,255], "pulse": [15,20,25,0] },
+        { "main": false, "dynamic": true, "dynamic_offset": false, "dynamic_darkness": 3.0, "hue_shift": 40, "value": [20,25,30,255], "pulse": [15,15,25,0] },
+        { "main": false, "dynamic": true, "dynamic_offset": false, "dynamic_darkness": 2.0, "hue_shift": 80, "value": [25,20,30,255], "pulse": [20,15,30,0] }
+    ]
+}
