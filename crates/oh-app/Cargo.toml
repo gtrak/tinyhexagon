@@ -20,10 +20,6 @@ oh-data = { path = "../oh-data" }
 # the Lua VM is Luau — oh-lua's single build; one VM, nothing to split.
 oh-lua = { path = "../oh-lua" }
 oh-assets = { path = "../oh-assets" }
-# The `joystick` module's menu-side view (`RealMenuJoystick` implements
-# `oh_menu::seams::MenuJoystick` over the shared `RealJoystick`); the
-# menu crate retires in plan 002 issue 02b.
-oh-menu = { path = "../oh-menu" }
 # 29o1 — the headless / server SIGINT handlers' async-signal-safe stdout
 # write (`libc::write` in the signal context; `std`'s `println!` is NOT
 # async-signal-safe — it takes the stdout lock, the C++'s `TODO (P2): UB`
@@ -58,8 +54,8 @@ signal-hook = "0.3"
 # The desktop controller backend behind `RealJoystick`
 # (`src/joystick.rs`): the C++ `sf::Joystick` controller-0 poll's
 # replacement (the SFML read in `Core/Joystick.cpp::update`). Desktop
-# only — the Android / wasm targets keep the no-op `NoJoystick` /
-# `NoMenuJoystick` seams (the C++'s `isConnected(0) == false` state).
+# only — the Android / wasm targets keep the no-op `NoJoystick`
+# seam (the C++'s `isConnected(0) == false` state).
 # SYSTEM REQUIREMENT (Linux): the `libudev` system library (the
 # transitive `libudev-sys` build links it — `libudev-dev` at build
 # time; `.github/workflows/rust.yml`'s portability notes), and at

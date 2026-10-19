@@ -1,6 +1,6 @@
 # 002 — tinyhexagon
 
-Status: APPROVED (execution in progress; issues 000–001 and 02a landed 2026-10-19; 02b next)
+Status: APPROVED (execution in progress; issues 000–001, 02a and 02b landed 2026-10-19; 02c next)
 Owner: operator; orchestrator: this session
 Plan file: `.agents/plans/002-tinyhexagon/PLAN.md`
 Issues: `00-*.md` … `09-*.md` in this folder
@@ -135,8 +135,9 @@ web `th-web` emscripten bin. All use the same `th-render`/`bridge` path.
 | 00 | Upstream skill + changelog + status tooling | — | LANDED |
 | 01 | `.agents` history summary/archive; retire C++/parity tooling | 00 | LANDED |
 | 02a | Strip `oh-app` to a headless library; draw target; web fullscreen; android/web stubs | 01 | LANDED |
-| 02b | Remove retired crates; de-scope the engine (replay/Steam/Discord) | 02a | PROPOSED |
-| 03 | Rename `oh-` → `th-`; rename artifacts | 02b | PROPOSED |
+| 02b | Remove retired front-end/online crates (menu, menu-system, additions, net, steam, server-control, workshop-uploader) | 02a | LANDED |
+| 02c | De-scope engine replay/profiles/Steam/Discord/parity; remove replay/discord | 02b | PROPOSED |
+| 03 | Rename `oh-` → `th-`; rename artifacts | 02c | PROPOSED |
 | 04 | Engine kid alterations (soft collision, difficulty, beat, text, gaps) | 03 | PROPOSED |
 | 05 | `th-synth` cross-target spike + music director | 03 | PROPOSED |
 | 06 | Tiny content pack (`_RELEASE/Packs/tiny`) | 03 | PROPOSED |
@@ -147,7 +148,7 @@ web `th-web` emscripten bin. All use the same `th-render`/`bridge` path.
 Dependency graph:
 
 ```
-00 ── 01 ── 02a ── 02b ── 03 ──┬── 04 ──┐
+00 ── 01 ── 02a ── 02b ── 02c ── 03 ──┬── 04 ──┐
                                ├── 05 ──┼── 07 ── 08 ── 09
                                └── 06 ──┘
 ```

@@ -11,22 +11,15 @@ members = [
     "crates/oh-game",
     "crates/oh-audio",
     "crates/oh-render",
-    "crates/oh-menu-system",
-    "crates/oh-menu",
-    "crates/oh-additions",
     "crates/oh-app",
-    "crates/oh-net",
-    "crates/oh-server-control",
-    "crates/oh-workshop-uploader",
-    "crates/oh-steam",
     "crates/oh-discord",
     "crates/oh-android",
     "crates/oh-web",
 ]
 # Later issues add workspace members as they land (PLAN.md architecture
 # table): oh-timeline, oh-replay, oh-data, oh-config, oh-assets, oh-lua,
-# oh-game, oh-audio, oh-net, oh-menu-system, oh-render, oh-menu, oh-app,
-# oh-steam, oh-discord. (oh-discord landed with issue 21.)
+# oh-game, oh-audio, oh-render, oh-app, oh-discord. (oh-discord landed
+# with issue 21.)
 
 [workspace.package]
 version = "0.1.0"
@@ -43,31 +36,9 @@ flate2 = { version = "1", default-features = false, features = ["zlib"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-# sodiumoxide (0.2.7) is the contract choice for issue 016 (DECISIONS.md D-004
-# sodium entry): it wraps libsodium 1.0.18 (built from source by
-# libsodium-sys) and exposes the exact primitives the C++ uses — crypto_kx
-# keypair/session keys, crypto_secretbox(_open)_easy, crypto_generichash,
-# randombytes. See .agents/skills/lib-libsodium.md.
-sodiumoxide = "0.2.7"
-# rusqlite on its `bundled` feature (DECISIONS.md D-004 SQLite entry): the
-# C++ side is sqlite_orm (vendored `public/sqlite_orm/sqlite_orm.h`) on the
-# vendored SQLite C API (`public/sqlite/`), both writing `ohdb.sqlite`.
-# The Rust port executes the hand-transcribed schema + queries (issue 17,
-# `crates/oh-net/src/database.rs`) against the same file. `bundled`
-# compiles the SQLite C engine from source (via `libsqlite3-sys`), matching
-# the build-from-source pattern of `libsodium-sys` and avoiding a system
-# sqlite dev-package dependency.
-rusqlite = { version = "0.31", features = ["bundled"] }
-# tempfile — test-only (issue 17's DB tests need isolated on-disk DB files).
+# tempfile — test-only (oh-replay's 29m1 bounded-read test needs an
+# isolated on-disk file; see crates/oh-replay/Cargo.toml).
 tempfile = "3"
-# steamworks (0.13.1) is the issue-20 binding (20-steam.md): it wraps the
-# same Steam SDK the C++ links (the loader stubs ship inside
-# steamworks-sys) and covers every ACTIVE Core/Steam.cpp call — init /
-# user stats / friends / UGC + the callback pump. Documented gaps +
-# fallbacks (hand-written `RequestCurrentStats` FFI; the encrypted-app-
-# ticket `#if`-branch is inactive in this tree — see the skill):
-# .agents/skills/lib-steamworks.md.
-steamworks = "0.13"
 
 # Profile tuning is finalized by issue 22 (builds/CI); issue 24 pins the
 # release profile to the C++ release build's settings.

@@ -76,7 +76,7 @@ re-reading the whole history.
 
 - `oh-app` keep-list (library only; the `open-hexagon` binary +
   `src/main.rs` are gone): `bridge`, `camera`, `compose` (signatures
-  unchanged — the engine de-scope is 02b), `draw_target` (NEW, extracted
+  unchanged — the engine de-scope is 02c), `draw_target` (NEW, extracted
   from `windowed.rs`), `lifecycle`, `sigint` (not-emscripten),
   `joystick` (not android/wasm), `web_fullscreen` (emscripten-only;
   NO CALLER YET — wired in Issue 08). Removed: `android`, `args`,
@@ -136,6 +136,48 @@ re-reading the whole history.
   * No target compiles were run for emscripten/android on this box (no
     emsdk / NDK C++ toolchains); host green is the bar — 08 re-checks
     the targets.
+
+### 02b — front-end/online crates (LANDED)
+
+- Removed 7 workspace members + directories: `oh-menu`,
+  `oh-menu-system`, `oh-additions`, `oh-net`, `oh-steam`,
+  `oh-server-control`, `oh-workshop-uploader` (14 crates remain).
+  Lockfile: −189 lines, 0 added — the seven entries + their exclusive
+  transitive deps (`steamworks`(-sys), `sodiumoxide`, `libsodium-sys`,
+  `rusqlite`, `libsqlite3-sys`, `hashlink`,
+  `fallible-iterator`, `fallible-streaming-iterator`, `ed25519`,
+  `signature`, `paste`; `hashbrown` survives via `fontdue`/`indexmap`).
+  The root `[workspace.dependencies]` pins
+  `steamworks`/`rusqlite`/`sodiumoxide` went with them (the deleted
+  crates were the only consumers); `tempfile` stays (oh-replay's 29m1
+  dev-dep) with its comment retargeted to oh-replay.
+- `oh-app`: the `oh-menu` dep is gone; `joystick.rs` no longer
+  implements `oh_menu::seams::MenuJoystick` — `RealMenuJoystick`,
+  `impl MenuJoystick` and the now-dead `RealJoystick::pressed_focus` /
+  `::rising_jdir` are removed. The engine's `Joystick` seam +
+  `RealJoystick` (gilrs backend, `oh_config::joystick` machine
+  feeding) are UNCHANGED; zero engine edits in 02b.
+- `oh-replay`/`oh-discord` stay until 02c: the engine's `ReplayStore` /
+  `SteamSink` / `Discord` / `Profiles` seams and the
+  `compose_with_config` signature still carry them; oh-app
+  `tests/bridge.rs` still pins replay-seeded determinism through
+  `HexagonGame::set_last_replay` + `oh_replay::ReplayFile` — 02c must
+  adapt or drop that half WITHOUT weakening the pass-order / frametime
+  / texture assertions.
+- Doc-only residue (02c/09 sweep): `oh_steam::SteamManager` mentions in
+  oh-game `seams.rs`/`hexagon_game.rs`, oh-app `compose.rs` (the `steam`
+  arg), oh-assets `assets.rs` (workshop surface); `oh-workshop-uploader`
+  pattern citations in oh-discord docs; the "salvaged from
+  `oh-additions`" notes in oh-app `lib.rs`/`web_fullscreen.rs`/
+  `Cargo.toml` + oh-render `texture.rs`; tools/*.sh + .github still name
+  the retired binaries (08/09). No live import/dep on any removed
+  crate remains anywhere.
+- Gate 4/4 green (fmt/build/clippy/test): 68 suites, 569 passed / 0
+  failed / 0 ignored (02a was 108 / 897 — the 40 removed suites / 328
+  tests were the seven crates'). Host-only again: no emscripten/android
+  target compiles (no toolchains); the `oh-android`/`oh-web` stubs are
+  untouched and depend on none of the removed crates — 08 re-checks the
+  targets.
 
 ### 02 — crate removal / engine de-scope (pending)
 

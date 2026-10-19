@@ -5,18 +5,15 @@
 //! JoystickPoll` (the SFML-scale seam, `oh-config` `joystick.rs`'s
 //! module docs), and feeds the shared `oh_config::joystick` machine —
 //! the same state the engine's `Joystick` seam (`oh_game::seams::
-//! Joystick`) and the menu's `MenuJoystick` seam (`oh_menu::seams::
-//! MenuJoystick`) query. The composition (the windowed client's
-//! `build`) shares ONE `RealJoystick` between both seams.
+//! Joystick`) queries.
 //!
 //! # Desktop only (cfg-gate)
 //!
 //! The gilrs backend is desktop-only (`Cargo.toml`'s
 //! `not(any(target_os = "android", target_family = "wasm"))` target
 //! table): the Android / wasm compositions keep the no-op
-//! `NoJoystick` / `NoMenuJoystick` seams (the C++'s
-//! `isConnected(0) == false` state — every query false, vendor id 0,
-//! the poll a no-op).
+//! `NoJoystick` seam (the C++'s `isConnected(0) == false` state — every
+//! query false, vendor id 0, the poll a no-op).
 //!
 //! # gilrs system requirements (reported, 29j1)
 //!
@@ -59,10 +56,10 @@
 //!
 //! `gilrs::Gilrs` is `!Send + !Sync` (the C++'s SFML poll is likewise
 //! a single-thread read). `RealJoystick` is shared through
-//! `Arc<dyn Joystick>` (the engine) and `Rc<dyn MenuJoystick>` (the
-//! menu) — both seams are driven ONLY from the composition's main
-//! thread (the winit event-loop thread desktop / the activity thread
-//! on Android; the C++'s game-loop thread), exactly the
+//! `Arc<dyn Joystick>` (the engine) — the seam is driven ONLY from
+//! the composition's main thread (the winit event-loop thread desktop
+//! / the activity thread on Android; the C++'s game-loop thread),
+//! exactly the
 //! `oh_lua::api::state::SharedLua` raw-pointer precedent in
 //! `compose.rs`'s module docs ("only dereferenced on the single
 //! thread that owns it"). The `Mutex` guards the `&mut Gilrs` access
@@ -76,7 +73,6 @@ use gilrs::{Axis, Button, Gilrs, GilrsBuilder};
 use oh_config::joystick as machine;
 use oh_config::{Jdir, Jid, JoystickPoll};
 use oh_game::seams::Joystick;
-use oh_menu::seams::MenuJoystick;
 
 /// The SFML stick-axis scale (the `JoystickPoll` docs: sticks
 /// `[-100, 100]`) — gilrs reports `-1..1`.
@@ -158,11 +154,9 @@ impl Backend {
     }
 }
 
-/// The desktop controller poller — one shared object behind BOTH the
-/// engine's `Joystick` seam and the menu's `MenuJoystick` seam (the
-/// C++'s ONE global `Joystick` state; the machine it feeds is global
-/// too, so the two seams observe one controller, exactly like the
-/// C++).
+/// The desktop controller poller — the object behind the engine's
+/// `Joystick` seam (the C++'s ONE global `Joystick` state; the machine
+/// it feeds is global too, exactly like the C++).
 pub struct RealJoystick {
     backend: Mutex<Backend>,
     /// The failure is logged ONCE (a per-frame re-log would spam; the
@@ -173,9 +167,9 @@ pub struct RealJoystick {
 
 // `Gilrs` is `!Send + !Sync` (single-thread device read, the C++'s
 // single-thread SFML poll); `RealJoystick` is carried in `Arc<dyn
-// Joystick + Send + Sync>` (the engine) and `Rc<dyn MenuJoystick>` (the
-// menu). The composition drives both seams ONLY from its main thread
-// (the winit event-loop / the Android activity thread) — the
+// Joystick + Send + Sync>` (the engine). The composition drives the
+// seam ONLY from its main thread (the winit event-loop / the Android
+// activity thread) — the
 // `SharedLua` raw-pointer precedent (`compose.rs` module docs).
 // SAFETY: every `&self` entry point touches the `Gilrs` handle only
 // through the `Mutex` (the `&mut` it needs), and the composition
@@ -233,12 +227,6 @@ impl RealJoystick {
         machine::update(deadzone, &poll);
     }
 
-    /// C++ `Joystick::pressed(Jid::Focus)` (the menu's `focusHeld`
-    /// OR-term, MenuGame.cpp:2650-2653).
-    fn pressed_focus(&self) -> bool {
-        machine::pressed(Jid::Focus)
-    }
-
     /// C++ `Joystick::pressed(Jdir)`.
     fn pressed_jdir(&self, dir: Jdir) -> bool {
         machine::pressed_dir(dir)
@@ -247,11 +235,6 @@ impl RealJoystick {
     /// C++ `Joystick::pressed(Jid)`.
     fn pressed_jid(&self, id: Jid) -> bool {
         machine::pressed(id)
-    }
-
-    /// C++ `Joystick::risingEdge(Jdir)`.
-    fn rising_jdir(&self, dir: Jdir) -> bool {
-        machine::rising_edge_dir(dir)
     }
 
     /// C++ `Joystick::risingEdge(Jid)`.
@@ -287,39 +270,5 @@ impl Joystick for RealJoystick {
     }
     fn vendor_id(&self) -> u32 {
         self.controller_vendor_id()
-    }
-}
-
-/// The menu's `MenuJoystick` view of the SAME shared
-/// [`RealJoystick`] (the composition holds one `RealJoystick` for the
-/// engine's `Arc<dyn Joystick>` and this `Arc`-backed clone for the
-/// menu's `Rc<dyn MenuJoystick>` — the C++'s one global, one poller;
-/// `RealJoystick` is `Send + Sync` — the documented single-thread
-/// contract above — so the `Arc` share is safe).
-#[derive(Clone)]
-pub struct RealMenuJoystick(std::sync::Arc<RealJoystick>);
-
-impl MenuJoystick for RealMenuJoystick {
-    fn update(&self, deadzone: f32) {
-        self.0.poll_update(deadzone)
-    }
-    fn pressed_focus(&self) -> bool {
-        self.0.pressed_focus()
-    }
-    fn rising_edge(&self, jid: Jid) -> bool {
-        self.0.rising_jid(jid)
-    }
-    fn rising_edge_dir(&self, jdir: Jdir) -> bool {
-        self.0.rising_jdir(jdir)
-    }
-    fn ignore_all_presses(&self, ignore: bool) {
-        machine::ignore_all_presses(ignore)
-    }
-}
-
-impl RealMenuJoystick {
-    #[must_use]
-    pub fn new(inner: std::sync::Arc<RealJoystick>) -> Self {
-        Self(inner)
     }
 }
