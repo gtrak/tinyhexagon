@@ -671,7 +671,40 @@ re-reading the whole history.
   `tools/ci-deps.sh` (upstream `228a4cfb` + `dcd9fdeb`). NOTE:
   `tools/smoke-windowed.sh` still asserts the old `[::mainClient] Finished`
   string; that half is inert until 07/08 adapts it to the tiny loop.
-- Web boot/audio-unlock export:
+- Web boot/audio-unlock export: 03c landed the STUB's browser half —
+  `th-web`'s `#[wasm_bindgen] status()` (returns "tinyhexagon stub: the
+  tiny runtime lands in plan 002 issue 07/08"; the page's
+  `window.ohStatus` / `#status` 1 s poll reads it) + no-op
+  `save_session`; the adult shell page (IDBFS / fullscreen / IME glue)
+  is REPLACED by a minimal stub page (`crates/th-web/site/index.html`:
+  title / full-viewport `#c` canvas / empty `#status` / the module's
+  poll). **08 replaces THIS page with the real tiny entry's shell**
+  (re-add the fullscreen / IME / audio-unlock wiring + the rAF loop
+  there; the `.cargo/config.toml` `_RELEASE` preload flags are kept).
+  The probe/CI path: `tools/web-stub-probe.mjs` (headless-Chrome CDP;
+  DOM/status assertions — headless SwiftShader WebGL is flaky and the
+  stub draws nothing; OH_CHROME candidates + per-PID debug port +
+  SwiftShader flags shared with tools/web-probe.mjs; favicon 404 +
+  canceled `ERR_ABORTED` loads tolerated; the wait is the MODULE
+  RESOLVE, default 60 s — the 22 MB `.data` preload). CI's `wasm` job
+  (ci.yml) runs it against the staged `_WEB` (`python3 -m http.server
+  8080`, the runner's `google-chrome` via OH_CHROME) after
+  `tools/package-web.sh`, BEFORE the `pages` deploy (pages needs: wasm
+  — a red probe never deploys) and uploads `target/web-stub.png`
+  (artifact `web-stub-screenshot`). Live-page half (post-push, green
+  CI): `OH_CHROME=<chrome> node tools/web-stub-probe.mjs
+  https://gtrak.github.io/tinyhexagon/ --shot=target/web-stub-live.png`
+  (the screenshot WITHOUT the old `#fs` button is the new-vs-stale-page
+  distinguisher). 08 runs the same probe (or the full web-probe.mjs)
+  against the real entry.
+  - P2 for 08: `web-stub-probe.mjs` parses only `--shot=PATH` (space form ignored;
+    the CI default masks it) — accept both or keep `--shot=` everywhere.
+  - P2 for 08: the `th-web` Cargo description and the `ci.yml` wasm job name
+    still say "stub/no-op"/"compile proof"; update them with the real entry.
+  - P2 for 08: `save_session` is a no-op not called by the minimal page; the
+    real flush/IDBFS returns with the tiny web entry.
+  - P2 for 08: CI hardcodes `OH_CHROME=/usr/bin/google-chrome`; add a
+    `command -v` guard or `browser-actions/setup-chrome` for runner drift.
 - Artifact names: `tinyhexagon-<tag>-{linux-x86_64.tar.gz,
   windows-x86_64.zip, android-arm64-v8a.apk, web.zip}` (release.yml job
   artifact names + the inner `tinyhexagon-web.zip`); web serve dir carries

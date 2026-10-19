@@ -2224,6 +2224,9 @@ version = "0.1.0"
 [[package]]
 name = "th-web"
 version = "0.1.0"
+dependencies = [
+ "wasm-bindgen",
+]
 
 [[package]]
 name = "thiserror"

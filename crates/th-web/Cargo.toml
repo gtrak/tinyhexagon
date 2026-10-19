@@ -1,6 +1,6 @@
 [package]
 name = "th-web"
-description = "The emscripten (web) entry crate (plan 002): stubbed by issue 02a (the adult web boot retired with th-app's windowed front-end) — a no-op main keeps the host workspace green; Issue 08 lands the real web entry (the tiny runtime's request_animation_frame loop + the emscripten target dependencies)"
+description = "The emscripten (web) entry crate (plan 002): the tinyhexagon stub entry (wasm-bindgen status/save_session; the minimal page) — the real tiny runtime web entry lands in Issue 08"
 version.workspace = true
 edition.workspace = true
 
@@ -13,6 +13,15 @@ name = "tinyhexagon"
 path = "src/main.rs"
 
 # Issue 02a: the emscripten target dependencies (th-app / th-game /
-# wasm-bindgen / js-sys / web-sys — the adult W5 boot's stack) were
-# removed with the stub; Issue 08 re-adds the real ones for the tiny
-# runtime's web entry.
+# js-sys / web-sys — the adult W5 boot's stack) were removed with the
+# stub; Issue 08 re-adds the real ones for the tiny runtime's web entry.
+#
+# Issue 03c: the stub now EXECUTES in the browser — its two probe
+# exports (status / save_session, src/main.rs) need wasm-bindgen on the
+# emscripten target. The version matches Cargo.lock (the CI installs the
+# same wasm-bindgen-cli — the -sWASM_BINDGEN link flag makes emcc run
+# the CLI over the linked wasm, so a version drift fails the build
+# loudly, tools/package-web.sh's pre-check). Host-target builds stay
+# dep-free (the cfg keeps the host workspace green without it).
+[target.'cfg(target_os = "emscripten")'.dependencies]
+wasm-bindgen = "0.2.129"

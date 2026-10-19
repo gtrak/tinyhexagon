@@ -1,6 +1,6 @@
 # 002 — tinyhexagon
 
-Status: APPROVED (issues 000–001, 02a–03, 04a–04b landed; upstream HWM dcd9fdeb synced 2026-10-19; 03c browser smoke next, then 05/06)
+Status: APPROVED (issues 000–001, 02a–03, 04a–04b and 03c landed; upstream HWM dcd9fdeb synced 2026-10-19; 05/06 next)
 Owner: operator; orchestrator: this session
 Plan file: `.agents/plans/002-tinyhexagon/PLAN.md`
 Issues: `00-*.md` … `09-*.md` in this folder
@@ -140,7 +140,7 @@ web `th-web` emscripten bin. All use the same `th-render`/`bridge` path.
 | 02c2 | Remove replay; remove `oh-replay`; bridge replay UI/tests | 02c1 | LANDED |
 | 02c3 | Remove parity fingerprint/RNG; remove `oh-render` replay/PB fields; final engine cleanup | 02c2 | LANDED |
 | 03 | Rename `oh-` → `th-`; rename artifacts | 02c3 | LANDED |
-| 03c | Early wasm browser smoke (stub status/CDP probe/CI/gh-pages) | 03 | PROPOSED |
+| 03c | Early wasm browser smoke (stub status/CDP probe/CI/gh-pages) | 03 | LANDED |
 | 04a | Engine kid mechanics: soft collision, difficulty setter, bump, wall gaps | 03 | LANDED |
 | 04b | Beat palette/pulse + `DrawOptions` text suppression | 03 | LANDED |
 | 05 | `th-synth` cross-target spike + music director | 03 | PROPOSED |
