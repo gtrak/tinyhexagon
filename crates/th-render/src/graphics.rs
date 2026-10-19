@@ -254,6 +254,34 @@ pub fn init_text(font: &Font, text: &str, character_size: f32, zoom_factor: f32)
 // Frame input (the C++ values `draw()` reads besides the DrawState).
 // ---------------------------------------------------------------------------
 
+/// plan 002 issue 04b — per-composition text/HUD suppression (the kid
+/// runtime's "no text" look). Every field defaults to `true` so the
+/// legacy rendering is unchanged; the future tiny app (07) sets them all
+/// false. The gates AND with the C++ `Config` gates (a `DrawOptions`
+/// field only ever REMOVES a pass, never enables one).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DrawOptions {
+    /// `text_draw::draw_text` (the timer / status / FPS / message lines).
+    pub show_text: bool,
+    /// the level-info box + its five lines.
+    pub show_level_info: bool,
+    /// the four key icons.
+    pub show_key_icons: bool,
+    /// the FPS line (within `show_text`); the other text keeps drawing.
+    pub show_fps: bool,
+}
+
+impl Default for DrawOptions {
+    fn default() -> Self {
+        Self {
+            show_text: true,
+            show_level_info: true,
+            show_key_icons: true,
+            show_fps: true,
+        }
+    }
+}
+
 /// Everything [`draw_frame`] reads from the game besides [`DrawState`] and
 /// the render target.
 ///
@@ -268,6 +296,10 @@ pub fn init_text(font: &Font, text: &str, character_size: f32, zoom_factor: f32)
 /// position+color into `th_render::Vertex`).
 pub struct FrameInput<'a> {
     pub config: &'a Config,
+
+    /// plan 002 issue 04b — the text/HUD pass suppression (default: every
+    /// legacy pass on).
+    pub draw_options: DrawOptions,
 
     /// C++ `status.fragmentShaderIds`.
     pub fragment_shader_ids: &'a FragmentShaderIds,
@@ -373,13 +405,18 @@ pub struct FrameInput<'a> {
 /// 6. (still background view) trail particles (if enabled + shown) then
 ///    swap particles (if enabled);
 /// 7. render `WallQuads` → `CapTris` → `PivotQuads` → `PlayerTris`;
-/// 8. overlay view: particles + `drawText` (`Text` states);
-/// 9. key icons (if `getShowKeyIcons() || mustShowReplayUI()`);
-/// 10. level info (if `getShowLevelInfo() || mustShowReplayUI()`, `Text`
-///     states — a fresh `getRenderStates(Text)` evaluation);
+/// 8. overlay view: particles + `drawText` (`Text` states) — only when
+///    `draw_options.show_text` (the FPS line additionally requires
+///    `draw_options.show_fps`);
+/// 9. key icons (if `getShowKeyIcons() && draw_options.show_key_icons`);
+/// 10. level info (if `getShowLevelInfo() && draw_options.show_level_info`,
+///     `Text` states — a fresh `getRenderStates(Text)` evaluation);
 /// 11. flash polygon (if `getFlash()`, default states);
 /// 12. screenshot `"screenshot.png"` if `mustTakeScreenshot`, then clear the
 ///     flag.
+///
+/// The background, walls, player, particles and flash are NEVER gated by
+/// `draw_options` (the kid look suppresses text/HUD only).
 ///
 /// (The C++ final step `drawImguiLuaConsole()` is the ImGui debug console —
 /// out of scope for the draw layer; `TODO(issue-009-wiring)`.)
@@ -655,18 +692,21 @@ pub fn draw_frame(state: &mut DrawState, input: &mut FrameInput, target: &mut dy
     );
 
     draw_particles(&state.particles, target);
-    text_draw::draw_text(
-        state,
-        config,
-        input.background_colors,
-        input.color_text,
-        get_render_states(RenderStage::Text),
-        target,
-    );
+    if input.draw_options.show_text {
+        text_draw::draw_text(
+            state,
+            config,
+            input.background_colors,
+            input.color_text,
+            input.draw_options.show_fps,
+            get_render_states(RenderStage::Text),
+            target,
+        );
+    }
 
     // ------------------------------------------------------------------------
     // 9. Key icons.
-    if config.get_show_key_icons() {
+    if config.get_show_key_icons() && input.draw_options.show_key_icons {
         draw_key_icons(
             state,
             input.color_text,
@@ -679,7 +719,7 @@ pub fn draw_frame(state: &mut DrawState, input: &mut FrameInput, target: &mut dy
 
     // ------------------------------------------------------------------------
     // 10. Level info (fresh `getRenderStates(Text)` evaluation).
-    if config.get_show_level_info() {
+    if config.get_show_level_info() && input.draw_options.show_level_info {
         draw_level_info(state, get_render_states(RenderStage::Text), target);
     }
 
@@ -1746,6 +1786,7 @@ mod tests {
 
         let mut input = FrameInput {
             config: &config,
+            draw_options: DrawOptions::default(),
             fragment_shader_ids: &ids,
             has_died: false,
             level_status_camera_shake: 0.0,
@@ -1915,6 +1956,7 @@ mod tests {
 
         let mut input = FrameInput {
             config: &config,
+            draw_options: DrawOptions::default(),
             fragment_shader_ids: &ids,
             has_died: false,
             level_status_camera_shake: 0.0,
@@ -2063,6 +2105,7 @@ mod tests {
 
         let mut input = FrameInput {
             config: &config,
+            draw_options: DrawOptions::default(),
             fragment_shader_ids: &ids,
             has_died: false,
             level_status_camera_shake: 0.0,
@@ -2124,6 +2167,7 @@ mod tests {
         {
             let mut input = FrameInput {
                 config: &config,
+                draw_options: DrawOptions::default(),
                 fragment_shader_ids: &ids,
                 has_died: false,
                 level_status_camera_shake: 0.0,
@@ -2165,6 +2209,220 @@ mod tests {
             draw_frame(&mut state, &mut input, &mut rec);
             assert_eq!(rec.events.len(), before);
         }
+    }
+
+    // ---------------------------------------------------------------------
+    // plan 002 issue 04b — DrawOptions text/HUD suppression.
+    // ---------------------------------------------------------------------
+
+    /// Runs `draw_frame` over the shared options scene (1 wall quad +
+    /// 1 player tri; background, flash, key icons, level info and the FPS
+    /// line all config-ENABLED so only the `DrawOptions` gates can remove
+    /// a pass) and returns the recording.
+    fn draw_options_frame(draw_options: DrawOptions) -> (Recording, Config) {
+        let mut config = base_config();
+        config.set_3d(false);
+        config.set_flash(true);
+        config.set_show_key_icons(true);
+        config.set_show_level_info(true);
+        config.set_show_fps(true);
+
+        let mut state = make_draw_state();
+        let (bg, ov) = crate::camera::init_cameras(
+            config.get_width() as f32,
+            config.get_height() as f32,
+            config.get_zoom_factor(),
+        );
+        state.background_camera = Some(bg);
+        state.overlay_camera = Some(ov);
+        state.flash_polygon = init_flash_effect(255, 0, 0, config.get_width(), config.get_height());
+
+        let wall_quads = quad(0.0);
+        let player_tris = [
+            Vertex::new(Vec2::new(0.0, 0.0), Color::RED),
+            Vertex::new(Vec2::new(1.0, 0.0), Color::RED),
+            Vertex::new(Vec2::new(0.0, 1.0), Color::RED),
+        ];
+        let colors = [Color::new(1, 2, 3, 255), Color::new(4, 5, 6, 255)];
+        let ids: FragmentShaderIds = [None; 9];
+        let mut must_take_screenshot = false;
+        let jitter: Box<dyn Fn(f32, f32) -> f32> = jitter_max();
+
+        let mut input = FrameInput {
+            config: &config,
+            draw_options,
+            fragment_shader_ids: &ids,
+            has_died: false,
+            level_status_camera_shake: 0.0,
+            sides: 6,
+            darken_uneven_background_chunk: false,
+            show_player_trail: false,
+            pulse3d: 1.0,
+            must_take_screenshot: &mut must_take_screenshot,
+            fps: 60.0,
+            input_movement: 0,
+            input_focused: false,
+            input_swap: false,
+            color_text: Color::WHITE,
+            wall_quads: &wall_quads,
+            pivot_quads: &[],
+            player_tris: &player_tris,
+            cap_tris: &[],
+            background_colors: &colors,
+            bg_tile_radius: 10000.0,
+            bg_rot_off: 0.0,
+            three_d_depth: 1.0,
+            three_d_skew: 0.18,
+            three_d_spacing: 1.0,
+            three_d_darken_mult: 1.5,
+            three_d_alpha_mult: 0.5,
+            three_d_alpha_falloff: 3.0,
+            three_d_perspective_mult: 1.0,
+            three_d_override_color: Color::new(12, 34, 56, 255),
+            main_color: Color::new(90, 90, 90, 255),
+            wall_color: Color::new(200, 200, 200, 255),
+            player_color: Color::new(50, 50, 250, 255),
+            menu_background_enabled: false,
+            menu_four_by_three: false,
+            cap_color: Color::WHITE,
+            jitter: &jitter,
+            on_render_stage: None,
+        };
+
+        let mut rec = Recording::default();
+        draw_frame(&mut state, &mut input, &mut rec);
+        (rec, config)
+    }
+
+    #[test]
+    fn draw_options_all_false_skips_every_text_pass() {
+        let (rec, _config) = draw_options_frame(DrawOptions {
+            show_text: false,
+            show_level_info: false,
+            show_key_icons: false,
+            show_fps: false,
+        });
+
+        // No text, no level-info box, no key icons.
+        assert_eq!(
+            rec.events
+                .iter()
+                .filter(|e| matches!(e, DrawEvent::Text { .. }))
+                .count(),
+            0,
+            "zero text draws with the kid options"
+        );
+        assert_eq!(
+            rec.events
+                .iter()
+                .filter(|e| matches!(e, DrawEvent::Rectangle { .. }))
+                .count(),
+            0,
+            "the level-info box is gone"
+        );
+        assert_eq!(
+            rec.events
+                .iter()
+                .filter(|e| matches!(e, DrawEvent::Sprite))
+                .count(),
+            0,
+            "the key icons are gone"
+        );
+
+        // …but the scene (background / walls / player) and the flash
+        // survive.
+        let counts: Vec<usize> = rec
+            .events
+            .iter()
+            .filter_map(|e| match e {
+                DrawEvent::Vertices { count, .. } => Some(*count),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            counts.contains(&18),
+            "background tris still drawn: {counts:?}"
+        );
+        assert!(
+            counts.contains(&6),
+            "the wall quad is still drawn: {counts:?}"
+        );
+        assert!(
+            counts.contains(&3),
+            "the player tri is still drawn: {counts:?}"
+        );
+        // The flash polygon is the last pass of the frame.
+        assert!(
+            matches!(
+                rec.events.last(),
+                Some(DrawEvent::Vertices { count: 6, states }) if *states == RenderStates::default()
+            ),
+            "the flash polygon is still the final pass: {:?}",
+            rec.events.last()
+        );
+    }
+
+    #[test]
+    fn draw_options_default_keeps_the_text_passes() {
+        let (rec, _config) = draw_options_frame(DrawOptions::default());
+
+        // timer + status + fps + the five level-info lines.
+        assert_eq!(
+            rec.events
+                .iter()
+                .filter(|e| matches!(e, DrawEvent::Text { .. }))
+                .count(),
+            8,
+            "the default keeps every legacy text pass"
+        );
+        assert_eq!(
+            rec.events
+                .iter()
+                .filter(|e| matches!(e, DrawEvent::Sprite))
+                .count(),
+            4,
+            "the key icons keep drawing"
+        );
+        assert_eq!(
+            rec.events
+                .iter()
+                .filter(|e| matches!(e, DrawEvent::Rectangle { .. }))
+                .count(),
+            1,
+            "the level-info box keeps drawing"
+        );
+    }
+
+    #[test]
+    fn draw_options_show_fps_false_hides_only_the_fps_line() {
+        let (rec, _config) = draw_options_frame(DrawOptions {
+            show_fps: false,
+            ..DrawOptions::default()
+        });
+
+        // timer + status (fps off) + the five level-info lines.
+        assert_eq!(
+            rec.events
+                .iter()
+                .filter(|e| matches!(e, DrawEvent::Text { .. }))
+                .count(),
+            7,
+            "only the FPS line is hidden; the other text stays"
+        );
+        assert_eq!(
+            rec.events
+                .iter()
+                .filter(|e| matches!(e, DrawEvent::Sprite))
+                .count(),
+            4,
+        );
+        assert_eq!(
+            rec.events
+                .iter()
+                .filter(|e| matches!(e, DrawEvent::Rectangle { .. }))
+                .count(),
+            1,
+        );
     }
 
     // ---------------------------------------------------------------------

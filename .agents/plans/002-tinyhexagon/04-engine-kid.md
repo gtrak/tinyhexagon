@@ -1,6 +1,6 @@
 # Issue 04 — Engine kid alterations
 
-**Status:** PARTIAL — 04a LANDED; 04b pending
+**Status:** LANDED (04a/04b)
 **Depends:** 03
 **Unblocks:** 05, 07
 

@@ -57,6 +57,12 @@ use crate::{
 
 use th_math::ssvu::math::{PI, TAU};
 
+/// plan 002 issue 04b — the amplitude (degrees) of the beat hue shimmer
+/// the engine adds on top of the app's base hue in [`HexagonGame::apply_music_beat`];
+/// small on purpose so the app-computed stage hue stays the dominant term
+/// (the two half-amplitude beat/bar sines sum to ± this value).
+const BEAT_HUE_SHIMMER_DEG: f32 = 1.5;
+
 /// C++ `HexagonGame::GameExecutionResult`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GameExecutionResult {
@@ -302,6 +308,16 @@ pub struct EngineState {
     // collision — the app's slow-motion / SFX / synth-duck trigger).
     pub(crate) soft_collisions: bool,
     pub(crate) bump_serial: u64,
+    // plan 002 issue 04b (kid mode): the latest synth beat — `beat_hue`
+    // is `Some` only while the kid runtime drives the palette (the app
+    // computes the stage hue; the engine adds a tiny shimmer). Applied to
+    // the style AFTER the style's own update (update.rs) so the derived
+    // colours reflect the beat in the SAME frame; the style animation is
+    // the fallback when no beat is set. `status.pulse` is never touched
+    // (it feeds the simulation/RNG) — only `status.beat_pulse` and the
+    // style colours change.
+    pub(crate) beat_hue: Option<f32>,
+    pub(crate) beat_energy: f32,
 }
 
 fn entropy_seed() -> u64 {
@@ -507,6 +523,8 @@ impl<S: SharedStore> HexagonGame<S> {
             advance_tick_count: None,
             soft_collisions: false,
             bump_serial: 0,
+            beat_hue: None,
+            beat_energy: 0.0,
         };
 
         // C++ `HexagonGame` ctor's "Keyboard binds" section
@@ -992,6 +1010,39 @@ impl<S: SharedStore> HexagonGame<S> {
     #[must_use]
     pub fn bump_serial(&self) -> u64 {
         self.est().bump_serial
+    }
+
+    /// plan 002 issue 04b — the kid runtime's per-frame beat application:
+    /// stores the latest beat for the SAME-frame style application in
+    /// `update` (AFTER the style's own `update`, so the derived colours
+    /// reflect it in the same frame) and mirrors the energy into
+    /// `status.beat_pulse` (re-arming `beat_pulse_delay` so the engine's
+    /// own beat-pulse retrigger does not clobber the synth value on the
+    /// next frame).
+    ///
+    /// `base_hue` (the app's stage hue) is the DOMINANT term; the engine
+    /// adds a tiny deterministic shimmer on the beat/bar cycles (±
+    /// [`BEAT_HUE_SHIMMER_DEG`] total; the phases are cycles in `[0, 1)`,
+    /// 0 = start of the beat / bar). `status.pulse` is NEVER touched — it
+    /// feeds the simulation/RNG; only `beat_pulse` / the style colours
+    /// change.
+    pub fn apply_music_beat(&self, beat_phase: f32, bar_phase: f32, energy: f32, base_hue: f32) {
+        let shimmer = 0.5 * BEAT_HUE_SHIMMER_DEG * (beat_phase * TAU).sin()
+            + 0.5 * BEAT_HUE_SHIMMER_DEG * (bar_phase * TAU).sin();
+        {
+            let mut e = self.est();
+            e.beat_hue = Some(base_hue + shimmer);
+            e.beat_energy = energy;
+        }
+        let mut g = self.st();
+        g.status.beat_pulse = energy;
+        // Re-arm the delay so the engine's own `updateBeatPulse` retrigger
+        // (delay <= 0 → beatPulse = levelStatus.beatPulseMax) does not
+        // clobber the synth value on the next frame.
+        g.status.beat_pulse_delay = f32::max(
+            g.status.beat_pulse_delay,
+            g.level_status.beat_pulse_delay_max,
+        );
     }
 
     /// C++ `sideChange(mSideNumber)` (verbatim).

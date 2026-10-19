@@ -991,6 +991,8 @@ mod tests {
             advance_tick_count: None,
             soft_collisions: false,
             bump_serial: 0,
+            beat_hue: None,
+            beat_energy: 0.0,
         }
     }
 

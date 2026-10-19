@@ -289,6 +289,18 @@ fn set_difficulty_mult_writes_the_shared_mult() {
         expected_speed,
         "getSpeedMultDM uses the new mult"
     );
+    // 04a-review P2 — the DELAY consumer: getDelayMultDM =
+    // delayMult / dm^0.10 (apeirogon sets no delayMax cap).
+    let expected_delay = if ls.has_delay_max_limit() {
+        (ls.delay_mult / 3.0_f32.powf(0.10)).min(ls.delay_max)
+    } else {
+        ls.delay_mult / 3.0_f32.powf(0.10)
+    };
+    assert_eq!(
+        c.game.state_handle().lock().get_delay_mult_dm(),
+        expected_delay,
+        "getDelayMultDM uses the new mult"
+    );
 }
 
 #[test]

@@ -59,6 +59,16 @@
 //! clones, style-data clone, config clone, the batch copies, the camera
 //! conversions), and the snapshot locals — never a `st()` / `est()` /
 //! `config_ref()` guard — are what `FrameInput` borrows.
+//!
+//! # plan 002 issue 04b — `DrawOptions` text/HUD suppression
+//!
+//! The text/HUD passes are ADDITIONALLY AND-gated by `AppDraw`'s
+//! `DrawOptions` (`set_draw_options`; default all-true = the legacy
+//! rendering; a field only ever REMOVES a pass, never enables one over the
+//! C++ `Config` gates): the `updateText` sizing half, the update-side
+//! `updateKeyIcons` / `updateLevelInfo` calls, and the draw-side
+//! `drawText` / key-icon / level-info passes (`FrameInput.draw_options`).
+//! The future tiny app (07) sets them all false.
 
 use std::path::Path;
 
@@ -69,7 +79,9 @@ use th_math::hg::color::Color;
 use th_render::camera::PreShakeCenters as RenderPreShakeCenters;
 use th_render::draw::{Vertex, VertexBatch};
 use th_render::font::{Font, Text};
-use th_render::graphics::{self, DrawState, DrawTarget, FragmentShaderIds, FrameInput};
+use th_render::graphics::{
+    self, DrawOptions, DrawState, DrawTarget, FragmentShaderIds, FrameInput,
+};
 use th_render::texture::{Sprite, Texture};
 use th_render::types::RectangleShape;
 
@@ -116,6 +128,11 @@ fn sprite_from_state(texture: &Texture, s: &th_game::hexagon_game::SpriteState) 
 /// `HexagonGame.cpp:318-331` — the engine mirrors that).
 pub struct AppDraw {
     state: DrawState,
+    /// plan 002 issue 04b — the text/HUD pass suppression (default: every
+    /// legacy pass on — the kid runtime (07) sets them all false via
+    /// [`Self::set_draw_options`]; a field only ever REMOVES a pass, never
+    /// enables one over the C++ `Config` gates).
+    draw_options: DrawOptions,
     /// C++ `window->getFPS()` — the per-frame window-reported rate that
     /// drives the `onRenderStage` frametime (`60.f / fps`,
     /// `HGGraphics.cpp:76`): the timer's `float fps` (GameWindow.hpp:335-338
@@ -213,6 +230,7 @@ impl AppDraw {
 
         Self {
             state,
+            draw_options: DrawOptions::default(),
             // C++ `TimerBase::fps{0}` (TimerBase.hpp:23) — 0 on the very
             // first frame (the C++'s initial value; the windowed
             // client's `tick_fields` refreshes it from the timer every
@@ -236,6 +254,19 @@ impl AppDraw {
     #[must_use]
     pub fn state(&self) -> &DrawState {
         &self.state
+    }
+
+    /// plan 002 issue 04b — the current text/HUD suppression options.
+    #[must_use]
+    pub fn draw_options(&self) -> DrawOptions {
+        self.draw_options
+    }
+
+    /// plan 002 issue 04b — set the text/HUD suppression options for the
+    /// subsequent frames (the future tiny app sets all false). The
+    /// `Default` (every pass on) is the legacy rendering.
+    pub fn set_draw_options(&mut self, draw_options: DrawOptions) {
+        self.draw_options = draw_options;
     }
 
     /// C++ `txStarParticle` (the PB-star / particle sprites' texture —
@@ -282,7 +313,7 @@ pub fn draw<S: SharedStore>(game: &HexagonGame<S>, app: &mut AppDraw, target: &m
     // drives these each frame with the same C++ gates. Both C++ methods
     // also carry their own `window == nullptr` return — already satisfied
     // by the guard above.
-    if game.config_ref().get_show_key_icons() {
+    if game.config_ref().get_show_key_icons() && app.draw_options.show_key_icons {
         graphics::update_key_icons(
             &mut app.state.key_icon_left,
             &mut app.state.key_icon_right,
@@ -291,7 +322,7 @@ pub fn draw<S: SharedStore>(game: &HexagonGame<S>, app: &mut AppDraw, target: &m
             &game.config_ref(),
         );
     }
-    if game.config_ref().get_show_level_info() {
+    if game.config_ref().get_show_level_info() && app.draw_options.show_level_info {
         // C++ `updateLevelInfo` (`HexagonGame.cpp:159-186`): offset color =
         // `Black` in B&W / empty colours, else `styleData.getColor(0)`;
         // outline = `styleData.getMainColor()` (the RAW style colour — NOT
@@ -388,9 +419,13 @@ pub fn draw<S: SharedStore>(game: &HexagonGame<S>, app: &mut AppDraw, target: &m
     // per tick (the C++'s `updateText` call site, HGUpdate.cpp:384), so
     // the bridge applies the size half per frame (a pure function of the
     // config — the rendered frame is identical). Without this, every
-    // `Text` kept its constructor size forever (029e2 M2).
+    // `Text` kept its constructor size forever (029e2 M2). plan 002
+    // issue 04b: skipped with the text pass itself when `!show_text`
+    // (the texts are not drawn then, so their sizing is inert).
     let config = game.config_ref();
-    th_render::text_draw::update_text_sizes(&mut app.state, &config);
+    if app.draw_options.show_text {
+        th_render::text_draw::update_text_sizes(&mut app.state, &config);
+    }
 
     // ------------------------------------------------------------------
     // The scene batches — the C++ `HGGraphics.cpp:127-146` fill
@@ -442,6 +477,7 @@ pub fn draw<S: SharedStore>(game: &HexagonGame<S>, app: &mut AppDraw, target: &m
 
     let mut input = FrameInput {
         config: &config,
+        draw_options: app.draw_options,
         fragment_shader_ids: &fragment_shader_ids,
         has_died: status.has_died,
         level_status_camera_shake: level_status.camera_shake,

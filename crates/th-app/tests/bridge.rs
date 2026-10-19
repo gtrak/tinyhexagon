@@ -9,7 +9,7 @@ mod common;
 use std::sync::Arc;
 
 use th_config::{Config, TIME_STEP};
-use th_game::seams::ScriptHost;
+use th_game::seams::{NoJoystick, ScriptHost};
 use th_render::draw::RenderStates;
 
 use common::{compose, release_dir, test_fonts, DrawEvent, Recording};
@@ -489,4 +489,157 @@ fn app_draw_missing_assets_fall_back_to_the_cpp_null_textures() {
     }
     assert_eq!(app.tx_star_particle().get_size(), (1, 1));
     assert_eq!(app.tx_small_circle().get_size(), (1, 1));
+}
+
+/// plan 002 issue 04b — the `DrawOptions` plumbing through the bridge:
+/// the default options keep the legacy text/HUD passes, and the kid's
+/// all-false options (via `AppDraw::set_draw_options`) make the recording
+/// target see ZERO text draws while the scene + flash keep drawing.
+#[test]
+fn draw_options_plumbing_kid_options_draw_zero_text() {
+    const SEED: u64 = 0;
+    let assets = load_release();
+    let root = release_dir();
+
+    // The engine config with every legacy text/HUD pass enabled (the
+    // `DrawOptions` gates are the ONLY thing that may remove a pass in
+    // this test).
+    let mut cfg = Config::default();
+    cfg.set_show_key_icons(true);
+    cfg.set_show_level_info(true);
+    cfg.set_show_fps(true);
+    cfg.set_flash(true);
+    let c = th_app::compose::compose_with_config(
+        assets.clone(),
+        root.clone(),
+        true,
+        std::sync::Arc::new(std::sync::RwLock::new(cfg)),
+        None, // renderer (the C++ headless test's null window stand-in)
+        None, // audio (the C++ `audio == nullptr`)
+        std::sync::Arc::new(NoJoystick),
+    );
+    c.game.new_game(PACK, LEVEL, true, 1.0);
+    c.game.state_handle().lock().rng = th_rng::RandomNumberGenerator::new(SEED);
+    c.game.set_always_spin_right(true);
+    for _ in 0..3000 {
+        if c.game.get_status().has_died {
+            break;
+        }
+        c.game.update(TIME_STEP, 1.0);
+        c.game.post_update();
+    }
+    assert!(
+        c.game.get_status().has_died,
+        "the live run must end at death"
+    );
+
+    let (font, font_bold) = test_fonts();
+    let mut app = th_app::bridge::AppDraw::new(
+        &Config::default(),
+        &release_dir().join("Assets"),
+        font,
+        font_bold,
+    );
+    app.fps = 60.0; // C++ `window->getFPS()`
+
+    // Default options: the legacy passes (timer + status + fps + the
+    // five level-info lines, the four key icons, the level-info box).
+    let mut rec_default = Recording::default();
+    th_app::bridge::draw(&c.game, &mut app, &mut rec_default);
+    assert_eq!(
+        rec_default
+            .events
+            .iter()
+            .filter(|e| matches!(e, DrawEvent::Text { .. }))
+            .count(),
+        8,
+        "the default options keep every legacy text pass"
+    );
+    let default_sprites: usize = rec_default
+        .events
+        .iter()
+        .filter(|e| matches!(e, DrawEvent::Sprite))
+        .count();
+    // The four key icons + the (config-enabled) player-trail sprites.
+    assert!(
+        default_sprites >= 4,
+        "the key icons keep drawing (sprites: {default_sprites})"
+    );
+    assert_eq!(
+        rec_default
+            .events
+            .iter()
+            .filter(|e| matches!(e, DrawEvent::Rectangle { .. }))
+            .count(),
+        1,
+        "the level-info box keeps drawing"
+    );
+
+    // The kid options: zero text / no level-info box / no key icons — but
+    // the scene (background / walls / player) and the flash survive.
+    app.set_draw_options(th_render::graphics::DrawOptions {
+        show_text: false,
+        show_level_info: false,
+        show_key_icons: false,
+        show_fps: false,
+    });
+    assert_eq!(
+        app.draw_options(),
+        th_render::graphics::DrawOptions {
+            show_text: false,
+            show_level_info: false,
+            show_key_icons: false,
+            show_fps: false,
+        },
+        "the setter stores the options"
+    );
+    let mut rec_kid = Recording::default();
+    th_app::bridge::draw(&c.game, &mut app, &mut rec_kid);
+    assert_eq!(
+        rec_kid
+            .events
+            .iter()
+            .filter(|e| matches!(e, DrawEvent::Text { .. }))
+            .count(),
+        0,
+        "the kid options draw zero text"
+    );
+    assert_eq!(
+        rec_kid
+            .events
+            .iter()
+            .filter(|e| matches!(e, DrawEvent::Sprite))
+            .count(),
+        default_sprites - 4,
+        "only the key icons are removed — the trail/particle sprites keep drawing"
+    );
+    assert_eq!(
+        rec_kid
+            .events
+            .iter()
+            .filter(|e| matches!(e, DrawEvent::Rectangle { .. }))
+            .count(),
+        0,
+        "the level-info box is gone"
+    );
+    let counts: Vec<usize> = rec_kid
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            DrawEvent::Vertices { count, .. } => Some(*count),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        counts.contains(&18) && counts.contains(&6) && counts.contains(&3),
+        "the scene (background / walls / player) still draws: {counts:?}"
+    );
+    assert!(
+        matches!(
+            rec_kid.events.last(),
+            Some(DrawEvent::Vertices { count: 6, states }) if *states == RenderStates::default()
+        ),
+        "the flash polygon is still the final pass: {:?}",
+        rec_kid.events.last()
+    );
 }

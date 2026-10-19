@@ -78,10 +78,10 @@ pub use graphics::{
     death_flash_effect, draw_background, draw_background_menu, draw_frame, draw_key_icons,
     draw_level_info, draw_particles, draw_swap_particles, draw_trail_particles, init_flash_effect,
     init_key_icons, init_text, render_states_for_stage, update_flash, update_key_icons,
-    update_level_info, update_particles, update_swap_particles, update_trail_particles, DrawState,
-    DrawTarget, FragmentShaderIds, FrameInput, PBParticleUpdateParams, Particle, RenderStage,
-    SwapParticle, SwapParticleSpawnInfo, SwapParticleUpdateParams, TrailParticle,
-    TrailParticleUpdateParams,
+    update_level_info, update_particles, update_swap_particles, update_trail_particles,
+    DrawOptions, DrawState, DrawTarget, FragmentShaderIds, FrameInput, PBParticleUpdateParams,
+    Particle, RenderStage, SwapParticle, SwapParticleSpawnInfo, SwapParticleUpdateParams,
+    TrailParticle, TrailParticleUpdateParams,
 };
 pub use input::InputState;
 pub use input_manager::{combo_is_down, Bind, Manager, Mode, Type};

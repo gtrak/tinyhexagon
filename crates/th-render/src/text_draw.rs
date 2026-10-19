@@ -334,11 +334,16 @@ pub fn update_text_sizes(state: &mut DrawState, config: &Config) {
 }
 
 /// C++ `drawText_TimeAndStatus` (mapping §3.10).
+///
+/// `show_fps` (plan 002 issue 04b `DrawOptions`) ANDs with the C++
+/// `Config::getShowFPS()` gate: when either is off the FPS line is not
+/// drawn (the other text keeps drawing when `show_text` is on).
 pub fn draw_text_time_and_status(
     state: &mut DrawState,
     config: &Config,
     color_text: Color,
     offset_color: Color,
+    show_fps: bool,
     states: RenderStates,
     target: &mut dyn DrawTarget,
 ) {
@@ -385,7 +390,7 @@ pub fn draw_text_time_and_status(
         target.draw_text(&state.text, states);
     }
 
-    if config.get_show_fps() {
+    if config.get_show_fps() && show_fps {
         state.fps_text.set_fill_color(color_text);
         state
             .fps_text
@@ -463,11 +468,16 @@ pub fn draw_text_message(
 /// C++ `drawText` (mapping §3.12) — computes the offset colour
 /// (`Black` in B&W / no colours, else `getColor(0)`) and draws
 /// TimeAndStatus → Message in that order.
+///
+/// `show_fps` (plan 002 issue 04b `DrawOptions`) forwards to
+/// [`draw_text_time_and_status`] to suppress the FPS line (the other
+/// text is unaffected).
 pub fn draw_text(
     state: &mut DrawState,
     config: &Config,
     background_colors: &[Color],
     color_text: Color,
+    show_fps: bool,
     states: RenderStates,
     target: &mut dyn DrawTarget,
 ) {
@@ -478,7 +488,15 @@ pub fn draw_text(
         background_colors[0]
     };
 
-    draw_text_time_and_status(state, config, color_text, offset_color, states, target);
+    draw_text_time_and_status(
+        state,
+        config,
+        color_text,
+        offset_color,
+        show_fps,
+        states,
+        target,
+    );
     draw_text_message(state, config, color_text, offset_color, states, target);
 }
 

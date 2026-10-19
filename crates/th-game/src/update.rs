@@ -302,6 +302,25 @@ impl<S: SharedStore> HexagonGame<S> {
                         g.style_data.update(m_ft, dm.powf(0.8_f32));
                     }
 
+                    // plan 002 issue 04b — the kid runtime's synth-beat
+                    // palette/pulse override: applied AFTER the style's own
+                    // update (above) so the derived colours reflect the
+                    // beat in the SAME frame (`apply_beat_hue` /
+                    // `apply_beat_pulse` each recompute the colours). The
+                    // style animation remains the fallback when no beat is
+                    // set (`beat_hue == None`). `status.pulse` (simulation/
+                    // RNG) is untouched — only `status.beat_pulse` and the
+                    // style colours change.
+                    let beat = {
+                        let e = self.est();
+                        e.beat_hue.map(|hue| (hue, e.beat_energy))
+                    };
+                    if let Some((beat_hue, beat_energy)) = beat {
+                        let mut g = self.st();
+                        g.style_data.apply_beat_hue(beat_hue);
+                        g.style_data.apply_beat_pulse(beat_energy);
+                    }
+
                     self.update_player_position(self.get_radius());
 
                     self.update_walls(m_ft);
@@ -507,6 +526,12 @@ impl<S: SharedStore> HexagonGame<S> {
             // plan 002 issue 04a — soft: the wall dies instead of the
             // player (flash + one bump per killed wall; the existing
             // `retain` drops it after this update). No push, no death.
+            // 04a-review P2 (recorded in 04b): the engine's soft-collision
+            // visual IS this flash — the death path has no reusable
+            // wall-burst particle helper (the only burst spawners are the
+            // swap-specific `SwapParticleSpawnInfo` bursts), so a wall-burst
+            // SFX/slow-motion belongs to the app (07); none is invented
+            // here.
             if soft {
                 let mut g = self.st();
                 g.walls[i].kill();
@@ -597,6 +622,12 @@ impl<S: SharedStore> HexagonGame<S> {
     /// [`Self::update_custom_walls`]: kill the collidable custom wall(s)
     /// that overlap the player's (post-push) position; flash + one bump
     /// per killed wall, no player death.
+    ///
+    /// 04a-review P2 (recorded in 04b): `handle_collision`'s push already
+    /// ran for this frame BEFORE the kill (it is a single 3-phase
+    /// push-then-report algorithm with no kill-before-push path); a soft
+    /// hit on a custom wall therefore pushes the player and then kills the
+    /// wall. The tiny pack (06) should not use custom walls.
     fn kill_soft_custom_walls(&self) {
         let p_pos = self.get_player_position();
         let killed = {

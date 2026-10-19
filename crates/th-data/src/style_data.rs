@@ -197,9 +197,11 @@ impl StyleData {
 
         if m_color_data.dynamic {
             // C++ `std::fmod(hue + shift, 360.f)` — fmod keeps the sign of
-            // the dividend (truncate division), not rem_euclid.
+            // the dividend (truncate division), not rem_euclid. (04b parity
+            // fix: the pre-04b `total - total/360.0*360.0` collapsed every
+            // hue in [0, 720) to ~0, freezing dynamic colours near red.)
             let total = m_current_hue + m_color_data.hue_shift;
-            let hue = (total - total / 360.0 * 360.0) / 360.0;
+            let hue = (total - (total / 360.0).trunc() * 360.0) / 360.0;
 
             let dynamic_color = get_color_from_hue(hue);
 
@@ -317,6 +319,28 @@ impl StyleData {
     /// C++ `setCapColor`.
     pub fn set_cap_color(&mut self, m_cap_color: &CapColor) {
         self.cap_color = m_cap_color.clone();
+    }
+
+    /// plan 002 issue 04b — the kid runtime's beat-driven palette: set
+    /// `currentHue` to `hue` (clamped to the style's `[hueMin, hueMax]`
+    /// range) and recompute the derived colours so the beat's hue is
+    /// visible in the SAME frame (the engine applies this AFTER the
+    /// style's own [`Self::update`], in `th-game`'s `update.rs`; the style
+    /// animation remains the fallback when no beat is supplied).
+    pub fn apply_beat_hue(&mut self, hue: f32) {
+        let (lo, hi) = clamp_range(self.hue_min, self.hue_max);
+        self.current_hue = hue.clamp(lo, hi);
+        self.compute_colors();
+    }
+
+    /// plan 002 issue 04b — the kid runtime's beat-driven pulse: set
+    /// `pulseFactor` to `energy` (clamped to `[pulseMin, pulseMax]`) and
+    /// recompute the derived colours (same-frame semantics as
+    /// [`Self::apply_beat_hue`]).
+    pub fn apply_beat_pulse(&mut self, energy: f32) {
+        let (lo, hi) = clamp_range(self.pulse_min, self.pulse_max);
+        self.pulse_factor = energy.clamp(lo, hi);
+        self.compute_colors();
     }
 
     #[must_use = "mirrors the C++ [[nodiscard]]"]
@@ -438,6 +462,18 @@ const fn wrap_u8(x: f32) -> u8 {
     (x as i32).rem_euclid(256) as u8
 }
 
+/// `[min, max]` in a `f32::clamp`-safe order: C++ styles may wrap the hue
+/// circle (`hue_min > hue_max`, the `update` ping-pong/wrap logic treats
+/// them as endpoints, not bounds), and `f32::clamp` panics on a reversed
+/// range — the kid beat path degrades to the unordered bounds instead.
+fn clamp_range(min: f32, max: f32) -> (f32, f32) {
+    if min <= max {
+        (min, max)
+    } else {
+        (max, min)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -500,6 +536,141 @@ mod tests {
         assert_eq!(colors[0], Color::new(255, 0, 0, 255));
         assert_eq!(colors[1], Color::new(0, 255, 0, 255));
         assert_eq!(colors[2], Color::new(0, 0, 255, 255));
+    }
+
+    // -----------------------------------------------------------------
+    // plan 002 issue 04b — the beat-driven palette/pulse.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn apply_beat_hue_changes_the_derived_colours_and_clamps() {
+        let obj: Obj = serde_json::from_str(
+            r#"{
+                "hue_min": 0, "hue_max": 360,
+                "main": { "main": true, "dynamic": true, "value": [0, 0, 0, 255] },
+                "player_color": { "dynamic": true, "dynamic_offset": true, "offset": 2.0, "value": [10, 0, 0, 255], "hue_shift": 30 },
+                "text_color": { "dynamic": true, "dynamic_offset": true, "offset": 4.0, "value": [0, 10, 0, 255], "hue_shift": 60 },
+                "wall_color": { "dynamic": true, "dynamic_offset": true, "offset": 8.0, "value": [0, 0, 10, 255], "hue_shift": 90 }
+            }"#,
+        )
+        .unwrap();
+        let mut s = StyleData::from_json(&obj).unwrap();
+        s.compute_colors();
+        let before = (
+            *s.get_main_color(),
+            *s.get_player_color(),
+            *s.get_text_color(),
+            *s.get_wall_color(),
+        );
+
+        // A quarter-wheel hue re-derives ALL FOUR colours in the same
+        // call (each carries a distinct hueShift/offset).
+        s.apply_beat_hue(90.0);
+        assert_eq!(s.get_current_hue(), 90.0);
+        let dyn_color = get_color_from_hue(90.0 / 360.0);
+        assert_eq!(
+            s.get_main_color(),
+            &dyn_color,
+            "main (dynamic, no offset) = the hue colour itself"
+        );
+        let (main, player, text, wall) = (
+            *s.get_main_color(),
+            *s.get_player_color(),
+            *s.get_text_color(),
+            *s.get_wall_color(),
+        );
+        assert_ne!(main, before.0);
+        assert_ne!(player, before.1);
+        assert_ne!(text, before.2);
+        assert_ne!(wall, before.3);
+        // The offsets make the four colours distinct from each other.
+        assert_ne!(player, main);
+        assert_ne!(text, main);
+        assert_ne!(wall, main);
+
+        // Clamping to the style's hue range.
+        s.apply_beat_hue(-10.0);
+        assert_eq!(s.get_current_hue(), 0.0, "below hueMin clamps to hueMin");
+        s.apply_beat_hue(500.0);
+        assert_eq!(s.get_current_hue(), 360.0, "above hueMax clamps to hueMax");
+    }
+
+    #[test]
+    fn apply_beat_hue_is_clamp_safe_on_a_wrapping_style() {
+        // C++ wrapping styles (hueMin > hueMax) must not panic the clamp.
+        let obj: Obj = serde_json::from_str(r#"{"hue_min": 300, "hue_max": 30}"#).unwrap();
+        let mut s = StyleData::from_json(&obj).unwrap();
+        s.apply_beat_hue(100.0);
+        assert_eq!(s.get_current_hue(), 100.0, "inside the unordered bounds");
+        s.apply_beat_hue(15.0);
+        assert_eq!(s.get_current_hue(), 30.0, "outside → the lower bound");
+        s.apply_beat_hue(350.0);
+        assert_eq!(s.get_current_hue(), 300.0, "outside → the upper bound");
+    }
+
+    #[test]
+    fn apply_beat_pulse_changes_the_derived_colours_and_clamps() {
+        let obj: Obj = serde_json::from_str(
+            r#"{
+                "pulse_min": 0.0, "pulse_max": 1.0,
+                "main": { "value": [10, 20, 30, 100], "pulse": [5, 0, 0, 50] }
+            }"#,
+        )
+        .unwrap();
+        let mut s = StyleData::from_json(&obj).unwrap();
+        s.compute_colors();
+        assert_eq!(*s.get_main_color(), Color::new(10, 20, 30, 100));
+
+        // factor 0.5: r = 10 + 5·0.5 = 12 (truncate), a = 100 + 50·0.5 = 125.
+        s.apply_beat_pulse(0.5);
+        assert_eq!(*s.get_main_color(), Color::new(12, 20, 30, 125));
+        // wall/player/text fall back to the main colour data — the same
+        // pulse applies to all four derived colours.
+        assert_eq!(*s.get_wall_color(), Color::new(12, 20, 30, 125));
+
+        // Clamping to the style's pulse range.
+        s.apply_beat_pulse(5.0);
+        assert_eq!(
+            *s.get_main_color(),
+            Color::new(15, 20, 30, 150),
+            "clamped to pulseMax"
+        );
+        s.apply_beat_pulse(-3.0);
+        assert_eq!(
+            *s.get_main_color(),
+            Color::new(10, 20, 30, 100),
+            "clamped to pulseMin"
+        );
+    }
+
+    #[test]
+    fn calculate_color_hue_wraps_like_the_cpp_fmod() {
+        // C++ `std::fmod(hue + hueShift, 360.f) / 360.f` — pinned per the
+        // 04b parity ruling (the pre-04b port emulated it as
+        // `total - total/360.0*360.0`, which collapsed every hue in
+        // [0, 720) to ~0 and froze dynamic colours near red).
+        let cases: [(f32, f32, f32); 6] = [
+            (90.0, 0.0, 90.0 / 360.0),   // 0.25
+            (120.0, 0.0, 120.0 / 360.0), // 1/3
+            (270.0, 0.0, 270.0 / 360.0), // 0.75
+            (451.0, 0.0, 91.0 / 360.0),  // wraps once: fmod(451, 360) = 91
+            (350.0, 30.0, 20.0 / 360.0), // the hueShift pushes over the wrap
+            (-90.0, 0.0, -90.0 / 360.0), // fmod keeps the dividend's sign
+        ];
+        for (current_hue, hue_shift, expected) in cases {
+            let obj: Obj = serde_json::from_str(&format!(
+                r#"{{"main": {{"main": true, "dynamic": true, "hue_shift": {hue_shift}, "value": [0, 0, 0, 255]}}}}"#
+            ))
+            .unwrap();
+            let mut s = StyleData::from_json(&obj).unwrap();
+            s.current_hue = current_hue;
+            s.compute_colors();
+            assert_eq!(
+                *s.get_main_color(),
+                get_color_from_hue(expected),
+                "hue {current_hue} + shift {hue_shift} must wrap like C++ fmod"
+            );
+        }
     }
 
     #[test]

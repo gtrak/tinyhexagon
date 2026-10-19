@@ -366,7 +366,7 @@ re-reading the whole history.
   name the removed `oh_steam::SteamManager`), and stale replay/PB/steam doc
   references (`mustShowReplayUI`, `drawTextMessagePBImpl`, the 02c1 `mFT`
   note, etc.).
-- No commit made (orchestrator commits).
+- Committed by the orchestrator after the forked PASS.
 
 ### 02 — crate removal / engine de-scope (02c1/02c2/02c3 LANDED)
 
@@ -444,15 +444,32 @@ re-reading the whole history.
   wall + `flash_effect = max(·, 120.0)`; see the §04a log entry.
 - `set_difficulty_mult` range: `clamp(0.1, 4.0)` on the shared
   `difficultyMult` (all existing speed/delay/style paths read it).
-- `apply_music_beat` / `StyleData::apply_beat_hue`: (04b)
-- `DrawOptions` shape: (04b)
+- `apply_music_beat` (final, 04b): `HexagonGame::apply_music_beat(
+  beat_phase: f32, bar_phase: f32, energy: f32, base_hue: f32)` — stores
+  `EngineState.beat_hue: Option<f32>` / `beat_energy` (±1.5° deterministic
+  shimmer on the beat/bar sines over the app's base hue), sets
+  `status.beat_pulse = energy` + re-arms `beat_pulse_delay`; applied to
+  the style in `update` AFTER `style_data.update(...)` (same frame);
+  `status.pulse` (simulation/RNG) untouched. `StyleData::apply_beat_hue(
+  f32)` / `apply_beat_pulse(f32)` (clamp to the style's hue/pulse ranges,
+  unordered-bounds clamp safe for wrapping styles, `compute_colors`
+  inside). See §04b.
+- `DrawOptions` shape (final, 04b): `th_render::graphics::DrawOptions
+  { show_text, show_level_info, show_key_icons, show_fps: bool }`
+  (`Clone, Copy, Debug, PartialEq, Eq`; `Default` = all true = the legacy
+  rendering). `FrameInput.draw_options` gates the draw-side passes in
+  `draw_frame`; `AppDraw::set_draw_options` + the update-side
+  `update_key_icons` / `update_level_info` / `update_text_sizes` gates
+  live in the `th-app` bridge. The kid app (07) sets all false. See §04b.
 - Wall-gap API: `WallGap { center_angle, half_width_angle, radius }` +
   pure `compute_wall_gaps(&[CWall])` (`th-game::wall`, crate-root
   re-export) + `HexagonGame::wall_gaps()` /
   `nearest_gap_angle(player_angle) -> Option<f32>`; see §04a.
 - Tests added: `tests/soft_collisions.rs` (9) + `tests/wall_gaps.rs`
   (9); 509 → 527 passed (04a; the 1 ignored is the pre-existing th-lua
-  sandbox doc-test).
+  sandbox doc-test). 04b added 12 more (→ 539): `tests/music_beat.rs`
+  (4), `th-data` style beat/fmod (4), `th-render` draw_options (3),
+  `th-app` bridge plumbing (1).
 
 ### 04a — engine kid mechanics (LANDED)
 
@@ -503,7 +520,7 @@ re-reading the whole history.
   green: 62 suites, 527 passed / 0 failed / 1 ignored (baseline at
   `5740e9bc` measured in a temp worktree: 509 — the delta is exactly
   the 18 new tests).
-- No commit made (orchestrator commits).
+- Committed by the orchestrator after the forked PASS.
 - For 04b: `status.pulse` / `beat_pulse` stay engine-driven (the kid
   beat API is additive — do not rewrite the pulse path); `DrawOptions`
   gating lives in the th-app bridge / th-render — 04a touched no
@@ -513,6 +530,90 @@ re-reading the whole history.
   `nearest_gap_angle(get_player_angle())` (or widest of `wall_gaps()`);
   drive the stage arc with live `set_difficulty_mult` (engine clamps
   0.1..=4.0, the app owns the 0.55..1.15 arc).
+
+### 04b — beat palette/pulse + DrawOptions (LANDED)
+
+- Beat API (final): see the §04 bullets. Application point: `update.rs`,
+  directly after the `style_data.update(m_ft, dm.powf(0.8))` block
+  (non-B&W half) and before `update_player_position` — the beat's
+  `compute_colors` runs in the SAME frame. `EngineState.beat_hue` /
+  `beat_energy` init `None` / `0.0` (constructor + the `lua_console.rs`
+  test stand-in). Shimmer: `±BEAT_HUE_SHIMMER_DEG` (1.5°, two half-
+  amplitude sines on `beat_phase·TAU` / `bar_phase·TAU`; phase 0 ⇒ 0).
+  `status.beat_pulse_delay` is re-armed to
+  `max(·, levelStatus.beatPulseDelayMax)` so the engine's own beat-pulse
+  retrigger doesn't clobber the synth value; stop calling and the engine
+  animation takes over.
+- **Intentional C++-parity fix (supervisor ruling A)**: 
+  `StyleData::calculate_color`'s fmod emulation was fixed from
+  `total - total/360.0*360.0` (collapsed every hue in [0, ~720°) to ~0 —
+  dynamic style colours were frozen near red; the beat palette would
+  have been visually inert) to `total - (total/360.0).trunc()*360.0`
+  (true `std::fmod`, keeps the dividend's sign). Dynamic style colours
+  now animate through the hue range as the C++ intended; the frozen-red
+  behaviour was the bug. Pinned by
+  `calculate_color_hue_wraps_like_the_cpp_fmod` (90→0.25, 120→1/3,
+  270→0.75, 451→91/360, 350+shift30→20/360, −90→−0.25). Nothing pinned
+  the old behaviour. LATER-ISSUE CONSEQUENCE: 06 (tiny pack) styles can
+  rely on dynamic colours + the beat hue actually reaching the screen;
+  05/07 golden-frame expectations must use the animated (C++-correct)
+  palette, not the frozen-red one.
+- `DrawOptions` (final): see the §04 bullets. Gating: `draw_frame` skips
+  `text_draw::draw_text` when `!show_text`; key icons / level info are
+  AND-gated with `Config` + the option; `show_fps` ANDs with
+  `Config::getShowFPS()` inside `draw_text_time_and_status` (new `show_fps
+  : bool` parameter on `draw_text` / `draw_text_time_and_status` — the
+  only call site is `draw_frame`). Background / walls / player /
+  particles / flash are NEVER gated. Bridge: `AppDraw.draw_options`
+  (private, default) + `set_draw_options` / `draw_options()`; the
+  update-side `update_key_icons` / `update_level_info` / `update_text_
+  sizes` calls are AND-gated too.
+- Review P2 handoffs:
+  - 06: `clamp_range` treats a reversed range (300/30) as the numeric
+    [30,300], not the wrap arc [300,360]∪[0,30]; use normal `hue_min <
+    hue_max` styles or add a true wrap clamp.
+  - 07: `beat_hue` is never cleared, so the style hue stays at the last
+    beat unless the app calls `apply_music_beat` every frame; either call
+    every frame or add a `clear_music_beat`.
+  - The beat block sits outside the `!black_and_white` style-update
+    branch, so B&W recomputes beat colours while the style animation is
+    skipped; inert for the kid config (B&W false), but guard or document.
+  - 04a soft burst remains the flash+bump (no reusable burst helper); the
+    custom-wall push limitation is recorded; no 04a mechanics changed.
+- 04a P2 outcomes: (1) the DELAY consumer is asserted in
+  `set_difficulty_mult_writes_the_shared_mult` (`get_delay_mult_dm()`,
+  `delayMult / dm^0.10`, delayMax-capped when `hasDelayMaxLimit`); (2)
+  SOFT WALL BURST: the death path has NO reusable wall-burst particle
+  helper (the only burst spawners are the swap-specific
+  `SwapParticleSpawnInfo` bursts; PB-star is a dead surface since 02c1)
+  ⇒ the engine's soft-collision visual IS the flash (120) + bump serial;
+  the app's SFX / slow-motion lands in 07 — no new particle system;
+  (3) SOFT CUSTOM-WALL PUSH: `handle_collision`'s push still runs
+  before the kill (single 3-phase push-then-report algorithm; no
+  kill-before-push path on the manager) — the tiny pack (06) should not
+  use custom walls.
+- RNG / order: unchanged. The beat block in `update.rs` is additive +
+  inert without a beat; `apply_music_beat` / `apply_beat_*` draw no game
+  RNG; `status.pulse` (the RNG feed) is bit-identical with/without the
+  beat (pinned by twin-engine `engine_state()` + `status.pulse` compare).
+  The non-soft collision path is byte-identical. Only legacy-observable
+  change: the fmod parity fix above.
+- Tests: 12 new (see §04). `cargo test -p th-game soft_collisions` (the
+  04b spec's verification filter) matches ZERO test names (the 04a tests
+  are `soft_collision_*`; file is `soft_collisions.rs`) — use
+  `--test soft_collisions` (9/9). Gate 4/4 green: 539 passed / 0 failed /
+  1 ignored (04a baseline 527 — delta exactly the 12 new tests).
+- Committed by the orchestrator after the forked PASS.
+- For 05 (synth): drive `apply_music_beat(beat_phase, bar_phase, energy,
+  base_hue)` once per frame from the synth's beat/bar clocks (phases in
+  `[0, 1)`); `base_hue` = the stage hue the app owns; read
+  `status.beat_pulse` back if you need the engine-side mirror.
+- For 07 (tiny runtime): call `AppDraw::set_draw_options(DrawOptions {
+  show_text: false, show_level_info: false, show_key_icons: false,
+  show_fps: false })` once after composition (default stays the legacy
+  rendering for the classic path); `bump_serial()` deltas drive
+  slow-motion / SFX / the synth duck (05); the soft-collision flash (120)
+  is the only engine-side bump visual.
 
 ### 05 — synth (pending)
 
