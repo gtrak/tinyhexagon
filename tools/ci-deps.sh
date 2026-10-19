@@ -37,15 +37,15 @@
 #                      NOT on the ubuntu-latest image.
 #   * libgl1-mesa-dri — the Mesa software GL driver (llvmpipe) Xvfb needs
 #                      to actually create a GL context for the windowed
-#                      smoke's `[oh-render] context GL_SAMPLES`
+#                      smoke's `[th-render] context GL_SAMPLES`
 #                      assertion. NOT on the ubuntu-latest image.
 #   * libegl1 + libegl-mesa0 — the EGL loader + vendor library. The
 #                      desktop GL path is EGL (glutin's
-#                      DisplayApiPreference::Egl, crates/oh-render/src/gl.rs),
+#                      DisplayApiPreference::Egl, crates/th-render/src/gl.rs),
 #                      and libgl1-mesa-dri alone provides no libEGL at all:
 #                      without it, window creation fails,
 #                      GlBackend::try_create returns None, and the windowed
-#                      smoke's `[oh-render] context GL_SAMPLES` assertion
+#                      smoke's `[th-render] context GL_SAMPLES` assertion
 #                      can't be reached. NOT on the ubuntu-latest image.
 #   * libxkbcommon-dev, libxkbcommon-x11-dev, libx11-dev, libxcursor-dev,
 #     libxrandr-dev, libxi-dev — winit's X11 backend loads these via

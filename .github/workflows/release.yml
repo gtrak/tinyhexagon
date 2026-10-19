@@ -13,10 +13,10 @@ name: Release
 #   gate     -> the port's own gate (tools/gate.sh on ubuntu — the same
 #               gate ci.yml's gate job runs) so a release can only be cut
 #               from a green tree
-#   linux    -> bash tools/package.sh            -> open-hexagon-<tag>-linux-x86_64.tar.gz
-#   windows  -> bash tools/package.sh --windows  -> open-hexagon-<tag>-windows-x86_64.zip
-#   android  -> bash tools/package-android.sh    -> open-hexagon-<tag>-android-arm64-v8a.apk
-#   wasm     -> bash tools/package-web.sh  -> open-hexagon-<tag>-web.zip
+#   linux    -> bash tools/package.sh            -> tinyhexagon-<tag>-linux-x86_64.tar.gz
+#   windows  -> bash tools/package.sh --windows  -> tinyhexagon-<tag>-windows-x86_64.zip
+#   android  -> bash tools/package-android.sh    -> tinyhexagon-<tag>-android-arm64-v8a.apk
+#   wasm     -> bash tools/package-web.sh  -> tinyhexagon-<tag>-web.zip
 #   release  -> (tag pushes only) the GitHub Release with all four
 #               artifacts + generated notes
 #   gh-pages -> (tag pushes only) the wasm page + artifacts deployed
@@ -77,7 +77,7 @@ name: Release
 # GH-PAGES OPERATOR-SIDE SETTING (cannot be set from this file):
 #   Settings -> Pages -> Build and deployment -> Source: "Deploy a
 #   branch", Branch: `gh-pages`, folder: / (root). The game is served
-#   from https://gtrak.github.io/SSVOpenHexagon/ — the page and its
+#   from https://gtrak.github.io/tinyhexagon/ — the page and its
 #   wasm/data artifacts live in the SAME directory (inline, no external
 #   CDN). The page is LIVE (the operator flipped it — lane 058 measured
 #   HTTP 200 on the project URL); a re-pairing to a wrong source (e.g.
@@ -166,14 +166,14 @@ jobs:
 
       - name: Tar the staged _RELEASE (binary alongside the data, the C++ layout)
         run: |
-          tar czf "open-hexagon-${ASSET_TAG}-linux-x86_64.tar.gz" \
+          tar czf "tinyhexagon-${ASSET_TAG}-linux-x86_64.tar.gz" \
             -C target/package/linux-x86_64-unknown-linux-gnu _RELEASE
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: open-hexagon-${{ env.ASSET_TAG }}-linux-x86_64.tar.gz
-          path: open-hexagon-${{ env.ASSET_TAG }}-linux-x86_64.tar.gz
+          name: tinyhexagon-${{ env.ASSET_TAG }}-linux-x86_64.tar.gz
+          path: tinyhexagon-${{ env.ASSET_TAG }}-linux-x86_64.tar.gz
           # 045 — a missing artifact is a FAILED job, not a green job with
           # a warning (see the windows job's note).
           if-no-files-found: error
@@ -215,13 +215,13 @@ jobs:
         # warned — silently, at the v4 default if-no-files-found: warn).
         run: |
           cd target/package/windows-x86_64-pc-windows-gnu
-          zip -qr "../../../open-hexagon-${ASSET_TAG}-windows-x86_64.zip" _RELEASE
+          zip -qr "../../../tinyhexagon-${ASSET_TAG}-windows-x86_64.zip" _RELEASE
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: open-hexagon-${{ env.ASSET_TAG }}-windows-x86_64.zip
-          path: open-hexagon-${{ env.ASSET_TAG }}-windows-x86_64.zip
+          name: tinyhexagon-${{ env.ASSET_TAG }}-windows-x86_64.zip
+          path: tinyhexagon-${{ env.ASSET_TAG }}-windows-x86_64.zip
           # 045 — a missing artifact is a FAILED job, not a green job
           # with a warning (the v4 default `warn` is how run 39105852798
           # shipped a green matrix with no windows artifact).
@@ -265,13 +265,13 @@ jobs:
 
       - name: Rename + upload
         run: |
-          APK="$(find target -name open-hexagon.apk | head -n1)"
-          [ -n "$APK" ] || { echo "open-hexagon.apk not found under target/" >&2; exit 1; }
-          cp "$APK" "open-hexagon-${ASSET_TAG}-android-arm64-v8a.apk"
+          APK="$(find target -name tinyhexagon.apk | head -n1)"
+          [ -n "$APK" ] || { echo "tinyhexagon.apk not found under target/" >&2; exit 1; }
+          cp "$APK" "tinyhexagon-${ASSET_TAG}-android-arm64-v8a.apk"
       - uses: actions/upload-artifact@v4
         with:
-          name: open-hexagon-${{ env.ASSET_TAG }}-android-arm64-v8a.apk
-          path: open-hexagon-${{ env.ASSET_TAG }}-android-arm64-v8a.apk
+          name: tinyhexagon-${{ env.ASSET_TAG }}-android-arm64-v8a.apk
+          path: tinyhexagon-${{ env.ASSET_TAG }}-android-arm64-v8a.apk
           # 045 — a missing artifact is a FAILED job, not a green job with
           # a warning (see the windows job's note).
           if-no-files-found: error
@@ -317,13 +317,13 @@ jobs:
         run: bash tools/package-web.sh
 
       - name: Rename the zip with the tag
-        run: cp target/package/web/open-hexagon-web.zip "open-hexagon-${ASSET_TAG}-web.zip"
+        run: cp target/package/web/tinyhexagon-web.zip "tinyhexagon-${ASSET_TAG}-web.zip"
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: open-hexagon-${{ env.ASSET_TAG }}-web.zip
-          path: open-hexagon-${{ env.ASSET_TAG }}-web.zip
+          name: tinyhexagon-${{ env.ASSET_TAG }}-web.zip
+          path: tinyhexagon-${{ env.ASSET_TAG }}-web.zip
           # 045 — a missing artifact is a FAILED job, not a green job with
           # a warning (see the windows job's note).
           if-no-files-found: error
@@ -347,25 +347,25 @@ jobs:
       - name: Collect the linux artifact
         uses: actions/download-artifact@v4
         with:
-          name: open-hexagon-${{ env.ASSET_TAG }}-linux-x86_64.tar.gz
+          name: tinyhexagon-${{ env.ASSET_TAG }}-linux-x86_64.tar.gz
           path: release-assets
 
       - name: Collect the windows artifact
         uses: actions/download-artifact@v4
         with:
-          name: open-hexagon-${{ env.ASSET_TAG }}-windows-x86_64.zip
+          name: tinyhexagon-${{ env.ASSET_TAG }}-windows-x86_64.zip
           path: release-assets
 
       - name: Collect the android artifact
         uses: actions/download-artifact@v4
         with:
-          name: open-hexagon-${{ env.ASSET_TAG }}-android-arm64-v8a.apk
+          name: tinyhexagon-${{ env.ASSET_TAG }}-android-arm64-v8a.apk
           path: release-assets
 
       - name: Collect the web artifact
         uses: actions/download-artifact@v4
         with:
-          name: open-hexagon-${{ env.ASSET_TAG }}-web.zip
+          name: tinyhexagon-${{ env.ASSET_TAG }}-web.zip
           path: release-assets
 
       - name: Create the GitHub Release (generated notes + all four artifacts)
@@ -373,10 +373,10 @@ jobs:
         with:
           tag_name: ${{ env.ASSET_TAG }}
           files: |
-            release-assets/open-hexagon-${{ env.ASSET_TAG }}-linux-x86_64.tar.gz
-            release-assets/open-hexagon-${{ env.ASSET_TAG }}-windows-x86_64.zip
-            release-assets/open-hexagon-${{ env.ASSET_TAG }}-android-arm64-v8a.apk
-            release-assets/open-hexagon-${{ env.ASSET_TAG }}-web.zip
+            release-assets/tinyhexagon-${{ env.ASSET_TAG }}-linux-x86_64.tar.gz
+            release-assets/tinyhexagon-${{ env.ASSET_TAG }}-windows-x86_64.zip
+            release-assets/tinyhexagon-${{ env.ASSET_TAG }}-android-arm64-v8a.apk
+            release-assets/tinyhexagon-${{ env.ASSET_TAG }}-web.zip
           generate_release_notes: true
 
   gh-pages:
@@ -403,20 +403,20 @@ jobs:
       - name: Download the web artifact
         uses: actions/download-artifact@v4
         with:
-          name: open-hexagon-${{ env.ASSET_TAG }}-web.zip
+          name: tinyhexagon-${{ env.ASSET_TAG }}-web.zip
           path: web-zip
 
       - name: Unpack the serve directory (the page + the wasm + the data, same directory)
         run: |
           mkdir web-publish
-          unzip -q "web-zip/open-hexagon-${ASSET_TAG}-web.zip" -d web-publish
+          unzip -q "web-zip/tinyhexagon-${ASSET_TAG}-web.zip" -d web-publish
           ls -l web-publish
 
       - name: Deploy to the gh-pages branch
         # Tag pushes only — a workflow_dispatch dry-run must not overwrite
         # the live page. The page + its artifacts land in the SAME
         # directory at the gh-pages branch root, so
-        # https://gtrak.github.io/SSVOpenHexagon/ serves the game with no
+        # https://gtrak.github.io/tinyhexagon/ serves the game with no
         # external CDN. OPERATOR-SIDE: Settings -> Pages -> Source =
         # "Deploy a branch", branch `gh-pages`, folder / (root) (see the
         # file header).

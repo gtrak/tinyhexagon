@@ -22,7 +22,7 @@ name: CI
 #                   is the only place it was visible). Never drop this
 #                   job.
 #   android       — the fast android-target check (tools/check-android.sh:
-#                   cargo check -p oh-app --target aarch64-linux-android,
+#                   cargo check -p th-app --target aarch64-linux-android,
 #                   the NDK r27c pin). The slow, signing-dependent release
 #                   APK (tools/package-android.sh) is a RELEASE-workflow
 #                   job, not a per-push one.
@@ -34,7 +34,7 @@ name: CI
 #                   the staged _WEB directory to the pages job (artifact).
 #   pages         — Issue 040 — the CONTINUOUS gh-pages deploy: every push
 #                   to the default branch publishes the wasm build, so
-#                   https://gtrak.github.io/SSVOpenHexagon/ always
+#                   https://gtrak.github.io/tinyhexagon/ always
 #                   reflects master. Gated to default-branch pushes of
 #                   this repo only — never PRs (event = pull_request),
 #                   never tag pushes (ref = refs/tags/...), never forks
@@ -133,7 +133,7 @@ jobs:
       # the fast cross signal (incl. the libsodium cross-prebuild; see the
       # script). --all-targets (the script's own flag): the LIB targets alone
       # miss the test-only platform code — issue 044's windows-msvc leg died
-      # on `std::os::unix::fs::symlink` in oh-app's TEST targets (E0433),
+      # on `std::os::unix::fs::symlink` in th-app's TEST targets (E0433),
       # invisible to the lib-only check. The Windows-target regression
       # catcher — never drop this job (see the file header).
       - name: Cross check
@@ -191,7 +191,7 @@ jobs:
       # branch pushes to THIS repo only — the pages job is gated by the
       # same predicate, so a fork's push can neither stage nor publish.
       - name: Upload the staged serve directory (default-branch pushes only)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master' && github.repository == 'gtrak/SSVOpenHexagon'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master' && github.repository == 'gtrak/tinyhexagon'
         uses: actions/upload-artifact@v4
         with:
           name: web-publish
@@ -209,7 +209,7 @@ jobs:
     # predicate, so the repo check makes the exclusion explicit; the fork
     # run's GITHUB_TOKEN could only ever write the fork, but this also
     # keeps forks from burning a build).
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master' && github.repository == 'gtrak/SSVOpenHexagon'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master' && github.repository == 'gtrak/tinyhexagon'
     # Serialize with release.yml's gh-pages job (the other publisher of
     # this branch — tag pushes): queue, never cancel, never race.
     concurrency:
@@ -229,17 +229,17 @@ jobs:
           path: web-publish
 
       - name: Deploy to the gh-pages branch
-        # The staged _WEB contents — page + oh-web.js + oh_web.wasm +
-        # oh_web.data in ONE directory (the inline-deploy contract the
+        # The staged _WEB contents — page + tinyhexagon.js + tinyhexagon.wasm +
+        # tinyhexagon.data in ONE directory (the inline-deploy contract the
         # zip-root layout serves) — land at the gh-pages branch root.
-        # The page's asset references are RELATIVE ("./oh-web.js"; the
-        # loader finds oh_web.wasm / oh_web.data beside it), which is
-        # what makes the PROJECT subpath gtrak.github.io/SSVOpenHexagon/
+        # The page's asset references are RELATIVE ("./tinyhexagon.js"; the
+        # loader finds tinyhexagon.wasm / tinyhexagon.data beside it), which is
+        # what makes the PROJECT subpath gtrak.github.io/tinyhexagon/
         # resolve — do not "fix" them into absolute paths.
         # OPERATOR-SIDE (the workflow cannot set it): Settings -> Pages
         # -> Source = "Deploy a branch", branch gh-pages, folder /
         # (root). The page is LIVE (the operator flipped it — lane 058
-        # measured HTTP 200 on gtrak.github.io/SSVOpenHexagon/); if it is
+        # measured HTTP 200 on gtrak.github.io/tinyhexagon/); if it is
         # ever re-paired to a wrong source (e.g. "GitHub Actions"), the
         # failure is a SILENT 404, so keep this note with the deploy.
         uses: peaceiris/actions-gh-pages@v4

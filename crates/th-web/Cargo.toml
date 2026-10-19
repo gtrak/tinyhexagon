@@ -1,0 +1,18 @@
+[package]
+name = "th-web"
+description = "The emscripten (web) entry crate (plan 002): stubbed by issue 02a (the adult web boot retired with th-app's windowed front-end) — a no-op main keeps the host workspace green; Issue 08 lands the real web entry (the tiny runtime's request_animation_frame loop + the emscripten target dependencies)"
+version.workspace = true
+edition.workspace = true
+
+# The bin name is the ARTIFACT name (plan 002 issue 03): the emscripten
+# build's outputs are tinyhexagon.js / tinyhexagon.wasm (the loader +
+# wasm) + tinyhexagon.data (the preloaded _RELEASE tree) — the page and
+# tools/package-web.sh stage those names.
+[[bin]]
+name = "tinyhexagon"
+path = "src/main.rs"
+
+# Issue 02a: the emscripten target dependencies (th-app / th-game /
+# wasm-bindgen / js-sys / web-sys — the adult W5 boot's stack) were
+# removed with the stub; Issue 08 re-adds the real ones for the tiny
+# runtime's web entry.

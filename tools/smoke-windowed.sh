@@ -6,7 +6,7 @@
 # because the desktop-mode winit probe consumed the process's single
 # `EventLoop`. The existing packaging smoke (tools/package.sh) only runs
 # `-headless`, so it never caught that. This smoke boots the game WINDOWED
-# and proves: a real GL context comes up (the `[oh-render] context
+# and proves: a real GL context comes up (the `[th-render] context
 # GL_SAMPLES` line), the client does NOT fall back to the one-frame
 # headless path (no `[::mainClient] Finished`), and the client is still in
 # its frame loop when the timeout fires (exit 124).
@@ -81,7 +81,7 @@ fi
 # ---------------------------------------------------------------------
 # The sandbox: a throwaway copy of the tracked _RELEASE + the binary.
 # ---------------------------------------------------------------------
-SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/oh-windowed-smoke.XXXXXX")"
+SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/th-windowed-smoke.XXXXXX")"
 # Guard: an unchecked mktemp under `set -u` (no -e) that fails would leave
 # $SANDBOX empty and make the next `cp -R _RELEASE/. "$SANDBOX/"` target an
 # empty path (i.e. copy into the CWD's parent — potentially `/`).
@@ -122,8 +122,8 @@ run_sandbox() {
 check_boot() {
     local label="$1" out="$2" err="$3" rc="$4"
     local fails=()
-    if ! grep -q '\[oh-render\] context GL_SAMPLES' "$err"; then
-        fails+=("no '[oh-render] context GL_SAMPLES' line in stderr (no real GL context was created)")
+    if ! grep -q '\[th-render\] context GL_SAMPLES' "$err"; then
+        fails+=("no '[th-render] context GL_SAMPLES' line in stderr (no real GL context was created)")
     fi
     if grep -q '\[::mainClient\] Finished' "$out" || grep -q '\[::mainClient\] Finished' "$err"; then
         fails+=("the one-frame headless fallback '[::mainClient] Finished' appeared (the window degraded headless)")
@@ -141,14 +141,14 @@ check_boot() {
 }
 
 # ---------------------------------------------------------------------
-# Phase A — the probe child: `--oh-desktop-mode-probe` must exit 0 and
+# Phase A — the probe child: `--th-desktop-mode-probe` must exit 0 and
 # print a parseable `OH_DESKTOP_MODE=WxH` to stdout. BOTH dimensions must
 # be > 0: the probe's `0x0` is its display-query FAILURE fallback (no
 # usable display), so it must NOT pass as a valid mode.
 # ---------------------------------------------------------------------
 A_OUT="$SANDBOX/.smoke-a.out"
 A_ERR="$SANDBOX/.smoke-a.err"
-run_sandbox "$A_OUT" "$A_ERR" "$TIMEOUT_A" --oh-desktop-mode-probe
+run_sandbox "$A_OUT" "$A_ERR" "$TIMEOUT_A" --th-desktop-mode-probe
 probe_rc=$?
 [ "$probe_rc" -eq 0 ] || die "phase A (probe child): exit $probe_rc (expected 0)" "$A_OUT" "$A_ERR"
 grep -Eq 'OH_DESKTOP_MODE=[1-9][0-9]*x[1-9][0-9]*' "$A_OUT" \

@@ -27,9 +27,9 @@
 #   - `PATH=/home/gary/.cargo/bin` — cargo itself (the image has none),
 #     and wasm-bindgen (the `-sWASM_BINDGEN` link runs the CLI).
 #
-# Output: /work/target/wasm32-unknown-emscripten/release/{oh-web.js,
-# oh_web.wasm, deps/oh_web.data} — the three artifacts the page
-# (crates/oh-web/site/index.html + tools/package-web.sh's staging)
+# Output: /work/target/wasm32-unknown-emscripten/release/{tinyhexagon.js,
+# tinyhexagon.wasm, deps/tinyhexagon.data} — the three artifacts the page
+# (crates/th-web/site/index.html + tools/package-web.sh's staging)
 # loads in one directory.
 set -euo pipefail
 export PATH=/home/gary/.cargo/bin:$PATH
@@ -38,4 +38,4 @@ export CARGO_TARGET_DIR=/work/target
 export CARGO_PROFILE_DEV_DEBUG=0
 export CARGO_PROFILE_DEV_INCREMENTAL=false
 export CXXFLAGS_wasm32_unknown_emscripten=-fwasm-exceptions
-timeout 5400 cargo build --release -p oh-web --target wasm32-unknown-emscripten
+timeout 5400 cargo build --release -p th-web --target wasm32-unknown-emscripten

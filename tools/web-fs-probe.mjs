@@ -46,13 +46,13 @@
 //     the operator's "stay present"; top below the band's 76-real-px
 //     bottom edge — the no-swallow proof).
 //   --wiring           — the issue 055 item-2 desync proof: the synthetic
-//     `#fs.click()` (the 046's wiring evidence — the `[oh-web-fs]
+//     `#fs.click()` (the 046's wiring evidence — the `[th-web-fs]
 //     fullscreen -> true (browser: requestFullscreen() called …)` line),
 //     then — WHEN the headless CDP grants the transient user activation
 //     (046's observed run-dependent grant) — a REAL CDP `Escape` keypress
 //     (the EXTERNAL exit the game did not ask for — the operator's exact
 //     "the browser itself gets out of fullscreen") and the
-//     `[oh-web-fs] fullscreenchange -> false (config true -> false)` line
+//     `[th-web-fs] fullscreenchange -> false (config true -> false)` line
 //     (the config's re-sync from `document.fullscreenElement` — the
 //     desync's close: the next tap's direction is the browser's ACTUAL
 //     state, the config cannot outlive the browser's exit). When CDP
@@ -96,7 +96,7 @@ const BASE = { width: 390, height: 844, deviceScaleFactor: 3, mobile: true };
 
 const chrome = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${PORT}`, '--no-sandbox',
   '--disable-dev-shm-usage', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
-  '--window-size=1280,720', '--no-first-run', `--user-data-dir=/tmp/oh-web-fs-probe-profile-${process.pid}`, 'about:blank'],
+  '--window-size=1280,720', '--no-first-run', `--user-data-dir=/tmp/th-web-fs-probe-profile-${process.pid}`, 'about:blank'],
   { stdio: ['ignore', 'ignore', 'ignore'] });
 // The cleanup guarantee (the probe crashed once leaving its Chrome alive on
 // the shared CDP port — the next run then connected to the STALE browser:
@@ -366,8 +366,8 @@ if (wiring) {
   await sleep(400);
   const fsAfterClick = await evExpr(`return { element: !!document.fullscreenElement, enabled: document.fullscreenEnabled };`);
   console.log(`  [wiring] after click: fullscreenElement=${fsAfterClick.element} enabled=${fsAfterClick.enabled}`);
-  const clickLine = consoleLogs.filter((l) => /\[oh-web-fs\] fullscreen ->/.test(l)).pop();
-  console.log(`  [wiring] click line: ${clickLine || '(no [oh-web-fs] fullscreen -> line — the click did not reach the sink)'}`);
+  const clickLine = consoleLogs.filter((l) => /\[th-web-fs\] fullscreen ->/.test(l)).pop();
+  console.log(`  [wiring] click line: ${clickLine || '(no [th-web-fs] fullscreen -> line — the click did not reach the sink)'}`);
   if (fsAfterClick.element) {
     // The CDP GRANTED the transient user activation (046's observed
     // run-dependent grant) — a REAL fullscreen is on: the EXTERNAL exit
@@ -380,8 +380,8 @@ if (wiring) {
     await sleep(600);
     const fsAfterEsc = await evExpr(`return !!document.fullscreenElement;`);
     console.log(`  [wiring] after Esc: fullscreenElement=${fsAfterEsc}`);
-    const resyncLine = consoleLogs.filter((l) => /\[oh-web-fs\] fullscreenchange -> false \(config true -> false/.test(l)).pop();
-    console.log(`  [wiring] re-sync line: ${resyncLine || '(no [oh-web-fs] fullscreenchange -> false (config true -> false) line — the re-sync did not land)'}`);
+    const resyncLine = consoleLogs.filter((l) => /\[th-web-fs\] fullscreenchange -> false \(config true -> false/.test(l)).pop();
+    console.log(`  [wiring] re-sync line: ${resyncLine || '(no [th-web-fs] fullscreenchange -> false (config true -> false) line — the re-sync did not land)'}`);
     hitAllOk.push(Boolean(resyncLine) && fsAfterEsc === false);
   } else {
     // The CDP DENIED the activation (the `promise rejected` line — the
@@ -389,19 +389,19 @@ if (wiring) {
     // is the operator's tap on the phone. The wiring's proof here is the
     // click line alone (the API was called with the browser-state-derived
     // direction).
-    const rejectLine = consoleLogs.filter((l) => /\[oh-web-fs\] promise rejected/.test(l)).pop();
+    const rejectLine = consoleLogs.filter((l) => /\[th-web-fs\] promise rejected/.test(l)).pop();
     console.log(`  [wiring] (no fullscreen grant — headless CDP's honest limit; the operator's real tap grants it)`);
-    console.log(`  [wiring] rejection line: ${rejectLine || '(no [oh-web-fs] promise rejected line either — check the click line above)'}`);
+    console.log(`  [wiring] rejection line: ${rejectLine || '(no [th-web-fs] promise rejected line either — check the click line above)'}`);
   }
 }
 
-// The port's own account of the fullscreen wiring (the `[oh-web-fs]`'s
+// The port's own account of the fullscreen wiring (the `[th-web-fs]`'s
 // console-visible diagnostic lines — the Rust stdio's black hole, the
-// `oh-game` log sink's browser-console route).
-const fsLines = consoleLogs.filter((l) => /\[oh-web-fs\]/.test(l));
-console.log(`\nweb-fs-probe: [oh-web-fs] lines:`);
+// `th-game` log sink's browser-console route).
+const fsLines = consoleLogs.filter((l) => /\[th-web-fs\]/.test(l));
+console.log(`\nweb-fs-probe: [th-web-fs] lines:`);
 if (fsLines.length) { for (const l of fsLines) console.log(`    ${l}`); }
-else { console.log(`    (no [oh-web-fs] lines — the #fs wiring was not exercised in this run)`); }
+else { console.log(`    (no [th-web-fs] lines — the #fs wiring was not exercised in this run)`); }
 
 const hitOk = hitAllOk.length > 0 ? hitAllOk.every(Boolean) : true;
 if (hit) console.log(`web-fs-probe: hit-tests ${hitOk ? 'PASS' : 'FAIL'}`);

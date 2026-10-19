@@ -15,7 +15,7 @@
 # ---------------------------------------------------------------------
 # The tracked `_RELEASE/` is the C++ install root the C++ binary runs
 # from: the game data (`Assets/`, `Packs/`, `ConfigOverrides/`), the
-# game config (`config.json` — the 101-key file `oh-config` pins, issue
+# game config (`config.json` — the 101-key file `th-config` pins, issue
 # 04), the Steam/Discord natives (`steam_api64.dll`/`libsteam_api.so`,
 # `discord_game_sdk.dll`/`libdiscord_game_sdk.so`, the
 # `sdkencryptedappticket*` pair, `steam_appid.txt`), the Windows launch
@@ -32,12 +32,12 @@
 # the game binary(ies), the platform natives, and `steam_appid.txt` —
 # the binary in the same directory as the data. (`Profiles/` and
 # `Replays/` are runtime-created by the binary itself — main.cpp:275-276,
-# ported in oh-app/src/client.rs — so the package does not pre-create
+# ported in th-app/src/client.rs — so the package does not pre-create
 # them, exactly like the C++ prepared releases… which DO pre-create an
 # empty `Profiles/`; the difference is cosmetic: the binary creates the
 # folder on first run either way.)
 #
-# This script assembles the Rust equivalent — the `open-hexagon` binary
+# This script assembles the Rust equivalent — the `tinyhexagon` binary
 # alongside `Assets/`, `Packs/`, `ConfigOverrides/`, `config.json` — so
 # a player can drop the Rust binary into an existing C++ install's
 # `_RELEASE/` and run it unchanged (the contract's objective,
@@ -45,7 +45,7 @@
 #
 # Deviations from the C++ prepared releases (documented, deliberate):
 #   * NO Steam/Discord natives in the DEFAULT build — the default Rust
-#     build never links them (oh-app's `steam` feature is default-OFF,
+#     build never links them (th-app's `steam` feature is default-OFF,
 #     the C++ no-SDK build analogue, issue 20; the Rust Discord
 #     integration speaks the local-client IPC pipe, issue 21 — no DLL/
 #     .SO to bundle at all). `--with-steam` adds the Steam feature AND
@@ -62,7 +62,7 @@
 #   * NO `scores.json`/`users.json` seeds — user/leaderboard DATA the
 #     runtime manages (the C++ server DB is `ohdb.sqlite`, issue 17-18;
 #     the C++ prepared releases do not ship them either).
-#   * The full tracked `Packs/` ships (all 8 packs the oh-assets count
+#   * The full tracked `Packs/` ships (all 8 packs the th-assets count
 #     pins, issue 05); the C++ prepared releases curate 5 official
 #     packs (`prepare_release.sh:10-15`) — a curation choice, not a
 #     layout one; the extra packs are additive.
@@ -84,7 +84,7 @@
 # ---------------------------------------------------------------------
 # The smoke test (the packaged dir MUST be tested)
 # ---------------------------------------------------------------------
-# The headless_replay pattern (crates/oh-app/tests/headless_replay.rs):
+# The headless_replay pattern (crates/th-app/tests/headless_replay.rs):
 # the packaged binary is run headless in a SANDBOXED copy of the staged
 # `_RELEASE` (the binary writes `Profiles/`, `Replays/` and saves
 # `config.json` into its CWD on every run — main.cpp:275-291 — so it
@@ -94,7 +94,7 @@
 # `cube_1`/`apeirogon` (the exact ids the C++ test names — D-018),
 # generated once by the issue-24 lane and committed: the replay carries
 # its RNG seed (`replays always re-seed from the replay file's seed`,
-# oh-game/src/hexagon_game.rs:2554; `rng =
+# th-game/src/hexagon_game.rs:2554; `rng =
 # random_number_generator{activeReplay->replayFile._seed}` :777-783),
 # so the replayed score is ABSOLUTELY pinned — the verified value is
 # `Final time: 1.725` (stable across runs, release build; the D-018
@@ -140,13 +140,13 @@ done
 # ---------------------------------------------------------------------
 CARGO_FEATURES=()
 if [ "$WITH_STEAM" -eq 1 ]; then
-    CARGO_FEATURES=(--features oh-app/steam)
+    CARGO_FEATURES=(--features th-app/steam)
 fi
 
 if [ "$PLATFORM" = "linux" ]; then
     echo "== cargo build --workspace --release ${CARGO_FEATURES[*]:-}"
     cargo build --workspace --release "${CARGO_FEATURES[@]+"${CARGO_FEATURES[@]}"}"
-    BIN="target/release/open-hexagon"
+    BIN="target/release/tinyhexagon"
     PLATFORM_DIR="linux-$(rustc -vV | awk '/^host:/{print $2}')"
 else
     # The Windows cross build (issue 22's tools/build-windows.sh:
@@ -163,7 +163,7 @@ else
         exit 1
     fi
     bash tools/build-windows.sh --build --release
-    BIN="target/x86_64-pc-windows-gnu/release/open-hexagon.exe"
+    BIN="target/x86_64-pc-windows-gnu/release/tinyhexagon.exe"
     PLATFORM_DIR="windows-x86_64-pc-windows-gnu"
 fi
 
@@ -242,23 +242,23 @@ else
 fi
 if [ "$SKIP_SMOKE" -eq 0 ]; then
     [ -f "$FIXTURE" ] || { echo "error: fixture missing: $FIXTURE" >&2; exit 1; }
-    SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/oh-package-smoke.XXXXXX")"
+    SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/th-package-smoke.XXXXXX")"
     trap 'rm -rf "$SANDBOX"' EXIT
     # A SANDBOXED copy (module docs: the binary writes into its CWD —
     # the staged dir must stay pristine).
     cp -R "$STAGE/." "$SANDBOX/"
     cp "$FIXTURE" "$SANDBOX/cube_1_apeirogon.ohr.z"
 
-    echo "== smoke: ./open-hexagon -headless cube_1_apeirogon.ohr.z (in ${SANDBOX})"
+    echo "== smoke: ./tinyhexagon -headless cube_1_apeirogon.ohr.z (in ${SANDBOX})"
     SMOKE_RC=0
     # The C++ launcher pattern (run_ssvopenhexagon_linux.sh:
     # LD_LIBRARY_PATH=".") — needed iff the package carries the Steam
     # loader stub (the plain NEEDED entry does not search the binary's
     # own directory).
     if [ -f "$SANDBOX/libsteam_api.so" ]; then
-        SMOKE_OUT="$(cd "$SANDBOX" && LD_LIBRARY_PATH=. ./open-hexagon -headless cube_1_apeirogon.ohr.z 2>/dev/null)" || SMOKE_RC=$?
+        SMOKE_OUT="$(cd "$SANDBOX" && LD_LIBRARY_PATH=. ./tinyhexagon -headless cube_1_apeirogon.ohr.z 2>/dev/null)" || SMOKE_RC=$?
     else
-        SMOKE_OUT="$(cd "$SANDBOX" && ./open-hexagon -headless cube_1_apeirogon.ohr.z 2>/dev/null)" || SMOKE_RC=$?
+        SMOKE_OUT="$(cd "$SANDBOX" && ./tinyhexagon -headless cube_1_apeirogon.ohr.z 2>/dev/null)" || SMOKE_RC=$?
     fi
     if [ "$SMOKE_RC" -ne 0 ]; then
         echo "error: smoke test exit ${SMOKE_RC} (expected 0); output:" >&2

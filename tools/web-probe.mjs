@@ -8,7 +8,7 @@
 // error, and a screenshot.
 //
 //   node tools/web-probe.mjs http://127.0.0.1:8080/ 30            # boot, watch, screenshot
-//   node tools/web-probe.mjs https://gtrak.github.io/SSVOpenHexagon/ 45 --keys=Enter,s
+//   node tools/web-probe.mjs https://gtrak.github.io/tinyhexagon/ 45 --keys=Enter,s
 //   node tools/web-probe.mjs http://127.0.0.1:8080/ 60 --phone \
 //     --seq=Enter,Enter,i:046,C,Enter   # issue 046: the IME path — the boot
 //     screens' Enters reach the name entry (the `#ime` focus), `i:` is the
@@ -53,9 +53,9 @@
 //     verdict (a canvas contextmenu prevented + no #ime one).
 //
 // The port logs `status booted=…;exit_code=…;ticks=…;state=menu:<States|game>` through its
-// log_sink (oh-web installs a console.log sink), so the state timeline below is the port's own
+// log_sink (th-web installs a console.log sink), so the state timeline below is the port's own
 // account of itself — not an inference from pixels. issue 041 also surfaces the port's
-// `[oh-audio]` diagnostics (which world the web audio device is in + the unlock / first-play
+// `[th-audio]` diagnostics (which world the web audio device is in + the unlock / first-play
 // observables) and whether the headless CDP input granted user activation (the gate on the Web
 // Audio context running).
 //
@@ -145,7 +145,7 @@ const PORT = Number(process.env.OH_CDP_PORT || (10000 + (process.pid % 20000)));
 // NOT a page or port setting — a real browser / Android never needs it).
 const chrome = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${PORT}`, '--no-sandbox',
   '--disable-dev-shm-usage', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
-  `--window-size=${process.env.OH_WINDOW_SIZE || '1280,720'}`, '--no-first-run', `--user-data-dir=/tmp/oh-web-probe-profile-${process.pid}`, 'about:blank',
+  `--window-size=${process.env.OH_WINDOW_SIZE || '1280,720'}`, '--no-first-run', `--user-data-dir=/tmp/th-web-probe-profile-${process.pid}`, 'about:blank',
   ...(process.env.OH_CHROME_EXTRA ? process.env.OH_CHROME_EXTRA.split(';').map((a) => a.trim()).filter(Boolean) : [])],
   { stdio: ['ignore', 'ignore', 'ignore'] });
 // The Chrome's death on ANY probe exit (the lane-058 follow-up's
@@ -752,24 +752,24 @@ console.log(`\nweb-probe: ${url}`);
 console.log(`  booted        : ${boots.length ? 'yes' : 'NO'}  (${boots.length} status lines)`);
 console.log(`  last status   : ${lastStatus.slice(0, 120)}`);
 console.log(`  state timeline: ${states.length ? states.join(' -> ') : '(none)'}`);
-// issue 041 — surface the port's own [oh-audio] diagnostics (which world the
+// issue 041 — surface the port's own [th-audio] diagnostics (which world the
 // audio device is in + the unlock/first-play observables). These arrive as
 // console.log (the Rust stdio path is swallowed on the web), so they are in
 // `logs`, not the derived `state=` timeline above.
-const audioDiag = logs.filter((l) => /\[oh-audio\]/.test(l));
+const audioDiag = logs.filter((l) => /\[th-audio\]/.test(l));
 console.log(`  audio diagnostics:`);
 if (audioDiag.length) { for (const l of audioDiag) console.log(`    ${l}`); }
-else { console.log(`    (no [oh-audio] lines — the audio device did not log)`); }
+else { console.log(`    (no [th-audio] lines — the audio device did not log)`); }
 // issue 046 (F33) — the fullscreen button's wiring evidence (the
-// `[oh-web-fs]` line — the click sink's config toggle + the browser
+// `[th-web-fs]` line — the click sink's config toggle + the browser
 // Fullscreen API's verdict: a `requestFullscreen` needs a transient
 // user activation a CDP click cannot grant (the 041 audio twin), so a
 // headless run's EXPECTED outcome is the `rejected:` line — the
 // wiring's proof, the transition's the operator's real tap).
-const fsDiag = logs.filter((l) => /\[oh-web-fs\]/.test(l));
+const fsDiag = logs.filter((l) => /\[th-web-fs\]/.test(l));
 console.log(`  fullscreen wiring:`);
 if (fsDiag.length) { for (const l of fsDiag) console.log(`    ${l}`); }
-else { console.log(`    (no [oh-web-fs] line — the #fs click was not exercised in this run)`); }
+else { console.log(`    (no [th-web-fs] line — the #fs click was not exercised in this run)`); }
 console.log(`  user activation : ${userActivation
     ? 'yes — the headless input granted user activation (the AudioContext can run; audibility is real, not just scheduled)'
     : 'no — the headless input did NOT grant user activation (the AudioContext stays suspended; a real user gesture would resume it — headless cannot prove audibility)'}`);

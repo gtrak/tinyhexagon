@@ -1,6 +1,6 @@
 # Issue 03 — Rename `oh-` → `th-` and rename artifacts
 
-**Status:** PROPOSED
+**Status:** LANDED
 **Depends:** 02
 
 ## Objective

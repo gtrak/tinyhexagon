@@ -1,6 +1,6 @@
 # 002 — tinyhexagon
 
-Status: APPROVED (issues 000–001 and 02a–02c3 landed; upstream HWM dcd9fdeb synced 2026-10-19; Issue 03 next)
+Status: APPROVED (issues 000–001 and 02a–03 landed; upstream HWM dcd9fdeb synced 2026-10-19; Issue 04 next)
 Owner: operator; orchestrator: this session
 Plan file: `.agents/plans/002-tinyhexagon/PLAN.md`
 Issues: `00-*.md` … `09-*.md` in this folder
@@ -139,7 +139,7 @@ web `th-web` emscripten bin. All use the same `th-render`/`bridge` path.
 | 02c1 | Remove Steam/Discord/profiles/PB; remove `oh-discord` | 02b | LANDED |
 | 02c2 | Remove replay; remove `oh-replay`; bridge replay UI/tests | 02c1 | LANDED |
 | 02c3 | Remove parity fingerprint/RNG; remove `oh-render` replay/PB fields; final engine cleanup | 02c2 | LANDED |
-| 03 | Rename `oh-` → `th-`; rename artifacts | 02c3 | PROPOSED |
+| 03 | Rename `oh-` → `th-`; rename artifacts | 02c3 | LANDED |
 | 04 | Engine kid alterations (soft collision, difficulty, beat, text, gaps) | 03 | PROPOSED |
 | 05 | `th-synth` cross-target spike + music director | 03 | PROPOSED |
 | 06 | Tiny content pack (`_RELEASE/Packs/tiny`) | 03 | PROPOSED |

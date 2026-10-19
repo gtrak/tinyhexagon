@@ -3,12 +3,12 @@
 #
 # Builds the installable, bootable APK through cargo-apk (0.10):
 #   cargo apk build --release
-# reads the [package.metadata.android] in crates/oh-android/Cargo.toml
+# reads the [package.metadata.android] in crates/th-android/Cargo.toml
 # (the package id, the 28..34 SDK range, the fullscreen landscape
 # NativeActivity, the _RELEASE content as APK assets) and produces
-# `target/release/apk/open-hexagon.apk` (cargo-apk 0.10's layout)
+# `target/release/apk/tinyhexagon.apk` (cargo-apk 0.10's layout)
 # containing:
-#   lib/arm64-v8a/liboh_android.so   the android_main entry (D-026)
+#   lib/arm64-v8a/libth_android.so   the android_main entry (D-026)
 #   assets/Packs/..., assets/config.json, ...   the _RELEASE tree
 #                                               (the SG4 extraction source)
 #
@@ -93,9 +93,9 @@ export CARGO_APK_RELEASE_KEYSTORE_PASSWORD="$KEYSTORE_PASS"
 # (never mutating the tracked content) + the generated `.filelist` (one
 # assets-relative path per line) the extractor reads instead of the
 # unreliable AAssetManager_openDir("") root enumeration (module docs in
-# oh-app/src/android.rs::extract_content — the emulator caught openDir
+# th-app/src/android.rs::extract_content — the emulator caught openDir
 # returning an EMPTY root listing, a silent 0-file extraction).
-STAGE="target/oh-apk-assets"
+STAGE="target/th-apk-assets"
 rm -rf "$STAGE"
 mkdir -p "$STAGE"
 cp -a _RELEASE/. "$STAGE/"
@@ -119,7 +119,7 @@ export RUSTFLAGS="-C link-arg=-Wl,-z,max-page-size=16384"
 
 # ----------------------------------------------------------------------
 # The release APK. cargo-apk parses the CURRENT manifest for the
-# [package.metadata.android] table, so point it at the oh-android
+# [package.metadata.android] table, so point it at the th-android
 # package (the workspace root is a virtual manifest — cargo-apk 0.10
 # rejects it); the build stays in this workspace (the target dir, the
 # workspace manifest, the _RELEASE asset path all resolve from the
@@ -132,15 +132,15 @@ if [ -n "${OH_APK_TARGET:-}" ]; then
     TARGET_ARGS=(--target "$OH_APK_TARGET")
     echo "ABI override: $OH_APK_TARGET"
 fi
-cargo apk build --release --manifest-path crates/oh-android/Cargo.toml "${TARGET_ARGS[@]}"
+cargo apk build --release --manifest-path crates/th-android/Cargo.toml "${TARGET_ARGS[@]}"
 
 # ----------------------------------------------------------------------
 # The build-level verification (the 25b spec's acceptance surface).
 # cargo-apk 0.10's output: target/<profile>/apk/<apk_name>.apk (the
 # find below is layout-tolerant anyway).
-APK="$(find target -path "*/release/open-hexagon.apk" -o -path "*/apk/open-hexagon.apk" -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-)"
+APK="$(find target -path "*/release/tinyhexagon.apk" -o -path "*/apk/tinyhexagon.apk" -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-)"
 if [ -z "${APK:-}" ] || [ ! -f "$APK" ]; then
-    echo "open-hexagon.apk not found under target/ (the cargo-apk build output)" >&2
+    echo "tinyhexagon.apk not found under target/ (the cargo-apk build output)" >&2
     exit 1
 fi
 echo
@@ -176,8 +176,8 @@ fi
 # is 0x1000/4KB, which is NOT 16KB-page-ready).
 NDK_BIN="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin"
 rm -rf /tmp/cargo-apk-so-check
-unzip -o -j "$APK" "lib/arm64-v8a/liboh_android.so" -d /tmp/cargo-apk-so-check >/dev/null
-ALIGN="$(${NDK_BIN}/llvm-readelf -l /tmp/cargo-apk-so-check/liboh_android.so | grep LOAD | awk '{print $NF}' | sort -u)"
+unzip -o -j "$APK" "lib/arm64-v8a/libth_android.so" -d /tmp/cargo-apk-so-check >/dev/null
+ALIGN="$(${NDK_BIN}/llvm-readelf -l /tmp/cargo-apk-so-check/libth_android.so | grep LOAD | awk '{print $NF}' | sort -u)"
 echo "ELF LOAD alignment: $ALIGN"
 if [ "$ALIGN" != "0x4000" ]; then
     echo "UNEXPECTED: the .so is not 16KB-aligned (expected 0x4000, got $ALIGN)" >&2
@@ -187,9 +187,9 @@ rm -rf /tmp/cargo-apk-so-check
 
 # The android_main entry symbol must be exported (the NativeActivity's
 # dlsym target).
-unzip -p "$APK" "lib/arm64-v8a/liboh_android.so" > /tmp/cargo-apk-so-bin
+unzip -p "$APK" "lib/arm64-v8a/libth_android.so" > /tmp/cargo-apk-so-bin
 if ! ${NDK_BIN}/llvm-nm -D /tmp/cargo-apk-so-bin | grep -q " T android_main"; then
-    echo "UNEXPECTED: the android_main symbol is not exported from liboh_android.so" >&2
+    echo "UNEXPECTED: the android_main symbol is not exported from libth_android.so" >&2
     rm -f /tmp/cargo-apk-so-bin
     exit 1
 fi

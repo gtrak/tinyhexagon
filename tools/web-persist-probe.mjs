@@ -25,7 +25,7 @@
 //        `"auto_restart": true` are in the durable store, NOT just MEMFS.
 //
 //   PHASE 2 (Page.reload in the SAME tab — the MEMFS is re-preloaded from
-//   oh_web.data, i.e. the shipped _RELEASE content comes back FRESH; only
+//   tinyhexagon.data, i.e. the shipped _RELEASE content comes back FRESH; only
 //   IndexedDB survives):
 //     6. boot → LoadingScreen → (key) EpilepsyWarning → (key) the boot
 //        MUST land on menu:SLPSelectBoot (the profile list), NOT
@@ -36,7 +36,7 @@
 //        `"auto_restart": true` survived (the in-session change, saved by
 //        the pagehide glue).
 //
-//   node tools/web-persist-probe.mjs [site-dir]   # default: crates/oh-web/site
+//   node tools/web-persist-probe.mjs [site-dir]   # default: crates/th-web/site
 //
 // Exit: 0 only when every checkpoint passes; 1 otherwise. A checkpoint
 // failure prints what the probe observed (the status timeline + the
@@ -46,9 +46,9 @@ import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { writeFileSync, existsSync, rmSync } from 'node:fs';
 
-const siteDir = process.argv[2] || 'crates/oh-web/site';
-if (!existsSync(`${siteDir}/oh_web.wasm`)) {
-  console.error(`web-persist-probe: ${siteDir}/oh_web.wasm missing — build the wasm target first (the root .cargo/config.toml's [target.wasm32-unknown-emscripten] flags)`);
+const siteDir = process.argv[2] || 'crates/th-web/site';
+if (!existsSync(`${siteDir}/tinyhexagon.wasm`)) {
+  console.error(`web-persist-probe: ${siteDir}/tinyhexagon.wasm missing — build the wasm target first (the root .cargo/config.toml's [target.wasm32-unknown-emscripten] flags)`);
   process.exit(1);
 }
 
@@ -58,7 +58,7 @@ const CHROME = process.env.OH_CHROME
 if (!CHROME) { console.error('web-persist-probe: no chrome found; set OH_CHROME=/path/to/chrome'); process.exit(1); }
 const CDP_PORT = Number(process.env.OH_CDP_PORT || 9336);
 const HTTP_PORT = Number(process.env.OH_HTTP_PORT || 8766);
-const PROFILE_DIR = `/tmp/oh-web-persist-probe-${process.pid}`;
+const PROFILE_DIR = `/tmp/th-web-persist-probe-${process.pid}`;
 const SHOT_DIR = process.env.OH_PERSIST_SHOTS || '/tmp';
 rmSync(PROFILE_DIR, { recursive: true, force: true });
 
@@ -234,11 +234,11 @@ const check = (name, ok, detail) => {
   console.log(`  [${ok ? 'PASS' : 'FAIL'}] ${name}${detail ? ` — ${detail}` : ''}`);
 };
 // The known pre-existing console noise (NOT a gate for this lane): the
-// 041 oh-audio volume diagnostics — `eprintln!` at config-apply
-// (crates/oh-audio/src/audio.rs:398/:418), CDP-classified as console
+// 041 th-audio volume diagnostics — `eprintln!` at config-apply
+// (crates/th-audio/src/audio.rs:398/:418), CDP-classified as console
 // `error` type, present in EVERY web run (the 041 probe's own output
 // carries them).
-const knownNoise = (l) => /\[oh-audio\] set (sound|music) volume/.test(l);
+const knownNoise = (l) => /\[th-audio\] set (sound|music) volume/.test(l);
 
 console.log(`web-persist-probe: ${siteDir} → http://127.0.0.1:${HTTP_PORT}/ (chrome ${CHROME})`);
 
@@ -355,7 +355,7 @@ const persistOff = logs.filter((l) => /persistence OFF/.test(l));
 console.log(`\npersistence gate log : ${logs.filter((l) => /user data restored|persisted user data ready|persistence OFF|save_session/.test(l)).join(' | ') || '(none)'}`);
 const failed = results.filter((r) => !r.ok);
 const realErrors = errors.filter((e) => !knownNoise(e));
-console.log(`console errors        : ${realErrors.length ? realErrors.map((e) => e.slice(0, 160)).join(' | ') : 'none'}${errors.length ? ` (${errors.filter(knownNoise).length} known [oh-audio] volume diagnostics excluded)` : ''}`);
+console.log(`console errors        : ${realErrors.length ? realErrors.map((e) => e.slice(0, 160)).join(' | ') : 'none'}${errors.length ? ` (${errors.filter(knownNoise).length} known [th-audio] volume diagnostics excluded)` : ''}`);
 console.log(`\nweb-persist-probe: ${results.length - failed.length}/${results.length} checkpoints passed`);
 console.log(`  screenshots        : ${SHOT_DIR}/persist-mopts-gameplay.png, ${SHOT_DIR}/persist-reload-selectboot.png`);
 chrome.kill('SIGKILL'); server.kill('SIGKILL');

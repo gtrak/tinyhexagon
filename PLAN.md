@@ -4,7 +4,7 @@ The active plan is in **[`.agents/plans/002-tinyhexagon/PLAN.md`](.agents/plans/
 with one issue file per step (`00-upstream-sync.md` … `09-tuning-docs.md`) and
 the living `FEED-FORWARD.md`.
 
-Status: APPROVED; Issues 000–001 and 02a–02c3 landed; upstream HWM dcd9fdeb synced; Issue 03 next.
+Status: APPROVED; Issues 000–001 and 02a–03 landed; upstream HWM dcd9fdeb synced; Issue 04 next.
 
 The upstream workflow and mapping live in
 `.agents/skills/upstream/` (added by Issue 00), and the high-water mark is the

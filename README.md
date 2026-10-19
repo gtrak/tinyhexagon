@@ -6,5 +6,7 @@ this repository is mid-transition to the tiny runtime.
 
 Active plan: [.agents/plans/002-tinyhexagon/PLAN.md](.agents/plans/002-tinyhexagon/PLAN.md)
 
-Build the current tree: `cargo build --workspace` (`oh-app` is now a
-headless library — the `tinyhexagon` binary lands in Issue 07).
+Build the current tree: `cargo build --workspace`. `cargo run` now runs
+the `tinyhexagon` stub binary (the `th-app` bin via the workspace
+default-members — it prints a one-line "lands in Issue 07" message and
+exits 0; the real tiny runtime replaces it in Issue 07).

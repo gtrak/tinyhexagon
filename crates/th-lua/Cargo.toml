@@ -1,0 +1,37 @@
+[package]
+name = "th-lua"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+# mlua — the Lua VM is Luau (D-037, 2026-10-17): the port ships ONE Lua VM,
+# statically compiled from source by `luau0-src` via mlua's `luau` feature
+# (no prebuilt-dylib path, no dlopen — the portability win of issue 30
+# §5(b)). The C++ build still runs its own LuaJIT (the vendored
+# `vittorioromeo/LuaJIT @ 4dc5ffbf` CPM pin, `LUAJIT_DISABLE_FFI=ON` —
+# `.agents/skills/lib-luajit.md`); that machinery is now a C++-side fact,
+# not a build input of this crate. The VM difference and its measured
+# residual risks are D-037 (`.agents/plans/001-rust-port/DECISIONS.md`):
+# the C++ parity column (030b/030c — 3627/3627 frames under this exact
+# configuration) is the proof, and the 5.1 compat surface is the shipped
+# `lua51_prelude.lua` + the one-line `load` binding in `context.rs`.
+mlua = { version = "0.10", features = ["luau"] }
+thiserror = { workspace = true }
+# The game API (issue 007) registers over the concrete gameplay/data types
+# owned by these crates (LevelStatus, HexagonGameStatus, StyleData, the
+# timelines, the custom-wall manager, the RNG). The game loop (issue 009)
+# implements the `GameApi` backend trait against its own state.
+th-game = { path = "../th-game" }
+th-data = { path = "../th-data" }
+th-math = { path = "../th-math" }
+th-rng = { path = "../th-rng" }
+
+[features]
+# C++ `SSVOH_PRODUCE_LUA_METADATA` (D-023/D-024): the shipped C++ build has
+# the flag OFF (`CMakeLists.txt` sets it through a literal `if(FALSE)`), so
+# the default build records no metadata at all: `print_docs` emits the 11
+# category headers and nothing else, `get_all_function_names()` is empty,
+# and `get_docs_for_function` returns `"UNKNOWN FUNCTION"`. Enabling the
+# feature mirrors the flag-ON build (the `LuaMetadataProxy` destructor
+# records the entry).
+produce-lua-metadata = []

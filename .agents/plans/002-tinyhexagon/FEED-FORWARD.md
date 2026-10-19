@@ -380,13 +380,62 @@ re-reading the whole history.
   those sections); the composition signatures moved again in 02c1 (see
   §02c1).
 
-### 03 — rename (pending; next up)
+### 03 — rename (LANDED)
 
-- Final crate names:
-- Binary/artifact names:
-- Rename exceptions:
-- `default-members`:
-- Tinyhexagon bin timing (renamed here or deferred to 07):
+- Final crate names: the 12 kept crates are `th-math`, `th-rng`,
+  `th-data`, `th-config`, `th-lua`, `th-assets`, `th-game`, `th-audio`,
+  `th-render`, `th-app`, `th-android`, `th-web` (directories, manifests,
+  `th_*` identifiers, tools, CI all renamed; `cargo metadata` lists zero
+  `oh-*` packages; `Cargo.lock` regenerated).
+- Binary/artifact names: desktop bin `tinyhexagon` (the `th-app`
+  `[[bin]]`, `crates/th-app/src/bin/tinyhexagon.rs`); `th-web` carries
+  `[[bin]] name = "tinyhexagon" path = "src/main.rs"` so the wasm output is
+  `tinyhexagon.js` / `tinyhexagon.wasm` (+ `tinyhexagon.data` in deps/ —
+  the page import, `tools/package-web.sh` staging/zip and
+  `tools/build-wasm-emsdk.sh` all use those names; the inner web zip is
+  `tinyhexagon-web.zip`); `th-android`: `apk_name = "tinyhexagon"`,
+  `[lib] name = "th_android"` (`libth_android.so` — `package-android.sh`
+  checks + manifest comments updated), app `label = "tinyhexagon"`,
+  staging dir `target/th-apk-assets`; the Android `package` id stays
+  `info.vittorioromeo.openhexagon` (the plan does not rename it).
+  Release artifacts: `tinyhexagon-<tag>-{linux-x86_64.tar.gz,
+  windows-x86_64.zip, android-arm64-v8a.apk, web.zip}` (both workflows).
+- Rename exceptions (left as `oh-*`, 22 doc-only lines — see the report's
+  exception table): removed-crate citations `oh-net` (×3), `oh-steam` (×6)
+  + `oh_steam` (×1), `oh-discord` (×1), `oh-server-control` / `oh-
+  workshop-uploader` (×2, `tools/package.sh` header), `oh-additions` (×6,
+  the "salvaged from" notes); `oh-lanes` (the EXTERNAL lane dir
+  `/home/gary/dev/oh-lanes` in `build-wasm-emsdk.sh`'s podman example —
+  not a repo path); plus pattern-invisible names kept by design:
+  `SSVOpenHexagon` strings, `"Open Hexagon"`, `ohr.z` / `ohdb.sqlite` /
+  `ohvrvanilla_*`, `oh.filelist` (APK asset marker), `OH_*` env vars,
+  the page-JS handles `window.ohStatus` / `ohWebModule` /
+  `ohWebPersistBoot` / `ohstatechange` (the probes rely on them),
+  `tools/android/openhexagon-release.keystore` (live keystore identity),
+  and the stale `.gitignore` rule `crates/oh-parity/oh030b-corpus/`
+  (inert; 09 sweep candidate).
+- `default-members`: `["crates/th-app"]` (root `Cargo.toml`) — `cargo run`
+  runs the stub, exit 0.
+- Tinyhexagon bin timing: the STUB lands NOW (issue 03, per the spec's
+  decision — a one-line `tinyhexagon` bin in `th-app` prints
+  "the tiny runtime lands in plan 002 Issue 07" and exits 0); Issue 07
+  replaces `src/bin/tinyhexagon.rs` in place (same bin name/path). Known
+  cosmetic consequence: on the host target dir the `th-app` and `th-web`
+  bins both named `tinyhexagon` collide — cargo prints an "output filename
+  collision" WARNING (not an error) during `--workspace` builds; `cargo
+  run` is unaffected (explicit unit). If 08 needs the host no-op th-web bin
+  gone, drop it there (the wasm bin name is what the artifacts need).
+- CI: job IDs + dependency edges UNCHANGED (ci.yml: gate / windows-cross /
+  android / wasm / pages; release.yml: gate / linux / windows / android /
+  wasm / release / gh-pages). Pages URL is
+  `https://gtrak.github.io/tinyhexagon/` (the GitHub repo is
+  `gtrak/tinyhexagon` — `git remote` verified; the two
+  `github.repository == 'gtrak/SSVOpenHexagon'` fork-guards in ci.yml are
+  now `'gtrak/tinyhexagon'` — the old value would have silently disabled
+  the wasm artifact upload + pages jobs). `CODEOWNERS` needs no change
+  (no crate names). Log prefixes / CLI flag renamed consistently:
+  `[th-render]` / `[th-web-fs]` / `[th-audio]`, `--th-desktop-mode-probe`
+  (`th_app::desktop_mode::PROBE_ARG` + `tools/smoke-windowed.sh`).
 
 ### 04 — engine kid changes (pending)
 
@@ -417,15 +466,16 @@ re-reading the whole history.
 ### 07 — app tiny runtime (pending)
 
 - Desktop-mode probe (upstream `228a4cfb`, landed in the fork's
-  `oh-app`): the tiny `main` calls
-  `oh_app::desktop_mode::run_probe_child_if_requested(&argv)` at the top
+  `th-app`): the tiny `main` calls
+  `th_app::desktop_mode::run_probe_child_if_requested(&argv)` at the top
   (before any FS/config/window work — exit with the returned code when it
   returns `Some`); `load_and_reapply` is called with
   `DesktopModeSource::Lazy` (both the windowed and the headless branch —
   the C++ `mainClient` does the load + reapply once). The probe child is
   the ONLY `VideoMode::get_desktop_mode` caller (winit 0.30 allows one
-  `EventLoop` per process — the `oh-render` `types.rs` doc paragraph +
-  the `oh-app::desktop_mode` module docs).
+  `EventLoop` per process — the `th-render` `types.rs` doc paragraph +
+  the `th-app::desktop_mode` module docs). The probe's CLI flag is
+  `--th-desktop-mode-probe` (renamed from `--oh-desktop-mode-probe` in 03).
 - Composition signature:
 - Journey table:
 - Touch mapping:
@@ -443,25 +493,35 @@ re-reading the whole history.
   window is screen-sized independently of the config values).
 - Windowed smoke/gate/package: `tools/smoke-windowed.sh` exists (default
   binary `${CARGO_TARGET_DIR:-target}/debug/tinyhexagon`, adapted header
-  notes); the windowed gate stage (tools/gate.sh) and the windowed
-  package smoke (tools/package.sh) land HERE once the `tinyhexagon`
-  binary exists. The CI display packages (xvfb, libgl1-mesa-dri,
+  notes; the `[th-render] context GL_SAMPLES` assertion + the
+  `--th-desktop-mode-probe` probe arg are the 03-renamed forms). The
+  windowed gate stage (tools/gate.sh) and the windowed package smoke
+  (tools/package.sh) land HERE once the `tinyhexagon` binary exists. The
+  CI display packages (xvfb, libgl1-mesa-dri,
   libegl1, libegl-mesa0 + the winit X11 -dev libs) are already in
   `tools/ci-deps.sh` (upstream `228a4cfb` + `dcd9fdeb`). NOTE:
   `tools/smoke-windowed.sh` still asserts the old `[::mainClient] Finished`
   string; that half is inert until 07/08 adapts it to the tiny loop.
 - Web boot/audio-unlock export:
-- Artifact names:
+- Artifact names: `tinyhexagon-<tag>-{linux-x86_64.tar.gz,
+  windows-x86_64.zip, android-arm64-v8a.apk, web.zip}` (release.yml job
+  artifact names + the inner `tinyhexagon-web.zip`); web serve dir carries
+  `index.html` + `tinyhexagon.js` + `tinyhexagon.wasm` + `tinyhexagon.data`
+  (the zip-root / gh-pages inline-deploy contract — page import is
+  `./tinyhexagon.js`).
 - Target degradations:
-- Pages URL:
+- Pages URL: `https://gtrak.github.io/tinyhexagon/` (repo renamed — the
+  gh-pages site follows; the ci.yml fork-guards use
+  `github.repository == 'gtrak/tinyhexagon'` since 03).
 
 ### 09 — tuning/docs (pending)
 
 - Final tunables:
 - Playtest notes:
 - Per-target deviations:
-- Dead-surface/doc sweep: `oh-render` `PBParticleUpdateParams`/`make_pb_particle`
-  spawn branch/export/test; `oh-assets` `WorkshopPacks`/`new_with_workshop`;
+- Dead-surface/doc sweep: `th-render` `PBParticleUpdateParams`/`make_pb_particle`
+  spawn branch/export/test; `th-assets` `WorkshopPacks`/`new_with_workshop`;
   `mustShowReplayUI`/`drawTextMessagePBImpl`/`mFT`/`Deferred`/HUD-texture
-  comments; any remaining replay/PB/steam doc residue.
+  comments; any remaining replay/PB/steam doc residue; the stale
+  `.gitignore` rule `crates/oh-parity/oh030b-corpus/` (dead since 02).
 - Plan closed/archived:

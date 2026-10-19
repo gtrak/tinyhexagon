@@ -37,7 +37,7 @@ linker = "x86_64-linux-android28-clang"
 # Issue 26c (W0) — Emscripten (web) target: the VERBATIM 26c.1/26c.2 build
 # recipe (DECISIONS.md D-029, .agents/skills/lib-web-stack.md §"26c.1 —
 # Emscripten target (verified)" + §"26c.2 — Luau + wasm-bindgen + glow in one
-# emscripten module (verified)"). Consumed by the `oh-web` binary
+# emscripten module (verified)"). Consumed by the `th-web` binary
 # (wasm32-unknown-emscripten web entry).
 #
 # - The emsdk image (emscripten/emsdk, the documented build env —
@@ -61,7 +61,7 @@ linker = "x86_64-linux-android28-clang"
 #   wasm-EH link. cc passes `CXXFLAGS` after the crate's flags, so it wins
 #   at Luau's compile step (verified: the resulting objects carry 0
 #   emscripten-EH refs and 3 `__cpp_exception` refs). Set it in the build
-#   invocation: `CXXFLAGS=-fwasm-exceptions cargo build --release -p oh-web
+#   invocation: `CXXFLAGS=-fwasm-exceptions cargo build --release -p th-web
 #   --target wasm32-unknown-emscripten`. (No backend features: D-037 made Luau
 #   the port's single VM, so 030d deleted the selection these lines used to
 #   name — the emscripten build is the default configuration now.)
@@ -69,7 +69,7 @@ linker = "x86_64-linux-android28-clang"
 #   emscripten logs "WebGL 2 requested but only WebGL 1 is supported" and
 #   `emscripten_webgl_create_context` returns 0.
 # - MODULARIZE + EXPORT_ES6: the artifacts are a loadable ES module
-#   (`oh-web.js` default-exports the Module factory) + `oh_web.wasm`.
+#   (`tinyhexagon.js` default-exports the Module factory) + `tinyhexagon.wasm`.
 # - The 26c.2 MANDATORY gotcha #2 lives in the CODE, not here: `main()`
 #   calls `__wasm_call_ctors()` as its FIRST statement (the wasm-bindgen
 #   glue registers `main` via `addOnInit`, which runs BEFORE emscripten's
@@ -80,7 +80,7 @@ linker = "x86_64-linux-android28-clang"
 #   root — build from the repo root so it resolves) is packed into the build
 #   and unpacked into emscripten MEMFS at `/RELEASE` BEFORE `main` runs.
 #   emscripten's `std::fs` (the emscripten libc) then reads master's
-#   `_RELEASE` content unchanged, so `oh-web`'s `main` passes
+#   `_RELEASE` content unchanged, so `th-web`'s `main` passes
 #   `Path::new("/RELEASE")` as `main_client`'s `base_dir` (config.json,
 #   Packs/, Assets/, the fonts).
 # Target-scoped: zero effect on the desktop / android builds. (Deliberately

@@ -1,0 +1,11 @@
+[package]
+name = "th-assets"
+description = "Port of SSVOpenHexagon's Global/Assets + Global/AssetStorage (pack/level/style/music discovery, asset registry, error accumulation)"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+th-data = { path = "../th-data" }
+th-math = { path = "../th-math" }
+
+[dev-dependencies]

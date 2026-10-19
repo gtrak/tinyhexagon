@@ -1,22 +1,25 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/oh-math",
-    "crates/oh-rng",
-    "crates/oh-data",
-    "crates/oh-config",
-    "crates/oh-lua",
-    "crates/oh-assets",
-    "crates/oh-game",
-    "crates/oh-audio",
-    "crates/oh-render",
-    "crates/oh-app",
-    "crates/oh-android",
-    "crates/oh-web",
+    "crates/th-math",
+    "crates/th-rng",
+    "crates/th-data",
+    "crates/th-config",
+    "crates/th-lua",
+    "crates/th-assets",
+    "crates/th-game",
+    "crates/th-audio",
+    "crates/th-render",
+    "crates/th-app",
+    "crates/th-android",
+    "crates/th-web",
 ]
+# The default member: `cargo run` / bare `cargo build` at the repo root
+# target the `tinyhexagon` stub binary (the th-app bin — plan 002 issue 03;
+# the real tiny runtime replaces the stub in issue 07).
+default-members = ["crates/th-app"]
 # Later issues add workspace members as they land (PLAN.md architecture
-# table): oh-timeline, oh-data, oh-config, oh-assets, oh-lua,
-# oh-game, oh-audio, oh-render, oh-app. (The Discord crate was removed by
+# table): th-synth (plan 002 issue 05). (The Discord crate was removed by
 # plan 002 issue 02c1; the replay crate was removed by issue 02c2.)
 
 [workspace.package]
@@ -52,7 +55,7 @@ thiserror = "2"
 #                    spelled out: `debug_assert!` off, mirroring disabled
 #                    C++ `assert()`)
 #   * LTO OFF     -> NO `lto` here. LTO changes the codegen pipeline the float
-#                    math is verified on: the oh-game determinism harness and
+#                    math is verified on: the th-game determinism harness and
 #                    the whole release test suite are test-verified on the
 #                    default release profile (D-000: arithmetic-exact port —
 #                    float evaluation must stay identical to the verified

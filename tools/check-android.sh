@@ -5,8 +5,8 @@
 #
 #   bash tools/check-android.sh
 #
-# Runs `cargo check -p oh-app --target aarch64-linux-android` — the
-# engine's android-gated paths (#[cfg(target_os = "android")] in oh-app
+# Runs `cargo check -p th-app --target aarch64-linux-android` — the
+# engine's android-gated paths (#[cfg(target_os = "android")] in th-app
 # and friends) compile-checked against the pinned NDK, WITHOUT a full
 # build (no link, no APK, no signing). This is the "host gate is not a
 # web gate" sibling for android: a target-gated regression is invisible
@@ -32,5 +32,5 @@ if ! rustup target list --installed | grep -qx "$TARGET"; then
     rustup target add "$TARGET"
 fi
 
-echo "== cargo check -p oh-app --target $TARGET"
-exec cargo check -p oh-app --target "$TARGET"
+echo "== cargo check -p th-app --target $TARGET"
+exec cargo check -p th-app --target "$TARGET"

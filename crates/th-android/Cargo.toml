@@ -1,0 +1,80 @@
+[package]
+name = "th-android"
+description = "The Android (aarch64) entry crate (plan 002): stubbed by issue 02a (the adult android_main entry retired with th-app's windowed front-end) — the cdylib target + the cargo-apk packaging metadata are kept for Issue 08, which lands the real Android entry over the tiny runtime"
+version.workspace = true
+edition.workspace = true
+
+# Issue 25b SG6 — the cargo-apk (0.10) packaging metadata: the APK identity
+# + the `_RELEASE` content as APK assets + the fullscreen landscape
+# NativeActivity (the D-026 native-activity route — cargo-apk writes the
+# `android.app.lib_name` meta-data (this lib name) + the MAIN/LAUNCHER
+# intent-filter + the target-31 `exported` itself). The build is
+# `cargo apk build --release` (tools/package-android.sh — the SG6 script):
+# `lib/arm64-v8a/libth_android.so` + `assets/` (the `_RELEASE` tree, the
+# cargo-apk `assets` = the folder's ENTRIES at the APK assets root — the
+# SG4 extraction walks that tree into the app's internal data dir).
+# The APK's versionName/versionCode are DERIVED by cargo-apk from the
+# package version (0.1.0 — the port's workspace version; the C++'s game
+# 2.1.7 identity lives in the label / the window title, not the APK
+# identity: cargo-apk 0.10 forbids TOML overrides of both).
+[package.metadata.android]
+package = "info.vittorioromeo.openhexagon"
+# The APK file name (default: the package name).
+apk_name = "tinyhexagon"
+# The ABI (the 25b spec: arm64-v8a only — no 32-bit armv7 / x86 halves).
+build_targets = ["aarch64-linux-android"]
+# The `_RELEASE` game content as APK assets (the SG4 extraction source —
+# the folder's entries land at the APK assets root: assets/Packs/..., the
+# internal-data-dir extraction's `Packs/...` target, issue 25b SG4).
+# Smoke fix (issue 25, on-device): `AAssetManager_openDir("")` returns an
+# EMPTY root listing on the emulator (the classic NDK root-enum quirk), so
+# the extractor no longer enumerates directories at all — it reads the
+# packaging-generated `.filelist` (every assets path, one per line,
+# produced by tools/package-android.sh into this staging dir). The
+# staging copy (never the tracked `_RELEASE/`) also carries `.filelist`;
+# a bare `cargo apk build` without the script stages nothing (empty or
+# stale dir) — the script is the canonical build path.
+assets = "../../target/th-apk-assets"
+
+# SDK range: minSdk 28 / target 34 — the NDK's API-28 clang target
+# (.cargo/config.toml) + the installed platform-34 build-tools; every
+# API-28+ device guarantees the GLES 3.0 context (the SG2 assessment).
+[package.metadata.android.sdk]
+min_sdk_version = 28
+target_sdk_version = 34
+
+[package.metadata.android.application]
+# The app label (plan 002 issue 03: renamed with the product — the C++'s
+# "Open Hexagon" label was the adult product's identity; the fork is
+# tinyhexagon).
+label = "tinyhexagon"
+# The fullscreen game theme (no action bar / status chrome — the C++
+# Android build's `NoActionBar.Fullscreen` equivalent).
+theme = "@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen"
+
+[package.metadata.android.application.activity]
+# `android.app.NativeActivity` (the D-026 route — cargo-apk's default;
+# spelled here for the report's manifest review) loading
+# `libth_android.so` (the `android.app.lib_name` cargo-apk writes).
+name = "android.app.NativeActivity"
+# The game is landscape (the config default's 800x600 logical window —
+# the C++ Android build's landscape); `sensorLandscape` keeps it
+# landscape on both sensor orientations (no portrait mode).
+orientation = "sensorLandscape"
+# The activity handles its own config changes (the winit android
+# activity's callback re-dispatch — the C++'s native-activity model):
+# a recreation would drop the game state (the `android_main` re-entry
+# is a fresh boot), so the platform must NOT recreate it on rotation /
+# keyboard / display-density changes.
+config_changes = "orientation|keyboardHidden|keyboard|screenSize|screenLayout|smallestScreenSize|uiMode"
+exported = true
+
+[lib]
+# The cdylib the APK loads (`libth_android.so` in `lib/arm64-v8a/`); the
+# `android.app.lib_name` meta-data cargo-apk writes is this lib name.
+# Issue 02a: the entry (`android_main`) is stubbed out — the crate builds
+# to an empty cdylib on every target so the desktop gate stays green;
+# Issue 08 lands the real entry (and re-adds the `th-app` / `winit`
+# target dependencies it needs).
+name = "th_android"
+crate-type = ["cdylib"]

@@ -1456,119 +1456,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "oh-android"
-version = "0.1.0"
-
-[[package]]
-name = "oh-app"
-version = "0.1.0"
-dependencies = [
- "gilrs",
- "libc",
- "oh-assets",
- "oh-audio",
- "oh-config",
- "oh-data",
- "oh-game",
- "oh-lua",
- "oh-math",
- "oh-render",
- "oh-rng",
- "signal-hook",
- "web-sys",
-]
-
-[[package]]
-name = "oh-assets"
-version = "0.1.0"
-dependencies = [
- "oh-data",
- "oh-math",
-]
-
-[[package]]
-name = "oh-audio"
-version = "0.1.0"
-dependencies = [
- "oh-assets",
- "oh-game",
- "oh-render",
- "rodio",
-]
-
-[[package]]
-name = "oh-config"
-version = "0.1.0"
-dependencies = [
- "oh-data",
- "oh-math",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "oh-data"
-version = "0.1.0"
-dependencies = [
- "oh-math",
- "serde_json",
-]
-
-[[package]]
-name = "oh-game"
-version = "0.1.0"
-dependencies = [
- "oh-assets",
- "oh-config",
- "oh-data",
- "oh-lua",
- "oh-math",
- "oh-rng",
-]
-
-[[package]]
-name = "oh-lua"
-version = "0.1.0"
-dependencies = [
- "mlua",
- "oh-data",
- "oh-game",
- "oh-math",
- "oh-rng",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "oh-math"
-version = "0.1.0"
-
-[[package]]
-name = "oh-render"
-version = "0.1.0"
-dependencies = [
- "fontdue",
- "glow",
- "glutin",
- "js-sys",
- "oh-config",
- "oh-math",
- "png",
- "raw-window-handle",
- "rodio",
- "wasm-bindgen",
- "web-sys",
- "winit",
-]
-
-[[package]]
-name = "oh-rng"
-version = "0.1.0"
-
-[[package]]
-name = "oh-web"
-version = "0.1.0"
-
-[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2224,6 +2111,119 @@ dependencies = [
  "quote",
  "unicode-ident",
 ]
+
+[[package]]
+name = "th-android"
+version = "0.1.0"
+
+[[package]]
+name = "th-app"
+version = "0.1.0"
+dependencies = [
+ "gilrs",
+ "libc",
+ "signal-hook",
+ "th-assets",
+ "th-audio",
+ "th-config",
+ "th-data",
+ "th-game",
+ "th-lua",
+ "th-math",
+ "th-render",
+ "th-rng",
+ "web-sys",
+]
+
+[[package]]
+name = "th-assets"
+version = "0.1.0"
+dependencies = [
+ "th-data",
+ "th-math",
+]
+
+[[package]]
+name = "th-audio"
+version = "0.1.0"
+dependencies = [
+ "rodio",
+ "th-assets",
+ "th-game",
+ "th-render",
+]
+
+[[package]]
+name = "th-config"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "th-data",
+ "th-math",
+]
+
+[[package]]
+name = "th-data"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "th-math",
+]
+
+[[package]]
+name = "th-game"
+version = "0.1.0"
+dependencies = [
+ "th-assets",
+ "th-config",
+ "th-data",
+ "th-lua",
+ "th-math",
+ "th-rng",
+]
+
+[[package]]
+name = "th-lua"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "th-data",
+ "th-game",
+ "th-math",
+ "th-rng",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "th-math"
+version = "0.1.0"
+
+[[package]]
+name = "th-render"
+version = "0.1.0"
+dependencies = [
+ "fontdue",
+ "glow",
+ "glutin",
+ "js-sys",
+ "png",
+ "raw-window-handle",
+ "rodio",
+ "th-config",
+ "th-math",
+ "wasm-bindgen",
+ "web-sys",
+ "winit",
+]
+
+[[package]]
+name = "th-rng"
+version = "0.1.0"
+
+[[package]]
+name = "th-web"
+version = "0.1.0"
 
 [[package]]
 name = "thiserror"

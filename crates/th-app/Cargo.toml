@@ -1,0 +1,83 @@
+[package]
+name = "th-app"
+description = "The tiny-runtime composition library (D-020): the draw bridge that drives th_render::graphics::draw_frame from the engine's state — the headless engine composition, the GL draw target, and the platform seams the tiny runtime (plan 002 issue 07) composes over"
+version.workspace = true
+edition.workspace = true
+
+# The `tinyhexagon` stub binary (plan 002 issue 03): `cargo run`'s target via
+# the workspace `default-members`. Issue 07 replaces the stub with the tiny
+# runtime (same bin name / path).
+[[bin]]
+name = "tinyhexagon"
+path = "src/bin/tinyhexagon.rs"
+
+[dependencies]
+# The two sides of the bridge: the engine (never depends on the render
+# layer) and the render layer (never depends on the engine). `th-app` is
+# the composition crate that depends on BOTH (DECISIONS.md D-020; D-013:
+# th-game must not gain th-render — th-lua depends on th-game, so the
+# adapter cannot live in th-game or th-render).
+th-game = { path = "../th-game" }
+th-render = { path = "../th-render" }
+th-config = { path = "../th-config" }
+th-math = { path = "../th-math" }
+th-data = { path = "../th-data" }
+# The composition (`compose.rs`) implements the `ScriptHost` seam over
+# `th-lua` IN THE LIB: `th-app -> th-lua -> th-game` is acyclic. D-037:
+# the Lua VM is Luau — th-lua's single build; one VM, nothing to split.
+th-lua = { path = "../th-lua" }
+th-assets = { path = "../th-assets" }
+# 29o1 — the headless / server SIGINT handlers' async-signal-safe stdout
+# write (`libc::write` in the signal context; `std`'s `println!` is NOT
+# async-signal-safe — it takes the stdout lock, the C++'s `TODO (P2): UB`
+# the comment marks for `ssvu::lo` / `std::exit` in the handler). Transitively
+# present (signal-hook's dep); a direct dep for the `write(2)` call.
+libc = "0.2"
+th-rng = { path = "../th-rng" }
+# The real audio is on EVERY target: the `th_render::audio::AudioDevice`
+# seam picks the backend per target (rodio on desktop/Android, emscripten's
+# OpenAL on the web), so `th-audio` is a COMMON dep. Its `rodio` OGG decode
+# (symphonia, pure Rust) is what the web's one-shot / music decode use;
+# `rodio`/`cpal`'s device sink itself only compiles to a usable sink on
+# desktop/Android (the web's sink is the OpenAL backend in `th-render`).
+th-audio = { path = "../th-audio" }
+
+# SIGINT is a desktop / headless concern: the web loop is a plain
+# `request_animation_frame` (no signal handler).
+[target.'cfg(not(target_os = "emscripten"))'.dependencies]
+# C++ main.cpp:340-349 — the SIGINT handler, the SAFE port (the C++'s
+# `TODO (P2): UB`, main.cpp:339: the C++ handler called
+# `globalWindow.stop()` — non-atomic engine state — inside the signal
+# context). `signal-hook`'s `flag::register` / `low_level::register`
+# keep the signal context to a single atomic store / one `write(2)`.
+signal-hook = "0.3"
+
+[target.'cfg(not(any(target_os = "android", target_family = "wasm")))'.dependencies]
+# The desktop controller backend behind `RealJoystick`
+# (`src/joystick.rs`): the C++ `sf::Joystick` controller-0 poll's
+# replacement (the SFML read in `Core/Joystick.cpp::update`). Desktop
+# only — the Android / wasm targets keep the no-op `NoJoystick`
+# seam (the C++'s `isConnected(0) == false` state).
+# SYSTEM REQUIREMENT (Linux): the `libudev` system library (the
+# transitive `libudev-sys` build links it — `libudev-dev` at build
+# time; `.github/workflows/rust.yml`'s portability notes), and at
+# runtime hidraw device access for non-root users (the udev rule —
+# gilrs ships `60-gilrs.rules`). A failed open degrades to the
+# no-controller state (logged once), the C++ SFML no-pad behavior.
+gilrs = "0.11"
+
+[target.'cfg(target_os = "emscripten")'.dependencies]
+# The web's `#fs` click / change-sink install (`src/web_fullscreen.rs`,
+# salvaged from `oh-additions` by plan 002 issue 02a): the browser
+# Fullscreen API over the `documentElement` — `Window` (the
+# `web_sys::window()` + `document()` read) + `Document` (the
+# `fullscreenElement` / `documentElement` / `exitFullscreen` + the
+# `fullscreenEnabled` read) + `Element` (the `documentElement`'s
+# `requestFullscreen`) + `Event` (the transition-edge DOM signal the
+# web entry's listener rides, Issue 08).
+web-sys = { version = "0.3.106", features = [
+  "Window",
+  "Document",
+  "Element",
+  "Event",
+] }
