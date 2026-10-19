@@ -1,6 +1,6 @@
 # 002 — tinyhexagon
 
-Status: APPROVED (issues 000–001, 02a–03, 04a–04b, 03c and 03d landed; upstream HWM dcd9fdeb synced 2026-10-19; 05/06 next)
+Status: APPROVED (issues 000–001, 02a–03, 04a–04b, 03c–03d and 06 landed; upstream HWM dcd9fdeb synced 2026-10-19; 05a in flight, 05b next)
 Owner: operator; orchestrator: this session
 Plan file: `.agents/plans/002-tinyhexagon/PLAN.md`
 Issues: `00-*.md` … `09-*.md` in this folder
@@ -144,10 +144,11 @@ web `th-web` emscripten bin. All use the same `th-render`/`bridge` path.
 | 03d | Remove the stale libsodium prebuild from the Windows cross path | 03c | LANDED |
 | 04a | Engine kid mechanics: soft collision, difficulty setter, bump, wall gaps | 03 | LANDED |
 | 04b | Beat palette/pulse + `DrawOptions` text suppression | 03 | LANDED |
-| 05 | `th-synth` cross-target spike + music director | 03 | PROPOSED |
-| 06 | Tiny content pack (`_RELEASE/Packs/tiny`) | 03 | PROPOSED |
-| 07 | `th-app` tiny runtime/loop + renderer integration (desktop) | 04a, 04b, 05, 06 | PROPOSED |
-| 08 | Android/web entries + packaging/CI/release names | 07 | PROPOSED |
+| 05a | `th-synth` host spike (`alsa-sys` coexistence) + host `MusicDirector` | 03 | IN PROGRESS |
+| 05b | `th-synth` Android/wasm cross-target spike | 05a | PROPOSED |
+| 06 | Tiny content pack (`_RELEASE/Packs/tiny`) | 03 | LANDED |
+| 07 | `th-app` tiny runtime/loop + renderer integration (desktop) | 04a, 04b, 05a, 06 | PROPOSED |
+| 08 | Android/web entries + packaging/CI/release names | 07, 05b | PROPOSED |
 | 09 | Tuning, docs, gate, playtests | 08 | PROPOSED |
 
 Dependency graph:

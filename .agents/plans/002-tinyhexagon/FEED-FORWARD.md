@@ -624,13 +624,34 @@ re-reading the whole history.
 - Web gesture hook:
 - Target caveats:
 
-### 06 — tiny pack (pending)
+### 06 — tiny pack (LANDED)
 
-- Level ids / speeds / delays:
-- First-pattern delay:
-- Styles/hues:
-- Lua globals no-oped:
-- Load/run test:
+- Level ids / speeds / delays: pack `tinyhexagon_tinyhexagon_tiny_1`
+  (author `tinyhexagon`, priority 0, depends on `base`); levels
+  `tinyhexagon_tinyhexagon_tiny_1_{meadow,river,stars}` — six sides,
+  speed 0.55 / 0.62 / 0.70, delay 1.75 / 1.70 / 1.65, ALL `*_inc` zero,
+  `l_setIncTime(999999)` (no in-level increment — the app's stage arc owns
+  escalation), rotation 0.04 (max 0.25), `unscored: true`,
+  `musicId: "nullMusicId"`, no `difficultyMults` (loader appends 1.0;
+  the app passes its own multiplier). Issue 07's journey table and Issue
+  09's tuning use these exact values.
+- First-pattern delay: `t_wait(180)` as the first `onLoad` timeline entry
+  (180 frames ≈ 3 s at 60 fps — the contract value).
+- Styles/hues: meadow 100–160 (green), river 190–250 (blue), stars
+  270–330 (violet); `3D_*` zero/off; no `Shaders/`, no shader refs, no
+  OGG music, no replay/score/Steam.
+- Lua globals no-oped: NONE — every `base` helper used exists
+  (`utils`/`common`/`commonpatterns`: `shuffle`, `u_rndInt`, `t_wait`,
+  `pBarrageSpiral`, `pInverseBarrage`, `pAltBarrage`, `pSpiral`); no
+  removed replay/score/Steam globals needed a no-op.
+- Load/run test: `th-app/tests/tiny_pack.rs::tiny_pack_loads_and_runs`
+  (pack + all three level ids valid in `Assets`; each level runs 30 s
+  headless with soft collisions — no death, six sides, authored
+  speed/delay landed in `LevelStatus`). Gate-count pins updated for the
+  new pack: `th-assets` release_tree (packs 8→9, levels 37→40, styles
+  33→36, assets 57→60 headless / 61→64 full, selectable 7→8, discovery
+  list +`Packs/tiny/`) and `th-data` load_release (levels 37→40, styles
+  33→36).
 
 ### 07 — app tiny runtime (pending)
 
@@ -736,4 +757,5 @@ re-reading the whole history.
   `mustShowReplayUI`/`drawTextMessagePBImpl`/`mFT`/`Deferred`/HUD-texture
   comments; any remaining replay/PB/steam doc residue; the stale
   `.gitignore` rule `crates/oh-parity/oh030b-corpus/` (dead since 02).
+- 06 P2: `release_tree.rs`'s priority-0 comment still says workshopexample is the last selectable (tiny is also priority 0); update/assert both. The tiny_pack test does not assert the first wall at ~3 s or each level's styleId resolution — 07/09 tuning coverage.
 - Plan closed/archived:

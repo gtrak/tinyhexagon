@@ -276,9 +276,9 @@ fn every_release_level_style_and_music_parses() {
     }
 
     // Counts cross-checked against `find _RELEASE/Packs -name '*.json'`:
-    // Levels 37, Styles 33, Music 24.
-    assert_eq!(levels, 37);
-    assert_eq!(styles, 33);
+    // Levels 40, Styles 36, Music 24.
+    assert_eq!(levels, 40);
+    assert_eq!(styles, 36);
     assert_eq!(music, 24);
 }
 

@@ -1,0 +1,12 @@
+{
+    "id": "stars",
+    "name": "stars",
+    "description": "",
+    "author": "tinyhexagon",
+    "menuPriority": 0,
+    "selectable": true,
+    "styleId": "stars",
+    "musicId": "nullMusicId",
+    "luaFile": "Scripts/Levels/stars.lua",
+    "unscored": true
+}

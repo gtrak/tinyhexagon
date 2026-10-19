@@ -25,10 +25,10 @@ fn load_headless() -> Assets {
 }
 
 #[test]
-fn real_tree_pack_count_is_eight() {
+fn real_tree_pack_count_is_nine() {
     let a = load_headless();
-    // All 8 shipped packs have a valid pack.json → `loadInfo.packs` == 8.
-    assert_eq!(a.get_load_results().packs, 8);
+    // All 9 shipped packs have a valid pack.json → `loadInfo.packs` == 9.
+    assert_eq!(a.get_load_results().packs, 9);
     // Every shipped pack id is present.
     for id in [
         "ohvrvanilla_vittorio_romeo_base_1",
@@ -39,6 +39,7 @@ fn real_tree_pack_count_is_eight() {
         "ohvrvanilla_vittorio_romeo_experimental_1",
         "thing_Synth_Morxemplum_Artwork_1",
         "ohvrworkshopexample_vittorio_romeo_example_1",
+        "tinyhexagon_tinyhexagon_tiny_1",
     ] {
         assert!(a.is_valid_pack_id(id), "missing pack id {id}");
     }
@@ -48,9 +49,9 @@ fn real_tree_pack_count_is_eight() {
 fn real_tree_headless_load_info_counts() {
     let a = load_headless();
     let li = a.get_load_results();
-    // music `.json` (24) + style `.json` (33); no `.ogg`/shaders in headless.
-    assert_eq!(li.assets, 57);
-    assert_eq!(li.levels, 37);
+    // music `.json` (24) + style `.json` (36); no `.ogg`/shaders in headless.
+    assert_eq!(li.assets, 60);
+    assert_eq!(li.levels, 40);
     // The shipped tree is well-formed: no load errors.
     assert!(li.error_messages.is_empty(), "{:?}", li.error_messages);
 }
@@ -138,6 +139,7 @@ fn discovery_order_is_byte_sorted_full_path() {
             "Packs/experimental/",
             "Packs/hypercube/",
             "Packs/orthoplex/",
+            "Packs/tiny/",
             "Packs/tutorial/",
             "Packs/workshopexample/",
         ]
@@ -163,8 +165,8 @@ fn discovery_order_is_byte_sorted_full_path() {
 fn pack_infos_are_priority_ordered() {
     let a = load_headless();
     let infos = a.get_selectable_pack_infos();
-    // base has no Levels/, so it is not selectable; the other 7 are.
-    assert_eq!(infos.len(), 7);
+    // base has no Levels/, so it is not selectable; the other 8 are.
+    assert_eq!(infos.len(), 8);
     // Non-decreasing priority (C++ `std::sort` ascending).
     let mut prev = f32::NEG_INFINITY;
     for info in infos {
@@ -187,9 +189,9 @@ fn pack_infos_are_priority_ordered() {
 fn headless_false_loads_assets_json_and_shaders() {
     let a = Assets::new(release_dir(), false, false).expect("_RELEASE loads full");
     let li = a.get_load_results();
-    // 4 shaders + 24 music json + 33 style json.
-    assert_eq!(li.assets, 61);
-    assert_eq!(li.levels, 37);
+    // 4 shaders + 24 music json + 36 style json.
+    assert_eq!(li.assets, 64);
+    assert_eq!(li.levels, 40);
 
     // assets.json populated the storage (all listed files exist in _RELEASE).
     // Note the ids are the EXACT strings from assets.json (they keep their

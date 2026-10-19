@@ -1,0 +1,25 @@
+{
+    "id": "river",
+
+    "hue_min": 190,
+    "hue_max": 250,
+    "hue_increment": 0.5,
+    "hue_ping_pong": false,
+
+    "pulse_min": 0.0,
+    "pulse_max": 1.2,
+    "pulse_increment": 0.02,
+
+    "3D_depth": 0,
+    "3D_skew": 0.0,
+    "3D_spacing": 0.0,
+
+    "main": { "main": true, "dynamic": false, "value": [255,255,255,255], "pulse": [0,0,0,0] },
+    "cap_color": { "legacy": true, "index": 0 },
+
+    "colors":
+    [
+        { "dynamic": false, "dynamic_offset": false, "dynamic_darkness": 1.0, "value": [55,80,95,255], "pulse": [15,30,35,0] },
+        { "dynamic": false, "dynamic_offset": false, "dynamic_darkness": 1.0, "value": [40,55,70,255], "pulse": [10,15,20,0] }
+    ]
+}

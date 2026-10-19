@@ -1,0 +1,12 @@
+{
+    "id": "meadow",
+    "name": "meadow",
+    "description": "",
+    "author": "tinyhexagon",
+    "menuPriority": 0,
+    "selectable": true,
+    "styleId": "meadow",
+    "musicId": "nullMusicId",
+    "luaFile": "Scripts/Levels/meadow.lua",
+    "unscored": true
+}

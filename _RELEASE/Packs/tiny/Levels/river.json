@@ -1,0 +1,12 @@
+{
+    "id": "river",
+    "name": "river",
+    "description": "",
+    "author": "tinyhexagon",
+    "menuPriority": 0,
+    "selectable": true,
+    "styleId": "river",
+    "musicId": "nullMusicId",
+    "luaFile": "Scripts/Levels/river.lua",
+    "unscored": true
+}

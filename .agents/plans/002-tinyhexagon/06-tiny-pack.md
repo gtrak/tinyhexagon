@@ -1,6 +1,6 @@
 # Issue 06 — Tiny content pack
 
-**Status:** PROPOSED
+**Status:** LANDED
 **Depends:** 03
 
 ## Objective

@@ -1,0 +1,25 @@
+{
+    "id": "stars",
+
+    "hue_min": 270,
+    "hue_max": 330,
+    "hue_increment": 0.5,
+    "hue_ping_pong": false,
+
+    "pulse_min": 0.0,
+    "pulse_max": 1.2,
+    "pulse_increment": 0.02,
+
+    "3D_depth": 0,
+    "3D_skew": 0.0,
+    "3D_spacing": 0.0,
+
+    "main": { "main": true, "dynamic": false, "value": [255,255,255,255], "pulse": [0,0,0,0] },
+    "cap_color": { "legacy": true, "index": 0 },
+
+    "colors":
+    [
+        { "dynamic": false, "dynamic_offset": false, "dynamic_darkness": 1.0, "value": [80,55,100,255], "pulse": [30,15,35,0] },
+        { "dynamic": false, "dynamic_offset": false, "dynamic_darkness": 1.0, "value": [55,40,75,255], "pulse": [15,10,20,0] }
+    ]
+}

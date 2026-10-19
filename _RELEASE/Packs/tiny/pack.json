@@ -1,0 +1,17 @@
+{
+    "disambiguator": "tinyhexagon",
+    "name": "tiny",
+    "author": "tinyhexagon",
+    "version": 1,
+    "priority": 0,
+
+    "dependencies":
+    [
+        {
+            "disambiguator": "ohvrvanilla",
+            "name": "base",
+            "author": "vittorio romeo",
+            "min_version": 1
+        }
+    ]
+}
