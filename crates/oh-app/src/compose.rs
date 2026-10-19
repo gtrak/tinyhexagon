@@ -4,8 +4,8 @@
 //!
 //! Promoted from the issue 15 step (a) test tree
 //! (`crates/oh-app/tests/common/mod.rs`) so the `open-hexagon` binary
-//! (step (b)) and the step (a) tests share ONE composition — the spec's
-//! dedup. `crates/oh-game/tests/common/mod.rs` keeps its own step-(c-era)
+//! (step (b); retired by plan 002 issue 02a) and the step (a) tests
+//! shared ONE composition — the spec's dedup. `crates/oh-game/tests/common/mod.rs` keeps its own step-(c-era)
 //! copy (out of this issue's scope).
 //!
 //! # Two-phase build (DECISIONS.md D-013)
@@ -580,8 +580,8 @@ pub fn compose_with(
 ///
 /// `replay_store` — the engine's `ReplayStore` seam (the C++
 /// `death_saveReplay`'s filesystem half, HexagonGame.cpp:1067-1097;
-/// issue 029a1): the WINDOWED composition passes
-/// [`crate::replay_store::RealReplayStore`] rooted at `root` (the C++'
+/// issue 029a1): the retired WINDOWED composition passed the disk-backed
+/// `RealReplayStore` rooted at `root` (the C++'
 /// CWD — both windowed entries chdir to the game-data root before
 /// composing), so a death persists `Replays/<levelId>/<diff>x/<name>.z`;
 /// the headless client / server / print-lua-docs compositions keep

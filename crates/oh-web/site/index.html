@@ -1,10 +1,12 @@
 <!doctype html>
 <!--
-  oh-web (issue 26c W5, D-029) - the browser page for the REAL composition:
-  oh_app::client::main_client (headless = false) boots config + assets over
-  the _RELEASE tree preloaded into emscripten MEMFS at /RELEASE, the
-  oh-render emscripten window over this <canvas id="c">, the engine +
-  MenuGame, dispatches to the MENU, and drives it via request_animation_frame.
+  oh-web (issue 26c W5, D-029) - the browser page of the RETIRED W5
+  composition (plan 002 issue 02a stubbed the web entry; the tiny
+  runtime's web page lands in Issue 08 with the real entry): the retired
+  web boot (headless = false) booted config + assets over the _RELEASE
+  tree preloaded into emscripten MEMFS at /RELEASE, the oh-render
+  emscripten window over this <canvas id="c">, the engine + MenuGame,
+  dispatched to the MENU, and drove it via request_animation_frame.
 
   SERVE (static, no build step): copy the THREE build artifacts next to this
   file (the .data is the --preload-file package - a missing one shows

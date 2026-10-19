@@ -1,6 +1,6 @@
 [package]
 name = "oh-android"
-description = "The Android (aarch64) entry crate (issue 25b, D-026): the android_main native-activity entry + the cargo-apk packaging metadata — the thin target-gated glue over the shared oh-app windowed pipeline"
+description = "The Android (aarch64) entry crate (plan 002): stubbed by issue 02a (the adult android_main entry retired with oh-app's windowed front-end) — the cdylib target + the cargo-apk packaging metadata are kept for Issue 08, which lands the real Android entry over the tiny runtime"
 version.workspace = true
 edition.workspace = true
 
@@ -69,20 +69,9 @@ exported = true
 [lib]
 # The cdylib the APK loads (`liboh_android.so` in `lib/arm64-v8a/`); the
 # `android.app.lib_name` meta-data cargo-apk writes is this lib name.
+# Issue 02a: the entry (`android_main`) is stubbed out — the crate builds
+# to an empty cdylib on every target so the desktop gate stays green;
+# Issue 08 lands the real entry (and re-adds the `oh-app` / `winit`
+# target dependencies it needs).
 name = "oh_android"
 crate-type = ["cdylib"]
-
-# The entry only exists on the Android target (the `android_main` symbol +
-# the winit android event-loop module are `target_os = "android"`-gated); on
-# every other target this package builds to an empty cdylib so the desktop
-# gate (`cargo build/clippy/test --workspace`) stays green.
-[target.'cfg(target_os = "android")'.dependencies]
-oh-app = { path = "../oh-app" }
-# The winit 0.30 android surface (the D-026 native-activity route): the
-# `android_main(app: AndroidApp)` entry takes the android-activity 0.6
-# `AndroidApp` through Winit's re-export (`winit::platform::android::
-# activity`) — winit's documented way to avoid an android-activity version
-# clash (it hard-depends on exactly one glue crate, and only on the android
-# target). Same `0.30` + `android-native-activity` feature the workspace
-# already unifies through oh-render (no lockfile change).
-winit = { version = "0.30", features = ["android-native-activity"] }

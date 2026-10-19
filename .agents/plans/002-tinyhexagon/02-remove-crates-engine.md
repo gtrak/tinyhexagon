@@ -1,7 +1,14 @@
 # Issue 02 — Remove retired crates; de-scope the engine
 
-**Status:** PROPOSED
+**Status:** PARTIAL — 02a LANDED; 02b pending
 **Depends:** 01
+
+**Execution split (2026-10-19):** this issue is executed as **02a** (strip
+`oh-app` to a headless library; extract `draw_target.rs`; salvage
+`web_fullscreen.rs`; stub `oh-android`/`oh-web`) and **02b** (remove the
+retired crates; de-scope the engine). 02b starts after 02a lands and consumes
+its feed-forward. The contract below is the umbrella; the sub-issue files
+carry the per-step detail.
 
 ## Objective
 

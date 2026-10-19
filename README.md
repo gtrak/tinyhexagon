@@ -6,4 +6,5 @@ this repository is mid-transition to the tiny runtime.
 
 Active plan: [.agents/plans/002-tinyhexagon/PLAN.md](.agents/plans/002-tinyhexagon/PLAN.md)
 
-Build and run the current tree: `cargo run -p oh-app`
+Build the current tree: `cargo build --workspace` (`oh-app` is now a
+headless library — the `tinyhexagon` binary lands in Issue 07).

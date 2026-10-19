@@ -1,16 +1,8 @@
 [package]
 name = "oh-app"
-description = "The application composition crate (D-020): the draw bridge that drives oh_render::graphics::draw_frame from the engine's state — boot/CLI (15b) and the windowed loop (15c) land here next"
+description = "The tiny-runtime composition library (D-020): the draw bridge that drives oh_render::graphics::draw_frame from the engine's state — the headless engine composition, the GL draw target, and the platform seams the tiny runtime (plan 002 issue 07) composes over"
 version.workspace = true
 edition.workspace = true
-
-[lib]
-# Library + the `open-hexagon` binary (issue 15 step (b)); the windowed
-# loop (step (c)) lands in the same binary.
-
-[[bin]]
-name = "open-hexagon"
-path = "src/main.rs"
 
 [dependencies]
 # The two sides of the bridge: the engine (never depends on the render
@@ -23,23 +15,15 @@ oh-render = { path = "../oh-render" }
 oh-config = { path = "../oh-config" }
 oh-math = { path = "../oh-math" }
 oh-data = { path = "../oh-data" }
-# The step-(b) composition (`compose.rs`) implements the `ScriptHost`
-# seam over `oh-lua` IN THE LIB (promoted from the step-(a) test tree per
-# the 15b spec): `oh-app -> oh-lua -> oh-game` is acyclic, and the binary
-# (same package) needs the Lua host to run `-printLuaDocs` / headless
-# replays. Step (a)'s "dev-only" constraint was about the DRAW BRIDGE not
-# coupling to the Lua backend; the composition crate legitimately does.
-# D-037: the Lua VM is Luau — oh-lua's single build; no backend feature
-# to forward, so the binary is Luau on every target (the per-target
-# selection 026 wired for emscripten was superseded by D-037: there is
-# one VM, nothing to split).
+# The composition (`compose.rs`) implements the `ScriptHost` seam over
+# `oh-lua` IN THE LIB: `oh-app -> oh-lua -> oh-game` is acyclic. D-037:
+# the Lua VM is Luau — oh-lua's single build; one VM, nothing to split.
 oh-lua = { path = "../oh-lua" }
 oh-assets = { path = "../oh-assets" }
+# The `joystick` module's menu-side view (`RealMenuJoystick` implements
+# `oh_menu::seams::MenuJoystick` over the shared `RealJoystick`); the
+# menu crate retires in plan 002 issue 02b.
 oh-menu = { path = "../oh-menu" }
-# Lane 057: the home for everything the C++ does not have — the gameplay
-# touch overlay (F28) moved here from this crate's `touch_overlay` module
-# (its F31 / F36 wiring follows as the overlay-side input injection).
-oh-additions = { path = "../oh-additions" }
 # 29o1 — the headless / server SIGINT handlers' async-signal-safe stdout
 # write (`libc::write` in the signal context; `std`'s `println!` is NOT
 # async-signal-safe — it takes the stdout lock, the C++'s `TODO (P2): UB`
@@ -48,77 +32,30 @@ oh-additions = { path = "../oh-additions" }
 libc = "0.2"
 oh-replay = { path = "../oh-replay" }
 oh-rng = { path = "../oh-rng" }
-# Issue 21: the Discord manager (the C++ `main.cpp:264-269` `discordManager`,
-# created only when NOT headless). The windowed composition builds the real
-# IPC impl (`IpcDiscordCore`); headless/server/printLuaDocs pass `None`.
-# The `IpcDiscordCore` is `#[cfg(not(target_os = "emscripten"))]` (W3);
-# the web path uses `NoDiscordCore`.
+# The Discord manager seam the composition's `compose_with_config` carries
+# (the C++ `main.cpp:264-269` `discordManager`): the tiny runtime passes
+# `None` (the C++'s headless / no-manager state).
 oh-discord = { path = "../oh-discord" }
-# issue 041 — the real audio is now on EVERY target: the `oh_render::audio::
-# AudioDevice` seam picks the backend per target (rodio on desktop/Android,
-# emscripten's OpenAL on the web), so `oh-audio` is a COMMON dep (no longer
-# gated off emscripten). Its `rodio` OGG decode (symphonia, pure Rust) is what
-# the web's one-shot / music decode use; `rodio`/`cpal`'s device sink itself
-# only compiles to a usable sink on desktop/Android (the web's sink is the
-# OpenAL backend in `oh-render`).
+# The real audio is on EVERY target: the `oh_render::audio::AudioDevice`
+# seam picks the backend per target (rodio on desktop/Android, emscripten's
+# OpenAL on the web), so `oh-audio` is a COMMON dep. Its `rodio` OGG decode
+# (symphonia, pure Rust) is what the web's one-shot / music decode use;
+# `rodio`/`cpal`'s device sink itself only compiles to a usable sink on
+# desktop/Android (the web's sink is the OpenAL backend in `oh-render`).
 oh-audio = { path = "../oh-audio" }
 
-# The windowed / console / server / steam stack is desktop-only
-# (W2 — the web vertical slice has no online client, no Steam, no egui
-# console, no SIGINT): `winit` has no emscripten backend (its web
-# backend is `target_os = "unknown"`-only), `oh-net`'s C deps (libsodium /
-# sqlite) cannot link via emcc, and `oh-steam` depends on `oh-net`. Gating
-# them off `wasm32-unknown-emscripten` (same versions) keeps the desktop
-# build byte-identically unchanged while letting `oh-app` COMPILE for
-# emscripten; the real web client lands in the `oh-web` crate (W5).
-# (issue 041: `oh-audio` is no longer in this group — the web plays audio via
-# the OpenAL backend behind the `AudioDevice` seam, so it is a common dep.)
+# SIGINT is a desktop / headless concern: the web loop is a plain
+# `request_animation_frame` (no signal handler).
 [target.'cfg(not(target_os = "emscripten"))'.dependencies]
-# Issue 18 milestone 4: the `-server` wiring (`dispatch.rs::main_server`)
-# — the only `oh_net` consumer in this crate (the `dispatch` module, the
-# `-server` entry, is `#[cfg(not(target_os = "emscripten"))]`). Gated off
-# emscripten for the link-time reason: `oh-net`'s `sodiumoxide` /
-# `rusqlite` C deps do not link for emscripten on a Windows host.
-oh-net = { path = "../oh-net" }
-# Issue 020 — the Steam manager the `mainClient` composition shares with
-# the engine (`HexagonGame`'s `steam_manager` seam) and the menu
-# (the `MenuGame::init`-lifecycle calls); `src/steam.rs` picks the
-# backend (feature `steam` = the real SDK, default = `NoSteam`).
-# Gated off emscripten (depends on `oh-net`).
-oh-steam = { path = "../oh-steam" }
 # C++ main.cpp:340-349 — the SIGINT handler, the SAFE port (the C++'s
 # `TODO (P2): UB`, main.cpp:339: the C++ handler called
 # `globalWindow.stop()` — non-atomic engine state — inside the signal
-# context). `signal-hook`'s `flag::register` keeps the signal context to
-# a single atomic store on the `WindowedClient`'s interrupt flag; the
-# loop head (the C++'s `while(isRunning())` position) performs the stop.
-# The web loop is a plain `request_animation_frame` — no signal handler.
+# context). `signal-hook`'s `flag::register` / `low_level::register`
+# keep the signal context to a single atomic store / one `write(2)`.
 signal-hook = "0.3"
-# Issue 014b — the egui Lua console overlay (DECISIONS.md D-022, verified
-# against the D-011 stack: egui 0.37 + egui-winit 0.37 + egui_glow 0.37
-# coexist with winit 0.30.13). The overlay lives HERE (composition, like
-# the draw bridge) — `oh-game` stays egui-free (headless stays clean).
-# D-022 caveat: `egui_glow 0.37` pulls `glow 0.17` while `oh-render`
-# uses `glow 0.18` — different Rust types over the SAME GL context; the
-# console builds its own glow-0.17 context from
-# `oh_render::GlParts::proc_address` (never from `oh-render`'s context).
-egui = "0.37"
-egui-winit = { version = "0.37", default-features = false, features = ["links"] }
-egui_glow = "0.37"
-# The console's own GL loader (the D-022 glow-0.17 half — coexists in the
-# lockfile with `oh-render`'s `glow 0.18`).
-glow = "0.17"
-# The console's event hook sees the window's raw winit events (the C++
-# `runEvents`'s per-event `gameEngine->handleEvent`, GameWindow.hpp:79;
-# the D-011 stack's `winit 0.30.13` — the same major the lockfile pins).
-# The `android-native-activity` feature (D-026, issue 25b): the same
-# feature + version oh-render already unifies workspace-wide (the lockfile
-# graph is unchanged) — it enables the `winit::platform::android` surface
-# the `android.rs` entry module (issue 25b) consumes on the android target.
-winit = { version = "0.30", features = ["android-native-activity"] }
 
 [target.'cfg(not(any(target_os = "android", target_family = "wasm")))'.dependencies]
-# 29j1 — the desktop controller backend behind `RealJoystick`
+# The desktop controller backend behind `RealJoystick`
 # (`src/joystick.rs`): the C++ `sf::Joystick` controller-0 poll's
 # replacement (the SFML read in `Core/Joystick.cpp::update`). Desktop
 # only — the Android / wasm targets keep the no-op `NoJoystick` /
@@ -131,54 +68,18 @@ winit = { version = "0.30", features = ["android-native-activity"] }
 # no-controller state (logged once), the C++ SFML no-pad behavior.
 gilrs = "0.11"
 
-[target.'cfg(target_os = "android")'.dependencies]
-# Issue 25b SG4: the APK asset extraction — the `AAssetManager` traversal
-# (`open_dir`/`open`) that copies the `_RELEASE` content tree out of the
-# APK's `assets/` on first run. `0.9.0` is already in the lockfile (the
-# `android-activity` dependency) — no version change; winit's `AndroidApp::
-# asset_manager()` returns this crate's `AssetManager` directly.
-ndk = "0.9"
-
 [target.'cfg(target_os = "emscripten")'.dependencies]
-# issue 046 (F32) — the web `SoftInput` controller (`src/windowed.rs`
-# `WebIme` — the 025f `ImeController`'s web twin): the page's
-# hidden-but-focusable `#ime` input element's focus / blur on the menu's
-# `is_entering_text` transition edge. The element + its attribute contract
-# live in `oh-render`'s emscripten `Window` (the `web_ime_input` accessor
-# this crate's `client.rs` emscripten arm reads); here only the controller
-# (the `HtmlInputElement` field type + the `focus_with_options` / `blur`
-# calls — the `HtmlElement` methods over the `HtmlInputElement` class).
-# issue 046 (F33) — the fullscreen button's (`#fs`) click sink (the
-# `WindowedClient::build`'s emscripten half — the config's `fullscreen`
-# toggle + the browser Fullscreen API's apply): `Window` / `Document`
-# (the `document()` + the `documentElement` + the `exitFullscreen` +
-# the `fullscreenEnabled` read + the `ohstatechange`'s `dispatch_event`
-# — the `EventTarget` the `Document` derefs to, the transitive feature)
-# + `Element` (the `documentElement`'s `requestFullscreen`) + `Event`
-# (the `ohstatechange`'s `Event::new` — the menu <-> game transition
-# edge's DOM signal, the shell's `#fs` visibility gate's listener).
+# The web's `#fs` click / change-sink install (`src/web_fullscreen.rs`,
+# salvaged from `oh-additions` by plan 002 issue 02a): the browser
+# Fullscreen API over the `documentElement` — `Window` (the
+# `web_sys::window()` + `document()` read) + `Document` (the
+# `fullscreenElement` / `documentElement` / `exitFullscreen` + the
+# `fullscreenEnabled` read) + `Element` (the `documentElement`'s
+# `requestFullscreen`) + `Event` (the transition-edge DOM signal the
+# web entry's listener rides, Issue 08).
 web-sys = { version = "0.3.106", features = [
-  "HtmlInputElement",
-  "HtmlElement",
-  "FocusOptions",
   "Window",
   "Document",
   "Element",
   "Event",
 ] }
-
-[features]
-# Issue 020: the real Steam backend (the C++'s `#ifndef SSVOH_ANDROID`
-# build — links the official loader stub via `steamworks-sys`; degrades
-# at runtime when no Steam client is running). OFF by default = the
-# C++'s no-SDK branch (CI has no Steam; see `.agents/skills/
-# lib-steamworks.md` §4 + `src/steam.rs`).
-steam = ["oh-steam/steam"]
-# D-023/D-024: forward onto oh-lua so the `open-hexagon` binary's
-# `-printLuaDocs` (and any composition in this package) sees the flag-ON
-# metadata store when the workspace is built with the feature (the C++
-# `SSVOH_PRODUCE_LUA_METADATA` build; default OFF = the shipped build).
-produce-lua-metadata = ["oh-lua/produce-lua-metadata"]
-
-[dev-dependencies]
-tempfile = { workspace = true }

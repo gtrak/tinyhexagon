@@ -59,7 +59,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 use oh_app::compose::{compose_with_config, RealProfiles};
-use oh_app::windowed::{AssetsPackShaderProvider, GlDrawTarget};
+use oh_app::draw_target::{AssetsPackShaderProvider, GlDrawTarget};
 use oh_config::{Config, TIME_STEP};
 use oh_game::seams::{NoJoystick, NoneSteamSink, NullReplayStore};
 use oh_render::gl::GlBackend;

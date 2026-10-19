@@ -2,9 +2,9 @@
 //!
 //! The composition itself (`LuaScriptHost` / `RealAssetsApi` / `Composed` /
 //! the two-phase build) lives in `oh_app::compose` — promoted from this
-//! file by issue 15 step (b) so the `open-hexagon` binary and the step (a)
-//! tests share ONE composition (the spec's dedup; the two-phase build and
-//! the `SharedLua` drop-order contract are documented there). What remains
+//! file by issue 15 step (b) so the binary and the step (a) tests share
+//! ONE composition (the spec's dedup; the two-phase build and the
+//! `SharedLua` drop-order contract are documented there). What remains
 //! test-local: the C++ test's `testProfile` profile seam, the `_RELEASE`
 //! root idiom, the C++ `initText` font pair, and the recording
 //! `DrawTarget` for the stage-sequence assertions.
@@ -24,8 +24,8 @@ pub use oh_app::compose::{compose_with, Composed};
 /// implementation reporting the C++ test's current profile ("testProfile"
 /// is what `death_createReplayFile` records as `player_name`).
 ///
-/// Test-local: the step-(b) binary uses `oh_game::seams::NullProfiles`
-/// instead (the real `HGAssets` profile surface lands with issue 17).
+/// Test-local: the binary uses `oh_game::seams::NullProfiles` instead
+/// (the real `HGAssets` profile surface lands with issue 17).
 /// `allow(dead_code)`: each test binary compiles this module separately
 /// and not all of them drive a live replay (which is what reads the
 /// profile name).
@@ -142,50 +142,4 @@ impl DrawTarget for Recording {
     fn save_screenshot(&mut self, path: &str) {
         self.events.push(DrawEvent::Screenshot(path.to_string()));
     }
-}
-
-// ---------------------------------------------------------------------
-// Sandbox data-root plumbing — shared by the two sandbox test binaries
-// (`headless_replay.rs`'s `Sandbox` and `windowed.rs`'s `TestSandbox`).
-// ---------------------------------------------------------------------
-
-/// The sandbox's read-only views of the tracked `_RELEASE` subtrees:
-/// symlinks on Unix (cheap) and Windows (`symlink_dir` — the
-/// GitHub-hosted runner runs with the privilege; on a local machine
-/// without symlink rights — non-admin without Developer Mode — fall
-/// back to a recursive copy). The copy fallback keeps the sandbox
-/// invariant ("never write through into the tracked `_RELEASE`")
-/// strictly stronger. (Issue 044: the cross-platform shape the
-/// windows-msvc gate leg needs — `std::os::unix::fs::symlink` does not
-/// compile there, `error[E0433]: cannot find `unix` in `os``.)
-#[allow(dead_code)] // only the sandbox test binaries link the subtrees
-pub fn sandbox_link(src: &Path, dst: &Path) {
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(src, dst).expect("sandbox link");
-    }
-    #[cfg(windows)]
-    {
-        if std::os::windows::fs::symlink_dir(src, dst).is_err() {
-            copy_dir_recursive(src, dst).expect("sandbox copy fallback");
-        }
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        copy_dir_recursive(src, dst).expect("sandbox copy");
-    }
-}
-
-#[allow(dead_code)] // the Windows/other-platform fallbacks
-fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
-    if src.is_dir() {
-        std::fs::create_dir_all(dst)?;
-        for entry in std::fs::read_dir(src)? {
-            let entry = entry?;
-            copy_dir_recursive(&entry.path(), &dst.join(entry.file_name()))?;
-        }
-    } else {
-        std::fs::copy(src, dst)?;
-    }
-    Ok(())
 }
