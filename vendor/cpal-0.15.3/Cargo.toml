@@ -1,0 +1,196 @@
+# Vendored by plan 002 issue 05b (th-synth): copy of the crates.io cache
+# source (registry src index.crates.io, cpal 0.15.3; the registry
+# extraction artifacts `.cargo-ok` / `.cargo_vcs_info.json` + the
+# author's `Cargo.lock` dropped; LICENSE kept). Changes vs the registry
+# source — ONE change, confined to the emscripten wasm-ABI layer in
+# `src/lib.rs` (everything else byte-identical, all other hosts
+# untouched):
+#   * `BufferSize` gained the `FromWasmAbi` impl its `IntoWasmAbi` impl
+#     always implied (wasm-bindgen >= 0.2.9x-era derives on
+#     `StreamConfig` require both directions on every field).
+#   * `impl IntoWasmAbi for BufferSize` no longer routes through
+#     `Option<u32>::into_abi()` (the trailing call no longer type-checks
+#     under wasm-bindgen 0.2.129); the match now returns `Option<u32>`
+#     directly (identical encoding: None = Default, Some(fc) = Fixed).
+# Reason: the wasm32-unknown-emscripten cross-target spike (05b) — cpal
+# 0.15.3 is the last 0.15.x and its emscripten host does not compile
+# against the workspace's wasm-bindgen 0.2.129 (th-web + the installed
+# wasm-bindgen CLI pin; downgrading is off the table — see the 03c web
+# recipe). Wired by the root `[patch.crates-io] cpal` entry (the 0.18.2
+# registry cpal that rodio pulls is NOT patched — same scheme as the
+# 05a alsa-sys line patch). See .agents/plans/002-tinyhexagon/05-synth.md
+# and .agents/skills/lib-cpal.md ("05b emscripten ABI patch").
+
+[package]
+edition = "2021"
+rust-version = "1.70"
+name = "cpal"
+version = "0.15.3"
+description = "Low-level cross-platform audio I/O library in pure Rust."
+documentation = "https://docs.rs/cpal"
+readme = "README.md"
+keywords = [
+    "audio",
+    "sound",
+]
+license = "Apache-2.0"
+repository = "https://github.com/rustaudio/cpal"
+
+[[example]]
+name = "android"
+crate-type = ["cdylib"]
+path = "examples/android.rs"
+
+[[example]]
+name = "beep"
+
+[[example]]
+name = "enumerate"
+
+[[example]]
+name = "feedback"
+
+[[example]]
+name = "record_wav"
+
+[[example]]
+name = "synth_tones"
+
+[dependencies.dasp_sample]
+version = "0.11"
+
+[dev-dependencies.anyhow]
+version = "1.0"
+
+[dev-dependencies.clap]
+version = "4.0"
+features = ["derive"]
+
+[dev-dependencies.hound]
+version = "3.5"
+
+[dev-dependencies.ringbuf]
+version = "0.3"
+
+[features]
+asio = [
+    "asio-sys",
+    "num-traits",
+]
+oboe-shared-stdcxx = ["oboe/shared-stdcxx"]
+
+[target."cfg(all(target_arch = \"wasm32\", target_os = \"unknown\"))".dependencies.js-sys]
+version = "0.3.35"
+
+[target."cfg(all(target_arch = \"wasm32\", target_os = \"unknown\"))".dependencies.wasm-bindgen]
+version = "0.2.58"
+optional = true
+
+[target."cfg(all(target_arch = \"wasm32\", target_os = \"unknown\"))".dependencies.web-sys]
+version = "0.3.35"
+features = [
+    "AudioContext",
+    "AudioContextOptions",
+    "AudioBuffer",
+    "AudioBufferSourceNode",
+    "AudioNode",
+    "AudioDestinationNode",
+    "Window",
+    "AudioContextState",
+]
+
+[target."cfg(any(target_os = \"linux\", target_os = \"dragonfly\", target_os = \"freebsd\", target_os = \"netbsd\"))".dependencies.alsa]
+version = "0.9"
+
+[target."cfg(any(target_os = \"linux\", target_os = \"dragonfly\", target_os = \"freebsd\", target_os = \"netbsd\"))".dependencies.jack]
+version = "0.11"
+optional = true
+
+[target."cfg(any(target_os = \"linux\", target_os = \"dragonfly\", target_os = \"freebsd\", target_os = \"netbsd\"))".dependencies.libc]
+version = "0.2"
+
+[target."cfg(any(target_os = \"macos\", target_os = \"ios\"))".dependencies.core-foundation-sys]
+version = "0.8.2"
+
+[target."cfg(any(target_os = \"macos\", target_os = \"ios\"))".dependencies.mach2]
+version = "0.4"
+
+[target."cfg(target_os = \"android\")".dependencies.jni]
+version = "0.21"
+
+[target."cfg(target_os = \"android\")".dependencies.ndk]
+version = "0.8"
+default-features = false
+
+[target."cfg(target_os = \"android\")".dependencies.ndk-context]
+version = "0.1"
+
+[target."cfg(target_os = \"android\")".dependencies.oboe]
+version = "0.6"
+features = ["java-interface"]
+
+[target."cfg(target_os = \"android\")".dev-dependencies.ndk-glue]
+version = "0.7"
+
+[target."cfg(target_os = \"emscripten\")".dependencies.js-sys]
+version = "0.3.35"
+
+[target."cfg(target_os = \"emscripten\")".dependencies.wasm-bindgen]
+version = "0.2.89"
+
+[target."cfg(target_os = \"emscripten\")".dependencies.wasm-bindgen-futures]
+version = "0.4.33"
+
+[target."cfg(target_os = \"emscripten\")".dependencies.web-sys]
+version = "0.3.35"
+features = [
+    "AudioContext",
+    "AudioContextOptions",
+    "AudioBuffer",
+    "AudioBufferSourceNode",
+    "AudioNode",
+    "AudioDestinationNode",
+    "Window",
+    "AudioContextState",
+]
+
+[target."cfg(target_os = \"ios\")".dependencies.coreaudio-rs]
+version = "0.11"
+features = [
+    "audio_unit",
+    "core_audio",
+    "audio_toolbox",
+]
+default-features = false
+
+[target."cfg(target_os = \"macos\")".dependencies.coreaudio-rs]
+version = "0.11"
+features = [
+    "audio_unit",
+    "core_audio",
+]
+default-features = false
+
+[target."cfg(target_os = \"windows\")".dependencies.asio-sys]
+version = "0.2"
+optional = true
+
+[target."cfg(target_os = \"windows\")".dependencies.num-traits]
+version = "0.2.6"
+optional = true
+
+[target."cfg(target_os = \"windows\")".dependencies.windows]
+version = "0.54.0"
+features = [
+    "Win32_Media_Audio",
+    "Win32_Foundation",
+    "Win32_Devices_Properties",
+    "Win32_Media_KernelStreaming",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Threading",
+    "Win32_Security",
+    "Win32_System_SystemServices",
+    "Win32_System_Variant",
+    "Win32_Media_Multimedia",
+    "Win32_UI_Shell_PropertiesSystem",
+]

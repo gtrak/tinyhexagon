@@ -5,9 +5,13 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-# The live modular synth (MIT, `audio` + `math` modules only — the TUI
-# binary's deps ride along as transitive deps of the lib, verified in the
-# cross-target spike: `.agents/plans/002-tinyhexagon/05-synth.md`).
+# The live modular synth (MIT, `audio` + `math` modules only). 05b: the
+# registry crate unconditionally builds its TUI/recording modules, which
+# fail on wasm32-unknown-emscripten (crossterm/mio + vorbis's C build);
+# it is patched to `vendor/rust-synth-0.23.0` (root `[patch.crates-io]`)
+# with `tui`/`recording` behind OFF-by-default features — so this default
+# (no-feature) dependency builds the audio-only graph on every target.
+# DSP/presets unchanged; see .agents/plans/002-tinyhexagon/05-synth.md.
 rust-synth = "0.23.0"
 
 [dev-dependencies]

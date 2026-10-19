@@ -1,0 +1,160 @@
+# Vendored by plan 002 issue 05b (th-synth): copy of the crates.io cache
+# source (registry src index.crates.io, rust-synth 0.23.0, upstream git
+# 12b25e0d881381ec7e5db60db239f98a4997894e; the registry extraction
+# artifacts `.cargo-ok` / `.cargo_vcs_info.json` + the author's
+# `Cargo.toml.orig` / `Cargo.lock` dropped). Changes vs the registry
+# source, all feature-wiring only — DSP/presets (`src/audio`, `src/math`)
+# byte-identical:
+#   * `[features]`: `default = []`; `tui` (ratatui + crossterm +
+#     tracing-subscriber + `recording`) and `recording` (flacenc +
+#     vorbis_rs + hound) gate the TUI/recording modules; the six
+#     formerly-unconditional deps above became `optional`.
+#   * `src/lib.rs`: `pub mod recording` / `pub mod tui` are
+#     `#[cfg(feature = ...)]`-gated.
+#   * `src/audio/engine.rs`: the 5 `RecorderState` touch points
+#     (import, `EngineHandle.recorder` field, local, `start_stream`
+#     param + call arg, per-frame `push_frame`) are
+#     `#[cfg(feature = "recording")]`-gated.
+#   * both `[[bin]]`s gained `required-features` so the TUI/render
+#     binaries only build with their features.
+# Reason: the wasm32-unknown-emscripten cross-target spike (05b) —
+# crossterm 0.28's mio does not support the emscripten target and
+# vorbis_rs 0.5's ogg_next_sys build script needs a C compiler (emcc).
+# `th-synth` uses only the `audio` + `math` modules, so it builds with
+# the default (no-feature) configuration on every target. Wired by the
+# root `[patch.crates-io] rust-synth` entry — see
+# .agents/plans/002-tinyhexagon/05-synth.md and
+# .agents/skills/lib-rust-synth.md ("wasm feature patch").
+
+[package]
+edition = "2021"
+name = "rust-synth"
+version = "0.23.0"
+authors = ["Rustam <info@superduperai.co>"]
+build = false
+exclude = [
+    "out/*",
+    "dist/*",
+    "recordings/*",
+    "presets/*",
+    "*.wav",
+    "*.flac",
+]
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Terminal modular ambient synthesizer — FunDSP + Ratatui. Long cinematic pads, Euclidean drum sequencer, per-track LFO, Valhalla-Supermassive-style reverb, genetic evolution coupled to Conway's Game of Life, TOML presets, FLAC recording."
+homepage = "https://github.com/fortunto2/rust-synth"
+documentation = "https://docs.rs/rust-synth"
+readme = "README.md"
+keywords = [
+    "synthesizer",
+    "ambient",
+    "dsp",
+    "tui",
+    "music",
+]
+categories = [
+    "multimedia::audio",
+    "command-line-utilities",
+    "multimedia",
+]
+license = "MIT"
+repository = "https://github.com/fortunto2/rust-synth"
+
+# 05b feature gate (see the provenance block above): the TUI and the
+# master-output recorder are OFF by default so `th-synth` (audio + math
+# only) builds on every target without crossterm/mio or the
+# flacenc/vorbis/hound recording stack. `persistence` stays
+# unconditional (pure-Rust TOML preset I/O, builds on every target).
+[features]
+default = []
+# Terminal UI (the `rust-synth` bin) + its recording controls.
+tui = ["dep:ratatui", "dep:crossterm", "dep:tracing-subscriber", "recording"]
+# Master-output recorder (FLAC/OGG encode + hound WAV) + the
+# `rust-synth-render` bin.
+recording = ["dep:flacenc", "dep:vorbis_rs", "dep:hound"]
+
+[lib]
+name = "rust_synth"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rust-synth"
+path = "src/main.rs"
+required-features = ["tui"]
+
+[[bin]]
+name = "rust-synth-render"
+path = "cli/main.rs"
+required-features = ["recording"]
+
+[dependencies.anyhow]
+version = "1"
+
+[dependencies.chrono]
+version = "0.4"
+
+[dependencies.cpal]
+version = "0.15"
+
+[dependencies.crossterm]
+version = "0.28"
+optional = true
+
+[dependencies.flacenc]
+version = "0.5"
+optional = true
+
+[dependencies.fundsp]
+version = "0.20"
+
+[dependencies.hound]
+version = "3.5"
+optional = true
+
+[dependencies.parking_lot]
+version = "0.12"
+
+[dependencies.ratatui]
+version = "0.29"
+optional = true
+
+[dependencies.serde]
+version = "1"
+features = ["derive"]
+
+[dependencies.thiserror]
+version = "2"
+
+[dependencies.toml]
+version = "0.8"
+
+[dependencies.tracing]
+version = "0.1"
+
+[dependencies.tracing-subscriber]
+version = "0.3"
+features = ["env-filter"]
+optional = true
+
+[dependencies.vorbis_rs]
+version = "0.5"
+optional = true
+
+[dev-dependencies.approx]
+version = "0.5"
+
+[dev-dependencies.tempfile]
+version = "3"
+
+[profile.profiling]
+debug = 2
+inherits = "release"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

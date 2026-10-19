@@ -1,6 +1,6 @@
 # Issue 05 — `th-synth`: cross-target spike + music director
 
-**Status:** PARTIAL — 05a LANDED; 05b pending
+**Status:** LANDED (05a host + 05b Android/wasm)
 **Depends:** 03
 **Unblocks:** 07 (music integration)
 

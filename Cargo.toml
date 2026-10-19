@@ -43,8 +43,32 @@ thiserror = "2"
 # (`vendor/alsa-sys-0.3.1`, byte-identical to the registry source with
 # `links = "alsa_0_3"`) patches the 0.3.x line only; the 0.4.0 registry
 # crate keeps `links = "alsa"`. See .agents/plans/002-tinyhexagon/05-synth.md.
+#
+# Plan 002 issue 05b (th-synth): the cross-target spike failed on
+# wasm32-unknown-emscripten because rust-synth 0.23 unconditionally builds
+# its TUI/recording modules (crossterm 0.28 -> mio: no emscripten target
+# support; vorbis_rs 0.5 -> ogg_next_sys: C build script needs emcc).
+# `vendor/rust-synth-0.23.0` is the registry source with `tui`/`recording`
+# gated behind cargo features (default OFF — only `audio`/`math`/
+# `persistence` build; DSP/presets byte-identical). th-synth uses no
+# feature, so every target gets the audio-only graph. See
+# .agents/skills/lib-rust-synth.md ("wasm feature patch").
+# Plan 002 issue 05b (th-synth, second patch): cpal 0.15.3 (pulled by the
+# vendored rust-synth) is the LAST 0.15.x release and its emscripten host
+# does not compile against the workspace's wasm-bindgen 0.2.129 (the pin
+# th-web + the installed wasm-bindgen CLI require; downgrading is a
+# documented drift hazard). `vendor/cpal-0.15.3` is the registry source
+# with ONE surgical change confined to the emscripten wasm-ABI layer
+# (BufferSize: the missing FromWasmAbi half + the IntoWasmAbi match that
+# no longer routed through Option<u32>::into_abi); every other host and
+# all API/DSP surface are byte-identical. The 0.18.2 registry cpal
+# (rodio) is NOT patched — the version pin limits the patch to the
+# 0.15.3 line, exactly like the 05a alsa-sys 0.3.x line patch. See
+# .agents/skills/lib-cpal.md ("05b emscripten ABI patch").
 [patch.crates-io]
 alsa-sys = { path = "vendor/alsa-sys-0.3.1", version = "0.3.1" }
+rust-synth = { path = "vendor/rust-synth-0.23.0", version = "0.23.0" }
+cpal = { path = "vendor/cpal-0.15.3", version = "0.15.3" }
 
 # Profile tuning is finalized by issue 22 (builds/CI); issue 24 pins the
 # release profile to the C++ release build's settings.

@@ -163,10 +163,15 @@ impl MusicDirector {
         // Emscripten: boot stays on the fallback clock (autoplay policy —
         // the engine comes up via `start_on_gesture` / `resume`).
         #[cfg(target_os = "emscripten")]
-        return Self::new_fallback();
-        let mut d = Self::new_fallback();
-        d.try_start_live();
-        d
+        {
+            return Self::new_fallback();
+        }
+        #[cfg(not(target_os = "emscripten"))]
+        {
+            let mut d = Self::new_fallback();
+            d.try_start_live();
+            d
+        }
     }
 
     /// Web boot hook (emscripten only, 05-synth.md "Web/Android"): call

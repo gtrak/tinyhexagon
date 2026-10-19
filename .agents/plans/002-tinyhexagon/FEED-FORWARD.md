@@ -677,7 +677,7 @@ re-reading the whole history.
 - Gate (host, 4/4 green): fmt / build / clippy `-D warnings` / test —
   see `.agents/tasks/plan-002/issue-005a-report.md`.
 
-### 05b — synth cross-target (pending)
+### 05b — synth cross-target (LANDED)
 
 - Hand-off from 05a (host only): run
   `cargo check -p th-synth --target aarch64-linux-android` (the oboe
@@ -690,12 +690,65 @@ re-reading the whole history.
   feature-gated rust-synth (plan 05 spike-failure path) and re-run; do
   NOT substitute or drop music. Then re-run `bash tools/gate.sh` and fill
   the `TODO(05b)` markers in `lib-rust-synth.md` / `lib-cpal.md`.
-- Spike result (stock vs patched):
-- Patch location:
-- Director API:
-- Stage/layer table:
-- Web gesture hook:
-- Target caveats:
+- Spike result (stock vs patched): **Android GREEN on STOCK** rust-synth
+  0.23.0 (the whole TUI/recording dep set is in the aarch64 graph and
+  checks clean — the wasm-only breakage is in crossterm's `mio 1.2.4`
+  ["This wasm target is unsupported by mio"] + vorbis's `ogg_next_sys
+  0.1.5` C build script [needs emcc], not in the crates themselves). **
+  wasm RED on stock, GREEN patched** (see patch location). `oboe-sys
+  0.6.1` compiled the bundled oboe C++ FROM SOURCE with the NDK clang++
+  from `tools/android-env.sh` (`aarch64-linux-android28-clang++`, API
+  28; the `fetch-prebuilt` GitHub path is OFF by default). oboe host:
+  cpal builds from `AudioStreamBuilder::default()` (`AudioApi::
+  Unspecified`); oboe 0.6.1 C++ recommends AAudio iff `SDK ≥ O_MR1 (27)
+  && isAAudioSupported()` ⇒ **AAudio on all of our minSdk-28 devices**
+  (source-verified; the on-device confirmation is 08). SECOND blocker
+  (new, not in plan 05's risk list): cpal **0.15.3 is the last 0.15.x**
+  and its emscripten host does not compile against the workspace's
+  wasm-bindgen 0.2.129 (3 errors in `cpal/src/lib.rs` around
+  `BufferSize` — missing `FromWasmAbi` for the `StreamConfig` derive +
+  the hand-written `IntoWasmAbi` match no longer type-checking). Fixed
+  by the cpal vendor patch (supervisor ruling A); downgrading
+  wasm-bindgen was rejected (th-web's 0.2.129 pin matches the installed
+  CLI — the 03c recipe's documented drift hazard). Music NOT
+  substituted or dropped on any target.
+- Patch location: `vendor/rust-synth-0.23.0/` (registry copy; `[features]`
+  `default = []` + `recording` [flacenc/vorbis_rs/hound] + `tui`
+  [ratatui/crossterm/tracing-subscriber + `recording`]; the 6 deps
+  optional; both `[[bin]]`s `required-features`; `lib.rs` gates the
+  `recording`/`tui` mods; `audio/engine.rs` 5 cfg-gated `RecorderState`
+  touch points; DSP/math byte-identical) + `vendor/cpal-0.15.3/`
+  (registry copy; TWO `#[cfg(target_os = "emscripten")]` changes in
+  `src/lib.rs` — the missing `FromWasmAbi` impl for `BufferSize`
+  (`Option<u32>`: None ⇔ Default, Some(fc) ⇔ Fixed) + dropping the
+  trailing `.into_abi()` from `IntoWasmAbi` (identical encoding); all
+  other hosts/ABI untouched; residual: 2 upstream dead-code warnings in
+  the emscripten host left in place per the surgical ruling). Wired by
+  the root `[patch.crates-io]`: `rust-synth = { path = "vendor/
+  rust-synth-0.23.0", version = "0.23.0" }` + `cpal = { path = "vendor/
+  cpal-0.15.3", version = "0.15.3" }` (version pins limit each patch to
+  its line — the 0.18.2 registry cpal rodio pulls stays stock; same
+  scheme as the 05a alsa-sys 0.3.x line patch). `th-synth` depends on
+  `rust-synth` with the default (no) features ⇒ audio-only graph on
+  every target (the lock now drops the TUI/recording subtree).
+- Director API: UNCHANGED from 05a (one structural note: `start()`'s
+  emscripten early-return was re-cfg'd into two mutually-exclusive
+  blocks in `crates/th-synth/src/director.rs` — same calls, same
+  signature/behaviour — to drop an `unreachable_code` warning that only
+  appears now the emscripten target actually compiles).
+- Stage/layer table: UNCHANGED from 05a.
+- Web gesture hook: UNCHANGED (`start_on_gesture()` cfg-emscripten-only /`resume()`;
+  08 wires the first canvas pointer/key event).
+- Target caveats: ALL THREE `cargo check`s green (host re-verified; see
+  skills for the per-target evidence). Host gate 4/4 green after the
+  patches (fmt/build/clippy `-D warnings`/test). For 08: the emscripten
+  build links the PATCHED cpal — its `BufferSize` wasm ABI is
+  `Option<u32>` (None = default buffer); if the web entry ever needs a
+  custom buffer size use `StreamConfig` as usual (the host API is
+  unchanged). The vendored cpal's 2 upstream emscripten-host warnings
+  are expected noise. The 05a `TODO(05b)` markers in
+  `lib-rust-synth.md` / `lib-cpal.md` are filled (Targets / Oboe host /
+  "05b emscripten ABI patch" / "wasm feature patch (05b)").
 
 ### 06 — tiny pack (LANDED)
 
@@ -779,6 +832,7 @@ re-reading the whole history.
   `tools/smoke-windowed.sh` still asserts the old `[::mainClient] Finished`
   string; that half is inert until 07/08 adapts it to the tiny loop.
 - 05a handoff: `BeatView.playing` means live, not un-suspended; a hidden tab freezes `phase_clock` and cpal 0.15 exposes no suspend query — re-fire `start_on_gesture` on visibility/gesture. The web entry must start the synth only on the first gesture.
+- 05b handoff: wasm uses the vendored rust-synth (tui/recording features off) + the cpal 0.15.3 emscripten ABI patch; 08 must keep `wasm-bindgen 0.2.129`, never downgrade, and re-fire `start_on_gesture` on visibility/gesture. Runtime audio (device/browser listen, AAudio on-device) remains 07/08. Windows cross was outside 05b; the cpal emscripten host has 2 dead-code warnings.
 - Web boot/audio-unlock export: 03c landed the STUB's browser half —
   `th-web`'s `#[wasm_bindgen] status()` (returns "tinyhexagon stub: the
   tiny runtime lands in plan 002 issue 07/08"; the page's

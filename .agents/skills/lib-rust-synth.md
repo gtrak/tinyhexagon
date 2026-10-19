@@ -1,15 +1,19 @@
 # lib-rust-synth — rust-synth 0.23.0 (Rust)
 
-Pinned version: **rust-synth 0.23.0** (registry, MIT; `crates/th-synth/Cargo.toml`), read from checked-out source:
-
-`~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rust-synth-0.23.0/src/`
+Pinned version: **rust-synth 0.23.0** (MIT), read from the checked-out
+registry source (`~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/
+rust-synth-0.23.0/src/`); the build graph uses the 05b-vendored
+`vendor/rust-synth-0.23.0` (root `[patch.crates-io]` — see "wasm feature
+patch (05b)" below; DSP/math/audio are byte-identical to the registry
+source).
 
 Companion skill: `.agents/skills/lib-cpal.md` (its audio backend, cpal 0.15.3).
-Consumer: `crates/th-synth` (plan 002 issue 05a). Only the `audio` + `math`
-modules are used; the TUI/recording modules compile unconditionally (their
-deps — `ratatui`, `crossterm`, `flacenc`, `vorbis_rs`, `tracing-subscriber` —
-ride along as lib transitive deps; the cross-target risk of that is the 05b
-spike).
+Consumer: `crates/th-synth` (plan 002 issue 05a/05b). Only the `audio` +
+`math` modules are used; upstream, the TUI/recording modules compile
+unconditionally (their deps — `ratatui`, `crossterm`, `flacenc`,
+`vorbis_rs`, `tracing-subscriber` — rode along as lib transitive deps;
+that was the 05b cross-target risk, resolved by the vendored feature
+gate below).
 
 ## Engine (`src/audio/engine.rs`)
 
@@ -116,14 +120,65 @@ checksum) + `alsa-sys 0.4.0` (registry) side by side.
 - **host (Linux x86_64)**: VERIFIED in 05a — `cargo check`/`cargo test -p
   th-synth` + the whole-workspace gate green; cpal 0.15 default host = ALSA
   (build script probes `pkg-config alsa`; no device → `AudioEngine::start`
-  returns `Err`, the director falls back silently).
-- **aarch64-linux-android (oboe)**: `TODO(05b)` — cpal 0.15.3's oboe host
-  selection + `AudioEngine::start` under AAudio are unverified on a
-  target; see `lib-cpal.md`.
-- **wasm32-unknown-emscripten**: `TODO(05b)` — cpal 0.15.3's emscripten
-  host (one `AudioContext` per stream; boot must stay pre-gesture —
+  returns `Err`, the director falls back silently). Re-verified in 05b
+  after the vendor patches (host gate re-run green).
+- **aarch64-linux-android (oboe)**: VERIFIED in 05b — `cargo check -p
+  th-synth --target aarch64-linux-android` GREEN, first on STOCK registry
+  rust-synth (the whole TUI/recording dep set — ratatui 0.29, crossterm
+  0.28.1, flacenc, hound, vorbis_rs 0.5.6 + symphonia, tracing-subscriber
+  — is in the android graph and checks clean; the wasm-only breakage is in
+  crossterm's mio + vorbis's C build, not in the crates themselves). The
+  patched (feature-gated) graph is green too. `oboe-sys 0.6.1` compiles
+  the bundled oboe C++ from source with the NDK clang++ from
+  `tools/android-env.sh` (no prebuilt fetch — `fetch-prebuilt` is off);
+  AAudio is the runtime API on our minSdk-28 devices (the oboe 0.6.1
+  source logic — see `lib-cpal.md` "Oboe host").
+- **wasm32-unknown-emscripten**: VERIFIED in 05b — STOCK registry
+  rust-synth FAILS (`cargo check` breaks on `mio 1.2.4`, pulled by
+  crossterm 0.28.1: "This wasm target is unsupported by mio"; and on
+  `ogg_next_sys 0.1.5`'s build script via vorbis_rs 0.5.6: it needs a C
+  compiler, emcc, which `check` does not provide). The 05b vendor patch
+  (below) + the cpal 0.15.3 emscripten ABI patch (`lib-cpal.md` "05b
+  emscripten ABI patch") make `cargo check -p th-synth --target
+  wasm32-unknown-emscripten` GREEN. Boot stays pre-gesture —
   `th-synth`'s `start_on_gesture` is cfg-gated to emscripten for exactly
-  this); see `lib-cpal.md`.
+  this (cpal's emscripten `Stream::play()` = `AudioContext.resume()` whose
+  rejected promise panics).
+
+## wasm feature patch (05b)
+
+`vendor/rust-synth-0.23.0/` — registry cache copy (upstream git
+12b25e0d881381ec7e5db60db239f98a4997894e; LICENSE in; registry-extraction
+artifacts + the author's `Cargo.toml.orig`/`Cargo.lock` dropped). Changes,
+feature-wiring only — `src/audio` (DSP/presets/engine) is byte-identical
+except the 5 `#[cfg(feature = "recording")]` touch points on the recorder
+plumbing, `src/math` untouched:
+
+- `Cargo.toml`: `[features]` — `default = []`; `recording =
+  ["dep:flacenc", "dep:vorbis_rs", "dep:hound"]`; `tui = ["dep:ratatui",
+  "dep:crossterm", "dep:tracing-subscriber", "recording"]` (the TUI's
+  record controls reference `crate::recording`, so `tui` implies
+  `recording`); those six deps are now `optional`; both `[[bin]]`s
+  (`rust-synth` → `required-features = ["tui"]`, `rust-synth-render` →
+  `["recording"]`).
+- `src/lib.rs`: `pub mod recording` / `pub mod tui` are
+  `#[cfg(feature = …)]`-gated; `audio`/`math`/`persistence` stay
+  unconditional (`persistence` = pure-Rust TOML preset I/O — builds on
+  every target).
+- `src/audio/engine.rs`: the 5 `RecorderState` touch points are
+  `#[cfg(feature = "recording")]`-gated — the import, the
+  `EngineHandle.recorder` field, the `RecorderState::new` local, the
+  `start_stream` parameter + call argument, and the per-frame
+  `recorder.push_frame(l, r)` in the callback. With the feature off the
+  audio path is byte-identical in behaviour (the recorder is a no-op
+  sink anyway — `th-synth` never records); with it on, everything is as
+  upstream.
+
+`th-synth` depends on `rust-synth = "0.23.0"` with the default (no)
+features, so every target builds the audio-only graph. Music is NOT
+substituted or dropped on any target (the 05 contract). `diff -rq` against
+the registry source shows exactly: `Cargo.toml`, `src/lib.rs`,
+`src/audio/engine.rs` (+ the dropped artifact files).
 
 ## Pitfalls
 
