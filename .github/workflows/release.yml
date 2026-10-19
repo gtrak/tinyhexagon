@@ -49,21 +49,25 @@ name: Release
 #     'x86_64-pc-windows-msvc': OS 'msvc' not recognized` (build script
 #     panic at build.rs:257). The autoconf build cannot target EITHER rust
 #     windows triple; this is the same wall tools/build-windows.sh's header
-#     documents for x86_64-pc-windows-gnu, and it is why that script
-#     prebuilds libsodium for the canonical MinGW triple.
+#     documents for x86_64-pc-windows-gnu, and it is why that script used to
+#     prebuild libsodium for the canonical MinGW triple (that prebuild went
+#     in issue 03d).
 #   * libsqlite3-sys 0.28.0 (rusqlite, bundled) and libz-sys 1.1.30: cc-rs
 #     selects AR=llvm-lib for the msvc target, but cargo-xwin does not
 #     provide llvm-lib on the build PATH ("failed to find tool
-#     'llvm-lib'"), so their archive steps cannot run.
+#     'llvm-lib'"), so their archive steps cannot run. (The sodium / sqlite
+#     / zlib C deps are all GONE from the graph since issues 02b/02c2 —
+#     th-net removed, flate2 is pure-Rust now — the findings stand as
+#     history; see below.)
+# POST-SODIUM (issue 03d): the only cc-rs dep the cross path still
+# compiles is Luau (luau0-src), and it cross-compiles in place through
+# the mingw toolchain — no libsodium prebuild, no SODIUM_LIB_DIR, no
+# -ladvapi32. The MSVC path stays ruled out on the recorded llvm-lib /
+# native-MSVC-toolchain grounds.
 # Hence this job uses the already-scripted mingw-gnu release path
 # (tools/package.sh --windows -> tools/build-windows.sh: the full
-# x86_64-pc-windows-gnu cross-build + the libsodium prebuild for the
-# canonical MinGW triple x86_64-w64-mingw32). The resulting .exe is
-# MinGW-based (no MSVC CRT requirement at runtime). If a future
-# libsodium-sys ships a msvc target (or a prebuilt msvc libsodium
-# appears), this job becomes: `cargo install cargo-xwin` +
-# `cargo xwin build --release --target x86_64-pc-windows-msvc` + staging
-# the .exe next to a pristine copy of _RELEASE.
+# x86_64-pc-windows-gnu cross-build). The resulting .exe is MinGW-based
+# (no MSVC CRT requirement at runtime).
 #
 # ANDROID SIGNING — tools/package-android.sh signs with the project's
 # SELF-DISTRIBUTION keystore (tools/android/openhexagon-release.keystore;
@@ -204,7 +208,8 @@ jobs:
 
       - name: Cross build (release) + stage (the .exe smoke is skipped by the script on a Linux runner)
         # See the file header for why this is mingw-gnu and not cargo-xwin
-        # MSVC (the libsodium-sys autoconf wall + the missing llvm-lib).
+        # MSVC (the C-dep autoconf / llvm-lib walls; post-sodium the
+        # cross path compiles Luau only — see the file header).
         run: bash tools/package.sh --windows
 
       - name: Zip the staged _RELEASE

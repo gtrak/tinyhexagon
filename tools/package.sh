@@ -150,10 +150,10 @@ if [ "$PLATFORM" = "linux" ]; then
     PLATFORM_DIR="linux-$(rustc -vV | awk '/^host:/{print $2}')"
 else
     # The Windows cross build (issue 22's tools/build-windows.sh:
-    # the libsodium cross-prebuild + the full cargo cross-compile + link
-    # of the .exe's; `--release` = the release profile, added by issue 24
-    # for this packager). Its prereqs (the rustup target, mingw-w64, make)
-    # are checked inside that script.
+    # the full cargo cross-compile + link of the .exe's, no libsodium
+    # prebuild — th-net went in issue 02b; `--release` = the release
+    # profile, added by issue 24 for this packager). Its prereqs (the
+    # rustup target, mingw-w64) are checked inside that script.
     echo "== bash tools/build-windows.sh --build --release ${CARGO_FEATURES[*]:-}"
     if [ "${#CARGO_FEATURES[@]}" -gt 0 ]; then
         # build-windows.sh execs a fixed cargo line; the steam-feature
@@ -204,8 +204,7 @@ chmod +x "$STAGE/$(basename "$BIN")"
 # `SteamAPI_SteamUserStats_v012` but not `..._v013`): verified, a
 # steam-linked binary run against the tracked stub aborts at startup
 # with `undefined symbol: SteamAPI_SteamUserStats_v013`. So the packager
-# stages the bundled stub (found in the cargo registry cache — the same
-# idiom tools/build-windows.sh uses for the libsodium-sys source). Only
+# stages the bundled stub (found in the cargo registry cache). Only
 # `steam_appid.txt` (1358090 — SDK-generation-independent) comes from
 # the tracked _RELEASE.
 if [ "$WITH_STEAM" -eq 1 ]; then

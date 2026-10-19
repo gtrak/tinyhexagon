@@ -134,8 +134,8 @@ jobs:
         run: bash tools/ci-deps.sh
 
       # cargo check --workspace --all-targets --target x86_64-pc-windows-gnu —
-      # the fast cross signal (incl. the libsodium cross-prebuild; see the
-      # script). --all-targets (the script's own flag): the LIB targets alone
+      # the fast cross signal (see the script). --all-targets (the script's
+      # own flag): the LIB targets alone
       # miss the test-only platform code — issue 044's windows-msvc leg died
       # on `std::os::unix::fs::symlink` in th-app's TEST targets (E0433),
       # invisible to the lib-only check. The Windows-target regression

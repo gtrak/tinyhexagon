@@ -655,6 +655,18 @@ re-reading the whole history.
 
 ### 08 — Android/web/packaging (pending)
 
+- Windows cross path (03d LANDED): the libsodium cross-prebuild in
+  `tools/build-windows.sh` (SODIUM_DIR/SODIUM_LIB_DIR + `--force-sodium`
+  + the make prereq) and the `-ladvapi32` rustflag for
+  `x86_64-pc-windows-gnu` in `.cargo/config.toml` are REMOVED (th-net
+  went in 02b; the dead prebuild failed CI's cross-check before cargo,
+  run 39309854944). The cross path now needs only the rustup target +
+  mingw-w64 gcc; Luau (luau0-src) is the sole cc-rs dep and compiles in
+  place (host-verified: cross `--check --all-targets` and the full
+  `--build` link both pass; the .exe imports no advapi32). 08 KEEPS the
+  Windows artifact/CI work — release.yml's windows job structure, the
+  artifact names, and `tools/ci-deps.sh`'s mingw-w64 prereq are all
+  untouched by 03d.
 - Android entry: pass `DesktopModeSource::Fixed(VideoMode::new(0, 0))`
   to `load_and_reapply` (winit's monitor API exists only inside a RUNNING
   event loop and the activity's loop is consumed by the game's own `run`
@@ -699,8 +711,6 @@ re-reading the whole history.
   against the real entry.
   - P2 for 08: `web-stub-probe.mjs` parses only `--shot=PATH` (space form ignored;
     the CI default masks it) — accept both or keep `--shot=` everywhere.
-  - P2 for 08: the `th-web` Cargo description and the `ci.yml` wasm job name
-    still say "stub/no-op"/"compile proof"; update them with the real entry.
   - P2 for 08: `save_session` is a no-op not called by the minimal page; the
     real flush/IDBFS returns with the tiny web entry.
   - P2 for 08: CI hardcodes `OH_CHROME=/usr/bin/google-chrome`; add a
