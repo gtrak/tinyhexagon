@@ -460,8 +460,7 @@ pub fn capture_go_to_menu(game: &HexagonGame<GameApiState>) -> Arc<std::sync::Mu
 /// Builds the composition for one engine instance (C++ test: one
 /// `HexagonGame` per `doTest` call, all sharing one `HGAssets`), with the
 /// C++ test's seam defaults: `NoJoystick` (see [`compose_with`] for the
-/// parameterized form, used by the issue 029m 29d1 `go_to_menu`
-/// score-send tests).
+/// parameterized form).
 ///
 /// `window` mirrors the C++ `mGameWindow != nullptr` (the headless tests
 /// pass a null window); `root` is the process-CWD equivalent the
@@ -477,12 +476,11 @@ pub fn compose(assets: Arc<oh_assets::Assets>, root: PathBuf, window: bool) -> C
     )
 }
 
-/// [`compose`] with injectable `Joystick` / `CosmeticRng` seams — the
-/// form tests that observe the engine's cosmetic-RNG draw order use (the
-/// PB particle test was retired in 02c1). `window` / `root` mean the
-/// same as in [`compose`]. `allow(dead_code)`: each test binary compiles
-/// this module separately and not all of them use this parameterized
-/// variant.
+/// [`compose`] with injectable `Joystick` / `CosmeticRng` seams — the form
+/// the joystick-pipeline test (`joystick.rs`) drives. `window` / `root`
+/// mean the same as in [`compose`]. `allow(dead_code)`: each test binary
+/// compiles this module separately and not all of them use this
+/// parameterized variant.
 #[allow(dead_code)]
 pub fn compose_with(
     assets: Arc<oh_assets::Assets>,

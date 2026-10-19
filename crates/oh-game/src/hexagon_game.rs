@@ -293,14 +293,6 @@ pub struct EngineState {
     // C++ fast-forward / tick-advance test hooks.
     pub(crate) fast_forward_target: Option<f64>,
     pub(crate) advance_tick_count: Option<i32>,
-
-    // 030b fingerprint (OFF BY DEFAULT, additive-only; see
-    // .agents/plans/001-rust-port/parity/cpp-fingerprint-definition.md):
-    // `fingerprint_file == None` = disabled (the default) — `update` takes
-    // no extra path, so default behaviour AND output are unchanged.
-    pub(crate) fingerprint_file: Option<std::fs::File>,
-    pub(crate) fingerprint_frame: u64, // 0-based, reset by `new_game`
-    pub(crate) fingerprint_last_draws: u64, // reset by `new_game`
 }
 
 fn entropy_seed() -> u64 {
@@ -383,13 +375,11 @@ impl<S: SharedStore> DerefMut for SharedGuard<'_, S> {
 
 /// C++ `std::function<void(const bool)>` capture (type alias so the
 /// `Inner` field stays under clippy's type-complexity budget). `Send +
-/// Sync` (the engine is `Arc<dyn GameApi>`, so its members must be):
-/// the windowed `fnGoToMenu` closure (main.cpp:456-462) therefore only
-/// sets a thread-atomic signal (an `Arc<AtomicU8>` — `Send + Sync`);
-/// the `Rc`-based menu calls (`returnToLevelSelection` / `init`) +
-/// `setGameState` are performed by the composition's game state adapter,
-/// which consumes the signal at the start of the next tick (see
-/// `oh_app::windowed`).
+/// Sync` (the engine is `Arc<dyn GameApi>`, so its members must be).
+///
+/// Unset until a host wires it (the C++'s `main.cpp:456-462` assigns it
+/// after construction — the C++ guard `if (fnGoToMenu)` in
+/// [`HexagonGame::go_to_menu`] skips the call when it is not).
 pub type GoToMenuCallback = Arc<dyn Fn(bool) + Send + Sync>;
 
 impl<S: SharedStore> HexagonGame<S> {
@@ -506,11 +496,6 @@ impl<S: SharedStore> HexagonGame<S> {
             random_input_rng: Pcg32Fast::from_seed(entropy_seed()),
             fast_forward_target: None,
             advance_tick_count: None,
-            // 030b fingerprint: OFF by default (the C++ `fingerprintFile` is
-            // nullptr until `setFingerprintPath`).
-            fingerprint_file: None,
-            fingerprint_frame: 0,
-            fingerprint_last_draws: 0,
         };
 
         // C++ `HexagonGame` ctor's "Keyboard binds" section
@@ -614,16 +599,6 @@ impl<S: SharedStore> HexagonGame<S> {
         m_first_play: bool,
         m_difficulty_mult: f32,
     ) {
-        // 030b fingerprint (additive-only): the frame counter is per-game
-        // (see .agents/plans/001-rust-port/parity/
-        // cpp-fingerprint-definition.md). `st.rng` is replaced below with a
-        // fresh wrapper (draws == 0), so the draw baseline resets with it.
-        {
-            let mut e = self.est();
-            e.fingerprint_frame = 0;
-            e.fingerprint_last_draws = 0;
-        }
-
         debug_assert!(self.0.assets.is_valid_pack_id(m_pack_id));
         debug_assert!(self.0.assets.is_valid_level_id(m_id));
 
@@ -1096,7 +1071,7 @@ impl<S: SharedStore> HexagonGame<S> {
     }
 
     // ------------------------------------------------------------------
-    // Hooks (callbacks / test flags / fingerprint)
+    // Hooks (callbacks / test flags)
     // ------------------------------------------------------------------
 
     /// C++ `hg.fnGoToMenu = ...` (main.cpp:456-462) — the app-level
@@ -1133,34 +1108,6 @@ impl<S: SharedStore> HexagonGame<S> {
     /// exposed directly for tests).
     pub fn set_advance_tick_count(&self, n: i32) {
         self.est().advance_tick_count = Some(n);
-    }
-
-    /// 030b fingerprint — the C++ twin of `HexagonGame::setFingerprintPath`
-    /// (OFF BY DEFAULT, additive-only; the definition:
-    /// `.agents/plans/001-rust-port/parity/cpp-fingerprint-definition.md`).
-    ///
-    /// When `Some(path)`, the end-of-`update` hook writes one line per
-    /// frame, `<frame> <hash> <draws>\n` (hash = FNV-1a64 over the exact
-    /// v1 field order; floats as raw IEEE bits; the game-RNG state as its
-    /// canonical MCG label). `None` closes any open file: the hook takes no
-    /// extra path and default behaviour AND output are unchanged.
-    ///
-    /// Returns `false` (and leaves the file closed) when the path cannot be
-    /// opened — mirroring the C++ `fopen` failure (null file, hook off).
-    pub fn set_fingerprint_path(&self, path: Option<&std::path::Path>) -> bool {
-        let mut e = self.est();
-        e.fingerprint_file.take(); // drops (closes) the previous file (fclose)
-
-        e.fingerprint_frame = 0;
-        e.fingerprint_last_draws = 0;
-
-        match path.and_then(|p| std::fs::File::create(p).ok()) {
-            Some(file) => {
-                e.fingerprint_file = Some(file);
-                true
-            }
-            None => false,
-        }
     }
 
     // ------------------------------------------------------------------
@@ -1205,11 +1152,11 @@ impl<S: SharedStore> HexagonGame<S> {
     // goToMenu / invalidateScore / addMessage (verbatim)
     // ------------------------------------------------------------------
 
-    /// C++ `goToMenu(mSendScores, mError)` (verbatim; `fnGoToMenu` is the
-    /// app-level callback and is unset in this port — the C++ guard
-    /// `if(fnGoToMenu)` skips it). The C++'s `mSendScores`
-    /// `saveReplay()` call was retired by plan 002 issue 02c2 with the
-    /// replay removal.
+    /// C++ `goToMenu(mSendScores, mError)` (verbatim). The `fnGoToMenu`
+    /// app-level callback fires only when a host has set it (the C++
+    /// guard `if (fnGoToMenu)` — unset on the headless engines). The
+    /// C++'s `mSendScores` `saveReplay()` call was retired by plan 002
+    /// issue 02c2 with the replay removal.
     pub fn go_to_menu(&self, _m_send_scores: bool, m_error: bool) {
         if !self.0.window {
             self.log(

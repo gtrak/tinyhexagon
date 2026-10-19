@@ -323,21 +323,64 @@ re-reading the whole history.
   `pb_text_growth`/`must_show_replay_ui: false`), the fingerprint/RNG path,
   and the replay/PB/steam doc residue.
 
-### 02 — crate removal / engine de-scope (02c1/02c2 LANDED; 02c3 pending)
+### 02c3 — final engine cleanup (LANDED)
+
+- Fingerprint (030b) removed: the `EngineState` `fingerprint_*` fields +
+  `set_fingerprint_path` + the `new_game` reset, `maybe_emit_fingerprint`
+  + the FNV-1a builder in `update.rs`, the `lua_console` stand-in init, and
+  the 030b-only accessors with no other caller (`SpeedData::min/max/
+  ping_pong`, `CCustomWallManager::alive_handles`, `CWall::get_hue_mod`).
+  `oh-rng` lost the parity-only `state_position` (wrapper + `Pcg32Fast`),
+  `distance_from_wrapped` and the wrapper `draws` counter; `engine_state()`
+  (raw MCG state) + `Pcg32Fast::state()` (the C++ `engine()` mirror) stay.
+- `oh-render` `DrawState`/`FrameInput` replay + PB fields removed
+  (`replay_icon`/`replay_text`/`pb_text`/`pb_text_growth`/
+  `must_show_replay_ui`) with every draw/update path that used them
+  (`init_key_icons`/`update_key_icons`/`draw_key_icons` replay arms, the
+  `draw_frame` gate conjuncts, `update_text` PB sawtooth + replay content,
+  `update_text_sizes` PB/replay sizes, `draw_text_time_and_status` replay
+  arm, `draw_text_personal_best`, `TextUpdateInput` replay + dead `ft`
+  fields); the surviving time/status/fps/message sizing is bit-identical.
+  The inert `oh-app` bridge initializers + `must_show_replay_ui: false`
+  went with the fields.
+- `go_to_menu` coverage: the path is live (the bridge Lippincott error
+  paths + the C++-facing callers pinned by `score_override_error.rs` /
+  `joystick.rs`), so it was kept and covered — new
+  `oh-game/tests/go_to_menu_callback.rs` (2 tests): `trigger_go_to_menu()`
+  fires the callback with `mError = false`, `go_to_menu(false, true)` with
+  `mError = true`. The K7 single-stream test (`render_hook_rng_stream.rs`)
+  now pins through the raw `engine_state()` (same position/attribution
+  pins, no assertion weakened).
+- `oh-assets` profile surface: REMOVED (no live `oh-game`/`oh-app`
+  caller — only its own test file consumed it): the `Profiles/` load step,
+  `ProfileStore`, and the 16 public read/write methods; `oh-data
+  ::ProfileData` stays in `oh-data` (the C++'s singular `profileData`
+  high-score store was never ported into `oh-assets` — the spec's
+  keep-list items do not exist in this tree; if a menu profile UI is
+  ever ported, Issue 09+ rebuilds it). Tests: 511 → 501 passed (−9
+  profiles, −2 oh-rng state-position, −1 PB pulse; +2 go_to_menu).
+- Gate 4/4 green (fmt / build / clippy -D warnings / test).
+- Review P2 residue for Issue 09: the dead `oh-render` PB-particle update
+  surface (`PBParticleUpdateParams`/`make_pb_particle`/spawn branch/export/
+  test), the dead `oh-assets` `WorkshopPacks`/`new_with_workshop` seam (docs
+  name the removed `oh_steam::SteamManager`), and stale replay/PB/steam doc
+  references (`mustShowReplayUI`, `drawTextMessagePBImpl`, the 02c1 `mFT`
+  note, etc.).
+- No commit made (orchestrator commits).
+
+### 02 — crate removal / engine de-scope (02c1/02c2/02c3 LANDED)
 
 - 02c2 (remove replay; remove `oh-replay`): see §02c1's "For 02c2"
   note — the replay surface, `GameApi::in_replay` and the
   replay-name fallbacks are 02c2's removal list.
 - 02c3 (remove the parity fingerprint/RNG + final engine cleanup):
-  fingerprint path + the `oh-render` `DrawState` replay AND PB fields +
-  the inert `bridge.rs` initializers (`replay_icon`/`replay_text`/
-  `pb_text`/`pb_text_growth`/`must_show_replay_ui: false`) + the doc
-  residue (see §02c1/§02c2).
+  landed — see §02c3. The engine cleanup phase is complete; Issue 03
+  (rename) is next.
 - `draw_target.rs` API / `th-app` keep-list: landed in 02a/02b (see
   those sections); the composition signatures moved again in 02c1 (see
   §02c1).
 
-### 03 — rename (pending)
+### 03 — rename (pending; next up)
 
 - Final crate names:
 - Binary/artifact names:
@@ -394,4 +437,8 @@ re-reading the whole history.
 - Final tunables:
 - Playtest notes:
 - Per-target deviations:
+- Dead-surface/doc sweep: `oh-render` `PBParticleUpdateParams`/`make_pb_particle`
+  spawn branch/export/test; `oh-assets` `WorkshopPacks`/`new_with_workshop`;
+  `mustShowReplayUI`/`drawTextMessagePBImpl`/`mFT`/`Deferred`/HUD-texture
+  comments; any remaining replay/PB/steam doc residue.
 - Plan closed/archived:

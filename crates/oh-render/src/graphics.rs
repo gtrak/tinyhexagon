@@ -220,13 +220,12 @@ pub struct DrawState {
     pub trail_particles: Vec<TrailParticle>,
     pub swap_particles: Vec<SwapParticle>,
 
-    // Key icons (textures: `keyArrow.png` ×2, `keyFocus.png`, `keySwap.png`,
-    // `replayIcon.png` — set up by [`init_key_icons`]).
+    // Key icons (textures: `keyArrow.png` ×2, `keyFocus.png`,
+    // `keySwap.png` — set up by [`init_key_icons`]).
     pub key_icon_left: Sprite,
     pub key_icon_right: Sprite,
     pub key_icon_focus: Sprite,
     pub key_icon_swap: Sprite,
-    pub replay_icon: Sprite,
 
     // Level info (mapping §4.3).
     pub level_info_rectangle: RectangleShape,
@@ -241,13 +240,7 @@ pub struct DrawState {
     pub fps_text: Text,
     pub time_text: Text,
     pub text: Text,
-    pub replay_text: Text,
     pub message_text: Text,
-    pub pb_text: Text,
-
-    /// C++ `pbTextGrowth` — the PB-text size sawtooth (driven by
-    /// [`text_draw::update_text`]).
-    pub pb_text_growth: f32,
 }
 
 /// C++ file-static `initText` (mapping §4.1):
@@ -292,8 +285,6 @@ pub struct FrameInput<'a> {
     pub show_player_trail: bool,
     /// C++ `status.pulse3D`.
     pub pulse3d: f32,
-    /// C++ `mustShowReplayUI()`.
-    pub must_show_replay_ui: bool,
     /// C++ `mustTakeScreenshot` (cleared here, as in C++).
     pub must_take_screenshot: &'a mut bool,
     /// C++ `window->getFPS()` (drives the `onRenderStage` frametime
@@ -669,28 +660,26 @@ pub fn draw_frame(state: &mut DrawState, input: &mut FrameInput, target: &mut dy
         config,
         input.background_colors,
         input.color_text,
-        input.must_show_replay_ui,
         get_render_states(RenderStage::Text),
         target,
     );
 
     // ------------------------------------------------------------------------
     // 9. Key icons.
-    if config.get_show_key_icons() || input.must_show_replay_ui {
+    if config.get_show_key_icons() {
         draw_key_icons(
             state,
             input.color_text,
             input.input_movement,
             input.input_focused,
             input.input_swap,
-            input.must_show_replay_ui,
             target,
         );
     }
 
     // ------------------------------------------------------------------------
     // 10. Level info (fresh `getRenderStates(Text)` evaluation).
-    if config.get_show_level_info() || input.must_show_replay_ui {
+    if config.get_show_level_info() {
         draw_level_info(state, get_render_states(RenderStage::Text), target);
     }
 
@@ -1072,57 +1061,50 @@ fn make_swap_particle(
 ///
 /// `TODO(issue-009-wiring)`: called on window creation/recreation
 /// (`window->onRecreation += [this] { initKeyIcons(); }`); the textures come
-/// from the assets (`keyArrow.png`, `keyFocus.png`, `keySwap.png`,
-/// `replayIcon.png`).
+/// from the assets (`keyArrow.png`, `keyFocus.png`, `keySwap.png`).
 #[allow(clippy::too_many_arguments)] // faithful C++ signature
 pub fn init_key_icons(
     key_icon_left: &mut Sprite,
     key_icon_right: &mut Sprite,
     key_icon_focus: &mut Sprite,
     key_icon_swap: &mut Sprite,
-    replay_icon: &mut Sprite,
     key_arrow: &mut Texture,
     key_focus: &mut Texture,
     key_swap: &mut Texture,
-    replay: &mut Texture,
     config: &Config,
 ) {
     key_arrow.set_smooth(true);
     key_focus.set_smooth(true);
     key_swap.set_smooth(true);
-    replay.set_smooth(true);
 
     key_icon_left.set_texture(key_arrow.clone());
     key_icon_right.set_texture(key_arrow.clone());
     key_icon_focus.set_texture(key_focus.clone());
     key_icon_swap.set_texture(key_swap.clone());
-    replay_icon.set_texture(replay.clone());
 
     update_key_icons(
         key_icon_left,
         key_icon_right,
         key_icon_focus,
         key_icon_swap,
-        replay_icon,
         config,
     );
 }
 
 /// C++ `HexagonGame::updateKeyIcons` (mapping §4.2) — four 64×64 px
 /// (halfSize 32, centre origin) icons along the bottom-right, each shifted
-/// left by `64·s + 8·s` from the previous; left arrow rotated 180°; replay
-/// icon (origin at the texture bottom-right, scale `s/2`) at top-right.
+/// left by `64·s + 8·s` from the previous; left arrow rotated 180°.
 /// `s = KeyIconsScale / ZoomFactor`. Called every frame from `update()` when
 /// key icons are shown.
 ///
 /// `TODO(issue-009-wiring)`: called from `HexagonGame::update()` when
-/// `Config::getShowKeyIcons() || mustShowReplayUI()`.
+/// `Config::getShowKeyIcons()` (the C++'s `|| mustShowReplayUI()` conjunct
+/// left with the replay removal — plan 002 issue 02c2).
 pub fn update_key_icons(
     key_icon_left: &mut Sprite,
     key_icon_right: &mut Sprite,
     key_icon_focus: &mut Sprite,
     key_icon_swap: &mut Sprite,
-    replay_icon: &mut Sprite,
     config: &Config,
 ) {
     const HALF_SIZE: f32 = 32.0;
@@ -1160,31 +1142,18 @@ pub fn update_key_icons(
     key_icon_focus.set_position(key_icon_swap.get_position() - final_padding_x);
     key_icon_right.set_position(key_icon_focus.get_position() - final_padding_x);
     key_icon_left.set_position(key_icon_right.get_position() - final_padding_x);
-
-    // ------------------------------------------------------------------------
-
-    replay_icon.set_origin(Vec2::new(SIZE, SIZE));
-    replay_icon.set_scale(Vec2::new(scaling / 2.0, scaling / 2.0));
-
-    let top_right = Vec2::new(
-        width - padding - scaled_half_size,
-        padding + scaled_half_size,
-    );
-
-    replay_icon.set_position(top_right);
 }
 
 /// C++ `HexagonGame::drawKeyIcons` (mapping §3.6) — off-opacity 90 /
 /// on-opacity 255 versions of the text colour; movement −1 → left, +1 →
-/// right; the replay icon (on-colour) only in replay UI. (The C++ method
-/// takes no `Config` — colours/positions come from `updateKeyIcons`.)
+/// right. (The C++ method takes no `Config` — colours/positions come from
+/// `updateKeyIcons`.)
 pub fn draw_key_icons(
     state: &mut DrawState,
     color_text: Color,
     input_movement: i32,
     input_focused: bool,
     input_swap: bool,
-    must_show_replay_ui: bool,
     target: &mut dyn DrawTarget,
 ) {
     const OFF_OPACITY: u8 = 90;
@@ -1214,13 +1183,6 @@ pub fn draw_key_icons(
     target.draw_sprite(&state.key_icon_right);
     target.draw_sprite(&state.key_icon_focus);
     target.draw_sprite(&state.key_icon_swap);
-
-    // ------------------------------------------------------------------------
-
-    if must_show_replay_ui {
-        state.replay_icon.set_color(on_color);
-        target.draw_sprite(&state.replay_icon);
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1640,7 +1602,6 @@ mod tests {
             key_icon_right: Sprite::new(empty_texture()),
             key_icon_focus: Sprite::new(empty_texture()),
             key_icon_swap: Sprite::new(empty_texture()),
-            replay_icon: Sprite::new(empty_texture()),
             level_info_rectangle: RectangleShape::default(),
             level_info_text_level: init_text(&font, "LVL", 20.0, zoom),
             level_info_text_pack: init_text(&font, "PACK", 14.0, zoom),
@@ -1650,10 +1611,7 @@ mod tests {
             fps_text: init_text(&font, "0", 25.0, zoom),
             time_text: init_text(&font, "0", 70.0, zoom),
             text: init_text(&font, "", 25.0, zoom),
-            replay_text: init_text(&font, "", 20.0, zoom),
             message_text: init_text(&font, "", 38.0, zoom),
-            pb_text: init_text(&font, "", 65.0, zoom),
-            pb_text_growth: 0.0,
         }
     }
 
@@ -1795,7 +1753,6 @@ mod tests {
             darken_uneven_background_chunk: false,
             show_player_trail: false,
             pulse3d: 1.0,
-            must_show_replay_ui: false,
             must_take_screenshot: &mut must_take_screenshot,
             fps: 60.0,
             input_movement: -1,
@@ -1848,7 +1805,7 @@ mod tests {
         // 13. drawText: timeText (showTimer default true) — shader 8
         // 14. drawText: status text (showStatusText default true) — shader 8
         // 15. drawText: fpsText (showFps on) — shader 8
-        //     (message/pb empty → skipped; no replay UI)
+        //     (message empty → skipped)
         // 16. 4 key-icon sprites (showKeyIcons on)
         // 17. level info: rectangle + 4 texts (dm line empty — still drawn,
         //     C++ renders it unconditionally) — 5 events, shader 8
@@ -1965,7 +1922,6 @@ mod tests {
             darken_uneven_background_chunk: false,
             show_player_trail: false,
             pulse3d: 2.0,
-            must_show_replay_ui: false,
             must_take_screenshot: &mut must_take_screenshot,
             fps: 60.0,
             input_movement: 0,
@@ -2114,7 +2070,6 @@ mod tests {
             darken_uneven_background_chunk: false,
             show_player_trail: false,
             pulse3d: 1.0,
-            must_show_replay_ui: false,
             must_take_screenshot: &mut must_take_screenshot,
             fps: 60.0,
             input_movement: 0,
@@ -2176,7 +2131,6 @@ mod tests {
                 darken_uneven_background_chunk: false,
                 show_player_trail: false,
                 pulse3d: 1.0,
-                must_show_replay_ui: false,
                 must_take_screenshot: &mut must_take_screenshot,
                 fps: 60.0,
                 input_movement: 0,
@@ -2407,16 +2361,8 @@ mod tests {
         let mut right = Sprite::new(empty_texture());
         let mut focus = Sprite::new(empty_texture());
         let mut swap = Sprite::new(empty_texture());
-        let mut replay = Sprite::new(empty_texture());
 
-        update_key_icons(
-            &mut left,
-            &mut right,
-            &mut focus,
-            &mut swap,
-            &mut replay,
-            &config,
-        );
+        update_key_icons(&mut left, &mut right, &mut focus, &mut swap, &config);
 
         let s = 2.0 / 1.27;
         let scaled_half = 32.0 * s;
@@ -2444,14 +2390,6 @@ mod tests {
 
         assert_eq!(left.get_origin(), Vec2::new(32.0, 32.0));
         assert_eq!(left.get_scale(), Vec2::new(s, s));
-
-        // Replay: origin at (64, 64), scale s/2, top-right corner.
-        assert_eq!(replay.get_origin(), Vec2::new(64.0, 64.0));
-        assert_eq!(replay.get_scale(), Vec2::new(s / 2.0, s / 2.0));
-        assert_eq!(
-            replay.get_position(),
-            Vec2::new(w - padding - scaled_half, padding + scaled_half)
-        );
     }
 
     #[test]
@@ -2463,7 +2401,6 @@ mod tests {
             &mut state,
             Color::new(200, 210, 220, 255),
             -1, // left pressed
-            false,
             false,
             false,
             &mut rec,
@@ -2486,21 +2423,27 @@ mod tests {
         );
         assert_eq!(rec.events, vec![DrawEvent::Sprite; 4]);
 
-        // Replay UI: the fifth sprite appears with the on colour.
         draw_key_icons(
             &mut state,
             Color::new(200, 210, 220, 255),
             1,
             true,
             true,
-            true,
             &mut rec,
         );
         assert_eq!(
-            state.replay_icon.get_color(),
+            state.key_icon_right.get_color(),
             Color::new(200, 210, 220, 255)
         );
-        assert_eq!(rec.events.len(), 4 + 5);
+        assert_eq!(
+            state.key_icon_focus.get_color(),
+            Color::new(200, 210, 220, 255)
+        );
+        assert_eq!(
+            state.key_icon_swap.get_color(),
+            Color::new(200, 210, 220, 255)
+        );
+        assert_eq!(rec.events.len(), 4 + 4);
     }
 
     #[test]

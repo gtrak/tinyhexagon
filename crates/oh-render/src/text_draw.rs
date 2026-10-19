@@ -1,7 +1,7 @@
 //! Text drawing + per-frame text-content update — the `HexagonGame` text
 //! pipeline (`HGGraphics.cpp` mapping §3.9–3.12): `updateText`,
-//! `drawText_TimeAndStatus`, `drawText_Message`, `drawText_PersonalBest`,
-//! `drawText`, plus the exact sizing/formatting helpers.
+//! `drawText_TimeAndStatus`, `drawText_Message`, `drawText`, plus the exact
+//! sizing/formatting helpers.
 //!
 //! Layout accessors (`getGlobalNW` etc.) come from
 //! [`crate::types::FloatRect`] corner methods (mapping §10.1).
@@ -18,7 +18,6 @@ use oh_math::hg::color::Color;
 use oh_math::hg::concat::format_ostream_f32;
 use oh_math::hg::string::to_uppercase;
 use oh_math::ssvs::vector2::Vec2;
-use oh_math::ssvu::math::PI;
 
 use crate::draw::RenderStates;
 use crate::font::Text;
@@ -114,9 +113,11 @@ pub fn time_format(time: f32) -> String {
 
 /// Inputs for [`update_text`] — the status/level/lua values the C++
 /// method reads from `HexagonGame` members.
+///
+/// (The C++'s `mFT` argument dropped with the PB-text growth sawtooth —
+/// plan 002 issue 02c1; no remaining half reads it, as on the engine's
+/// own `update_text`.)
 pub struct TextUpdateInput<'a> {
-    /// `mFT` (fract of the frame time, ssvu::FT).
-    pub ft: f32,
     /// `debugPause`.
     pub debug_pause: bool,
     /// `levelStatus.tutorialMode`.
@@ -153,19 +154,12 @@ pub struct TextUpdateInput<'a> {
     pub score_override: &'a str,
     /// `window->getFPS()`.
     pub fps: f32,
-    /// `mustShowReplayUI()`.
-    pub must_show_replay_ui: bool,
-    /// `activeReplay->replayFile`: `played_seconds()`, `_played_score`,
-    /// `_player_name`.
-    pub replay_played_seconds: f64,
-    pub replay_played_score: f64,
-    pub replay_player_name: &'a str,
 }
 
 /// C++ `HexagonGame::updateText(mFT)` (mapping §3.9) — verbatim control
-/// flow: `pbTextGrowth` sawtooth, the status-text string build, the timer /
-/// FPS / message / PB / replay text content, then the per-frame
-/// character-size / origin half ([`update_text_sizes`]).
+/// flow: the status-text string build, the timer / FPS / message text
+/// content, then the per-frame character-size / origin half
+/// ([`update_text_sizes`]).
 ///
 /// Runs every frame (even during `debugPause`); the C++ guards on
 /// `window != nullptr` (the caller only invokes this with a live draw
@@ -173,19 +167,15 @@ pub struct TextUpdateInput<'a> {
 ///
 /// In the windowed composition the engine's per-tick `update_text`
 /// (the C++'s `updateText` call site, `HGUpdate.cpp:384`) owns the
-/// string-content half + the growth increment, and the bridge applies
+/// string-content half, and the bridge applies
 /// [`update_text_sizes`] per frame from the copied values (a pure
 /// function of them — observationally identical to the C++'s same-call
 /// application). This full port is the C++ method itself, host-tested
 /// below.
+///
+/// (The C++'s `pbText` growth sawtooth + `replayText` content/size left
+/// with the PB effect and the replay removal — plan 002 issues 02c1/02c2.)
 pub fn update_text(state: &mut DrawState, config: &Config, input: &TextUpdateInput) {
-    // --------------------------------------------------------------------
-    // "personal best" text animation.
-    state.pb_text_growth += 0.08 * input.ft;
-    if state.pb_text_growth > PI * 2.0 {
-        state.pb_text_growth = 0.0;
-    }
-
     // --------------------------------------------------------------------
     let mut os = String::new();
 
@@ -293,49 +283,27 @@ pub fn update_text(state: &mut DrawState, config: &Config, input: &TextUpdateInp
         state.fps_text.set_string(format_ostream_f32(input.fps));
     }
 
-    // The per-frame character-size / origin half (HGGraphics.cpp:545-571,
-    // the replay-text size :593 — the replay STRING below keeps the C++'
-    // branch position; setting it before or after the size is
-    // observationally identical: the replay text's origin/position are the
-    // draw's, and its width needs neither).
-    update_text_sizes(state, config, input.must_show_replay_ui);
-
-    // --------------------------------------------------------------------
-    if input.must_show_replay_ui {
-        let mut replay = String::new();
-
-        if !input.score_overridden {
-            replay.push_str(&format!("{}s", format_time(input.replay_played_seconds)));
-        } else {
-            replay.push_str(&format_time(input.replay_played_score));
-        }
-
-        replay.push_str(&format!(" BY {}", input.replay_player_name));
-
-        state.replay_text.set_string(replay);
-    } else {
-        state.replay_text.set_string("");
-    }
+    // The per-frame character-size / origin half (HGGraphics.cpp:545-571).
+    update_text_sizes(state, config);
 }
 
 /// C++ `updateText`'s per-frame character-size / origin half
-/// (HGGraphics.cpp:545-571 + the replay-text size at :593 — inside the
-/// `mustShowReplayUI()` branch): the `getScaledCharacterSize` closure
+/// (HGGraphics.cpp:545-571): the `getScaledCharacterSize` closure
 /// (`size / zoomFactor * textScaling`, truncated to unsigned) applied to
 /// `timeText` 70, `text` 20 + origin `(0, 0)`, `fpsText` 20 (the
 /// `Config::getShowFPS()` gate), `messageText` 32 + origin
-/// `getGlobalWidth/2`, `pbText` `64 + sin(pbTextGrowth) * 10` + origin
-/// `getGlobalWidth/2` (the unsigned base widened to float, the sum
-/// truncated back), and `replayText` 16 (the `mustShowReplayUI()` gate).
+/// `getGlobalWidth/2`.
 ///
-/// Pure in its inputs: it writes NO strings and does NOT advance
-/// `state.pb_text_growth` (the C++'s increment lives in the engine's
-/// per-tick `update_text` — the port's split of the C++'s single
-/// `updateText` call, `HGUpdate.cpp:384`; the bridge copies the engine's
-/// strings + growth into the state each frame, then applies this half —
-/// the C++ applies it in the same call, a pure function of the same
-/// values, so the rendered frame is identical).
-pub fn update_text_sizes(state: &mut DrawState, config: &Config, must_show_replay_ui: bool) {
+/// Pure in its inputs: it writes NO strings (the engine's per-tick
+/// `update_text` owns the string-content half — the port's split of the
+/// C++'s single `updateText` call, `HGUpdate.cpp:384`; the bridge copies
+/// the engine's strings each frame, then applies this half — the C++
+/// applies it in the same call, a pure function of the same values, so
+/// the rendered frame is identical).
+///
+/// (The C++'s `pbText` 64+sawtooth size + `replayText` 16 size left with
+/// the PB effect and the replay removal — plan 002 issues 02c1/02c2.)
+pub fn update_text_sizes(state: &mut DrawState, config: &Config) {
     let scaled = |size: f32| -> u32 {
         get_scaled_character_size(size, config.get_zoom_factor(), config.get_text_scaling())
     };
@@ -363,26 +331,6 @@ pub fn update_text_sizes(state: &mut DrawState, config: &Config, must_show_repla
         state.message_text.get_global_bounds().get_width() / 2.0,
         0.0,
     ));
-
-    // C++ `const float growth = std::sin(pbTextGrowth);
-    // pbText.setCharacterSize(getScaledCharacterSize(64.f) + growth * 10.f);
-    // pbText.setOrigin({getGlobalWidth(pbText) / 2.f, 0.f})`
-    // (HGGraphics.cpp:569-571) — `state.pb_text_growth` is the engine's
-    // per-tick sawtooth (the bridge's per-frame copy).
-    let growth = state.pb_text_growth.sin();
-    state
-        .pb_text
-        .set_character_size((scaled(64.0) as f32 + growth * 10.0) as u32);
-    state.pb_text.set_origin(Vec2::new(
-        state.pb_text.get_global_bounds().get_width() / 2.0,
-        0.0,
-    ));
-
-    // C++ `replayText.setCharacterSize(getScaledCharacterSize(16.f))` —
-    // inside the `mustShowReplayUI()` branch (HGGraphics.cpp:593).
-    if must_show_replay_ui {
-        state.replay_text.set_character_size(scaled(16.0));
-    }
 }
 
 /// C++ `drawText_TimeAndStatus` (mapping §3.10).
@@ -391,7 +339,6 @@ pub fn draw_text_time_and_status(
     config: &Config,
     color_text: Color,
     offset_color: Color,
-    must_show_replay_ui: bool,
     states: RenderStates,
     target: &mut dyn DrawTarget,
 ) {
@@ -399,17 +346,14 @@ pub fn draw_text_time_and_status(
         state.time_text.set_outline_color(offset_color);
         state.text.set_outline_color(offset_color);
         state.fps_text.set_outline_color(offset_color);
-        state.replay_text.set_outline_color(offset_color);
 
         state.time_text.set_outline_thickness(2.0);
         state.text.set_outline_thickness(1.0);
         state.fps_text.set_outline_thickness(1.0);
-        state.replay_text.set_outline_thickness(1.0);
     } else {
         state.time_text.set_outline_thickness(0.0);
         state.text.set_outline_thickness(0.0);
         state.fps_text.set_outline_thickness(0.0);
-        state.replay_text.set_outline_thickness(0.0);
     }
 
     let padding =
@@ -447,7 +391,7 @@ pub fn draw_text_time_and_status(
             .fps_text
             .set_origin(state.fps_text.get_local_bounds().get_sw());
 
-        if config.get_show_level_info() || must_show_replay_ui {
+        if config.get_show_level_info() {
             state.fps_text.set_position(Vec2::new(
                 padding,
                 state.level_info_rectangle.get_global_bounds().get_top() - padding,
@@ -459,22 +403,6 @@ pub fn draw_text_time_and_status(
         }
 
         target.draw_text(&state.fps_text, states);
-    }
-
-    if must_show_replay_ui {
-        let scaling = config.get_key_icons_scale() / config.get_zoom_factor();
-        let replay_padding = 8.0 * scaling;
-
-        state.replay_text.set_fill_color(color_text);
-        state
-            .replay_text
-            .set_origin(state.replay_text.get_local_bounds().get_center_e());
-        // C++: `getGlobalCenterW(replayIcon) - {replayPadding, 0}`.
-        let center_w = state.replay_icon.get_global_bounds().get_center_w();
-        state
-            .replay_text
-            .set_position(Vec2::new(center_w.x - replay_padding, center_w.y));
-        target.draw_text(&state.replay_text, states);
     }
 }
 
@@ -532,39 +460,14 @@ pub fn draw_text_message(
     );
 }
 
-/// C++ `drawText_PersonalBest` (mapping §3.11) — at
-/// `(width/2, height - height/4)`, outline thickness `4.f`.
-pub fn draw_text_personal_best(
-    state: &mut DrawState,
-    config: &Config,
-    color_text: Color,
-    offset_color: Color,
-    states: RenderStates,
-    target: &mut dyn DrawTarget,
-) {
-    draw_text_message_pb_impl(
-        &mut state.pb_text,
-        offset_color,
-        Vec2::new(
-            config.get_width() as f32 / 2.0,
-            config.get_height() as f32 - config.get_height() as f32 / 4.0,
-        ),
-        color_text,
-        4.0, /* outlineThickness */
-        config.get_draw_text_outlines(),
-        |t| target.draw_text(t, states),
-    );
-}
-
 /// C++ `drawText` (mapping §3.12) — computes the offset colour
 /// (`Black` in B&W / no colours, else `getColor(0)`) and draws
-/// TimeAndStatus → Message → PersonalBest in that order.
+/// TimeAndStatus → Message in that order.
 pub fn draw_text(
     state: &mut DrawState,
     config: &Config,
     background_colors: &[Color],
     color_text: Color,
-    must_show_replay_ui: bool,
     states: RenderStates,
     target: &mut dyn DrawTarget,
 ) {
@@ -575,17 +478,8 @@ pub fn draw_text(
         background_colors[0]
     };
 
-    draw_text_time_and_status(
-        state,
-        config,
-        color_text,
-        offset_color,
-        must_show_replay_ui,
-        states,
-        target,
-    );
+    draw_text_time_and_status(state, config, color_text, offset_color, states, target);
     draw_text_message(state, config, color_text, offset_color, states, target);
-    draw_text_personal_best(state, config, color_text, offset_color, states, target);
 }
 
 #[cfg(test)]
@@ -652,7 +546,7 @@ mod tests {
     /// The C++ constructor's initial text sizes (`HexagonGame.cpp:276-331`)
     /// at the default `zoomFactor` 1.27 — the sizes the pre-fix port kept
     /// FOREVER (the per-frame update was never called): time 55, status
-    /// 19, fps 19, message 29, pb 51, replay 15.
+    /// 19, fps 19, message 29.
     fn make_state(font: &Font) -> DrawState {
         let zoom = 1.27;
         DrawState {
@@ -667,7 +561,6 @@ mod tests {
             key_icon_right: Sprite::new(Texture::new()),
             key_icon_focus: Sprite::new(Texture::new()),
             key_icon_swap: Sprite::new(Texture::new()),
-            replay_icon: Sprite::new(Texture::new()),
             level_info_rectangle: RectangleShape::default(),
             level_info_text_level: init_text(font, "LVL", 20.0, zoom),
             level_info_text_pack: init_text(font, "PACK", 14.0, zoom),
@@ -677,20 +570,16 @@ mod tests {
             fps_text: init_text(font, "0", 25.0, zoom),
             time_text: init_text(font, "0", 70.0, zoom),
             text: init_text(font, "", 25.0, zoom),
-            replay_text: init_text(font, "", 20.0, zoom),
             message_text: init_text(font, "", 38.0, zoom),
-            pb_text: init_text(font, "", 65.0, zoom),
-            pb_text_growth: 0.0,
         }
     }
 
     /// The C++ per-frame values at `Config::default` (zoom 1.27, text
     /// scaling 1.0) — `getScaledCharacterSize(size)` =
     /// `(size / zoomFactor * textScaling) as u32` (HGGraphics.cpp:545-550):
-    /// time 70 → 55, status 20 → 15, fps 20 → 15, message 32 → 25,
-    /// pb `64 → 50 + sin(growth) * 10`, replay 16 → 12 — plus the origins
-    /// `(0, 0)` for the status text and `getGlobalWidth/2` for the message
-    /// / PB texts.
+    /// time 70 → 55, status 20 → 15, fps 20 → 15, message 32 → 25 — plus
+    /// the origins `(0, 0)` for the status text and `getGlobalWidth/2` for
+    /// the message text.
     #[test]
     fn update_text_sizes_applies_the_cpp_per_frame_sizes_and_origins() {
         let font = test_font();
@@ -698,13 +587,11 @@ mod tests {
         let mut config = Config::default(); // zoom 1.27, textScaling 1.0
         config.set_show_fps(true);
 
-        // Non-empty message/PB strings (the C++ sets them via events;
-        // the size half only reads their widths for the origins).
+        // Non-empty message string (the C++ sets it via events;
+        // the size half only reads its width for the origin).
         state.message_text.set_string("HELLO");
-        state.pb_text.set_string("NEW PERSONAL BEST!");
-        state.pb_text_growth = PI / 2.0; // sin = 1 → +10
 
-        update_text_sizes(&mut state, &config, true);
+        update_text_sizes(&mut state, &config);
 
         assert_eq!(
             state.time_text.get_character_size(),
@@ -735,75 +622,29 @@ mod tests {
             "the message origin = getGlobalWidth(messageText) / 2"
         );
         assert_eq!(state.message_text.get_origin().y, 0.0);
-        assert_eq!(
-            state.pb_text.get_character_size(),
-            60,
-            "50 + 10 (sin(π/2) = 1) — the ctor kept the static 51"
-        );
-        assert!(
-            (state.pb_text.get_origin().x - state.pb_text.get_global_bounds().get_width() / 2.0)
-                .abs()
-                < 1e-4,
-            "the PB origin = getGlobalWidth(pbText) / 2"
-        );
-        assert_eq!(state.pb_text.get_origin().y, 0.0);
-        assert_eq!(
-            state.replay_text.get_character_size(),
-            12,
-            "16 / 1.27 = 12.59 → 12 (the ctor kept 15 = 20 / 1.27)"
-        );
 
         // The size half writes NO strings (the port's split: the engine
         // owns the string-content half).
         assert_eq!(state.time_text.get_string(), "0");
         assert_eq!(state.fps_text.get_string(), "0");
-        assert_eq!(state.replay_text.get_string(), "");
         assert_eq!(state.message_text.get_string(), "HELLO");
     }
 
-    /// The PB pulse: `64 → 50 + sin(growth) * 10` across the sawtooth
-    /// (HGGraphics.cpp:569-571).
+    /// The C++'s `Config::getShowFPS()` gate (HGGraphics.cpp:560-564):
+    /// a gated-off text keeps its previous size (the ctor's, in the
+    /// pre-fix port's only path).
     #[test]
-    fn update_text_sizes_pb_pulse_follows_the_growth_sawtooth() {
-        let font = test_font();
-        let mut state = make_state(&font);
-        let config = Config::default();
-        for (growth, expected) in [
-            (0.0, 50),            // sin 0 = 0 → the base
-            (PI / 2.0, 60),       // sin = 1 → +10
-            (PI, 50),             // sin = 0
-            (3.0 * PI / 2.0, 40), // sin = -1 → -10
-        ] {
-            state.pb_text_growth = growth;
-            update_text_sizes(&mut state, &config, false);
-            assert_eq!(
-                state.pb_text.get_character_size(),
-                expected,
-                "growth {growth} → 50 + sin × 10 = {expected}"
-            );
-        }
-    }
-
-    /// The C++'s `Config::getShowFPS()` gate (HGGraphics.cpp:560-564) and
-    /// `mustShowReplayUI()` gate (:574-598): a gated-off text keeps its
-    /// previous size (the ctor's, in the pre-fix port's only path).
-    #[test]
-    fn update_text_sizes_fps_and_replay_gates_keep_the_previous_sizes() {
+    fn update_text_sizes_fps_gate_keeps_the_previous_size() {
         let font = test_font();
         let mut state = make_state(&font);
         let config = Config::default(); // showFPS = false (the C++ default)
 
-        update_text_sizes(&mut state, &config, false);
+        update_text_sizes(&mut state, &config);
 
         assert_eq!(
             state.fps_text.get_character_size(),
             19,
             "the showFPS-off fps text keeps its ctor size (25 / 1.27)"
-        );
-        assert_eq!(
-            state.replay_text.get_character_size(),
-            15,
-            "the replay-UI-off replay text keeps its ctor size (20 / 1.27)"
         );
     }
 }

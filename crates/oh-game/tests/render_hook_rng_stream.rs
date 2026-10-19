@@ -17,16 +17,18 @@
 //! produces. A test that merely re-asserted a split (hook draws on a
 //! separate stream) would be worthless: under a split, the hook run and a
 //! no-hook control run would be byte-identical in every game-stream metric,
-//! and this test's assertions (the hook draws counted in `draws()`, the
-//! hook values equal to the single-stream oracle values, the side-selection
-//! draw equal to the oracle's, the final states equal to the oracle's) all
-//! fail.
+//! and this test's assertions (the hook draws advancing the shared stream
+//! — the hook values equal to the single-stream oracle values, the
+//! side-selection draw equal to the oracle's, the final raw states equal
+//! to the oracle's) all fail.
 //!
 //! # The single-stream oracle
 //!
 //! `new_game` seeds the shared game RNG from process entropy
 //! (`initialize_rng`); the C++'s deterministic replay-seed injection
-//! (`set_last_replay` + `new_game(executeLastReplay=true)` →
+//! (the C++'s `m_lastReplay` member — the Lua variable `lastReplay`;
+//! replay removed by plan 002 issue 02c2, the member kept as the
+//! `l_replay` API target — + `new_game(executeLastReplay=true)` →
 //! `rng = random_number_generator{replayFile._seed}`) left with the
 //! replay removal (plan 002 issue 02c2), so this test overwrites
 //! `st.rng` DIRECTLY through `state_handle()` with
@@ -37,9 +39,10 @@
 //! increment's side-selection `get_int`, and the per-frame
 //! `rng.advance(fixup(...))` blocks, `HGUpdate.cpp`:449-458 / port
 //! `update.rs`:400-411 — read from the engine's post-frame status values,
-//! the values the C++ block reads). Every wrapper call is one stream
-//! position; `state_position()` (030b's canonical MCG label, affine in the
-//! bump count) pins the position, `draws()` the attribution.
+//! the values the C++ block reads). Every wrapper call advances the
+//! stream's raw MCG state (readable via `engine_state()`) by a known
+//! bump count; the test mirrors every consumption on the oracle and pins
+//! the position by raw-state equality at each checkpoint.
 //!
 //! # Frame choreography (the C++'s per-frame order: `update` → `postUpdate`
 //! → `draw` (the `onRenderStage` hook fires inside the draw,
@@ -174,12 +177,12 @@ fn fixup(x: f32) -> u64 {
     }
 }
 
-/// The engine's game-RNG metrics (030b's fingerprint fields: the wrapper
-/// draw count + the canonical MCG state label), read from the shared store
-/// the 285 lambdas and the update loop both lock.
-fn game_rng_metrics(c: &common::Composed) -> (u64, u64) {
+/// The engine's game-RNG raw state (the MCG state behind the wrapper,
+/// `engine_state()`), read from the shared store the 285 lambdas and the
+/// update loop both lock.
+fn game_rng_state(c: &common::Composed) -> u64 {
     let st = c.game.state_handle().lock();
-    (st.rng.draws(), st.rng.state_position())
+    st.rng.engine_state()
 }
 
 /// The C++'s post-frame `fixup` advance sum (`HGUpdate.cpp`:449-458), read
@@ -284,40 +287,35 @@ fn render_hook_draw_advances_the_game_rng_stream() {
     // freshly seeded from SEED (the C++'s `rng = random_number_generator
     // {_seed}` equivalent) with no gameplay draws (the level's `onInit`
     // is `l_set*` only).
-    let (draws0, state0) = game_rng_metrics(&c);
-    assert_eq!(
-        draws0, 0,
-        "new_game must not have consumed a game-stream draw"
-    );
+    let state0 = game_rng_state(&c);
     let mut oracle = RandomNumberGenerator::new(SEED);
     assert_eq!(
-        oracle.state_position(),
+        oracle.engine_state(),
         state0,
         "the engine's pre-hook game-RNG state must be the single stream's \
-         position at the replay seed"
+         position at the replay seed (a consumed draw would have advanced \
+         it past the fresh oracle)"
     );
 
     // The render hook: ONE invocation, the level's `onRenderStage` calls
     // `math.random()` once.
     c.game.run_on_render_stage(0, 1.0).expect("onRenderStage");
-    let (draws1, state1) = game_rng_metrics(&c);
+    let state1 = game_rng_state(&c);
+    // `get_real::<f32>(0, 1)` is exactly one engine bump (`generate_canonical`
+    // `__m = 1`, full width, no rejection — oh-rng's oracle pins it).
+    let mut one_draw = RandomNumberGenerator::new(SEED);
+    let _ = one_draw.get_real::<f32>(0.0, 1.0);
     assert_eq!(
-        draws1,
-        draws0 + 1,
-        "the hook's draw must be ATTRIBUTED to the game stream's draw count \
-         (a separate cosmetic stream would not increment it)"
+        state1,
+        one_draw.engine_state(),
+        "the hook's draw must advance the SHARED game stream by exactly one \
+         bump (a separate cosmetic stream would leave the state unchanged; \
+         an extra draw would land past the one-bump oracle)"
     );
     let pre_hook_draw: f32 = c
         .lua()
         .execute_code_typed("return hookDraws[1]")
         .expect("the hook's recorded draw");
-    // `get_real::<f32>(0, 1)` is exactly one engine bump (`generate_canonical`
-    // `__m = 1`, full width, no rejection — oh-rng's oracle pins it).
-    assert_eq!(
-        state1,
-        state0.wrapping_add(1),
-        "one f32 [0,1] draw advances the game stream by exactly one bump"
-    );
     assert_eq!(
         pre_hook_draw.to_bits(),
         oracle.get_real::<f32>(0.0, 1.0).to_bits(),
@@ -332,16 +330,15 @@ fn render_hook_draw_advances_the_game_rng_stream() {
     let mut hook_draws_opt: Option<&mut Vec<f32>> = Some(&mut hook_draws);
     let (_, side_frame) = drive_frames(&c, &mut oracle, &mut hook_draws_opt);
 
-    let (draws_final, state_final) = game_rng_metrics(&c);
-    assert_eq!(
-        draws_final,
-        1 /* pre-hook */ + FRAMES as u64 /* per-frame hooks */ + 1, /* the side draw */
-        "every render-hook draw and the side-selection draw must count on the \
-         game stream"
-    );
+    let state_final = game_rng_state(&c);
+    // The raw-state equality pins the TOTAL bump count of the whole run
+    // (the pre-hook draw + one hook draw per frame + the side-selection
+    // draw, interleaved with the per-frame fixup advances — the oracle
+    // advanced by exactly that sequence); a stray wrapper draw on any
+    // other stream would diverge the state.
     assert_eq!(
         state_final,
-        oracle.state_position(),
+        oracle.engine_state(),
         "after the whole run the engine's game-RNG state must equal the \
          single-stream oracle's (hook draws and gameplay draws interleaved \
          in the C++'s frame order)"
@@ -379,24 +376,26 @@ fn render_hook_draw_advances_the_game_rng_stream() {
     // every game-stream metric — which is what this pair refutes.
     // ------------------------------------------------------------------
     let q = compose_level("testport_tester_k7_1_quiet", &dir);
-    let (q_draws0, q_state0) = game_rng_metrics(&q);
-    assert_eq!(q_draws0, 0);
+    let q_state0 = game_rng_state(&q);
     let mut q_oracle = RandomNumberGenerator::new(SEED);
-    assert_eq!(q_oracle.state_position(), q_state0);
+    assert_eq!(q_oracle.engine_state(), q_state0);
 
     let mut q_hook: Option<&mut Vec<f32>> = None;
     let (_, q_side_frame) = drive_frames(&q, &mut q_oracle, &mut q_hook);
-    let (q_draws_final, q_state_final) = game_rng_metrics(&q);
+    let q_state_final = game_rng_state(&q);
 
     assert_eq!(
         q_side_frame, side_frame,
         "the increment is time-driven: both runs reach the side-selection \
          frame at the same frame index"
     );
-    assert_eq!(q_draws_final, 1 /* the side draw only */);
+    // The control run's raw state equal to its oracle's pins the total
+    // bumps with the side-selection draw as the ONLY wrapper call (the
+    // body-less `onRenderStage` consumes no RNG; an extra wrapper draw
+    // anywhere would diverge the state from the oracle's).
     assert_eq!(
         q_state_final,
-        q_oracle.state_position(),
+        q_oracle.engine_state(),
         "the control run's game-RNG state must equal its single-stream \
          oracle's (no hook draws on the stream); its side-selection value \
          was asserted against the engine on the firing frame inside \
@@ -404,15 +403,8 @@ fn render_hook_draw_advances_the_game_rng_stream() {
     );
 
     // The cross-run property: the hook run's game stream carries the hook
-    // draws (its draw count is higher by exactly the hook draw count) and
-    // its final state diverges from the control's (the hook draws interleaved
-    // into the gameplay stream and shifted it).
-    assert_eq!(
-        draws_final,
-        q_draws_final + (1 + FRAMES) as u64,
-        "the hook run's game-stream draw count must exceed the control's by \
-         exactly the hook draw count"
-    );
+    // draws (its state diverges from the control's — the hook draws
+    // interleaved into the gameplay stream and shifted it).
     assert_ne!(
         state_final, q_state_final,
         "the hook draws must have SHIFTED the game stream (a split stream \

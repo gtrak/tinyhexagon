@@ -1,16 +1,26 @@
-**STATUS: DEFERRED (2026-10-19).** Upstream is still advancing past
-`228a4cfb`; do NOT land this single-commit sync yet. The HWM stays at
-`4c31561a`. When the operator says go, re-run `tools/upstream-status.sh` and
-retriage the FULL `HWM..upstream/master` batch; this file is the draft for the
-first commit and its mapping table is the starting point.
+**STATUS: READY — queued after Issue 02c3.** The operator cleared the sync.
+The batch is `4c31561a..dcd9fdeb` (2 commits); the HWM advances to
+`dcd9fdeb`. Do not start while 02c3 is still writing this worktree — apply on
+the post-02c3 HEAD.
 
-# Upstream sync — 228a4cfb (desktop-mode probe / winit one EventLoop)
+# Upstream sync — 228a4cfb..dcd9fdeb (desktop-mode probe + X11 dev libs)
 
 **HWM before:** `4c31561ac6409e24a1b838043a0bb747f504045d`
-**Upstream HEAD:** `228a4cfb6690dae58d9a49dd2e412a132791cbe7`
+**Upstream HEAD:** `dcd9fdeb9aacbba08209918620dd0ec4e7c56a7a` (2 commits)
 **Direction:** upstream → fork (advance the HWM in the landing commit).
-**Base:** apply after Issue 02c2 (replay removal) lands; do not run a second
-writer on the same worktree before then.
+**Base:** apply after Issue 02c3 (final engine cleanup) lands; do not run a
+second writer on the same worktree before then.
+
+## Commits in the batch
+
+1. `228a4cfb` — `fix(windowed): the desktop-mode probe no longer eats winit's
+   one EventLoop` (the `desktop_mode` child + lazy `DesktopModeSource`, the
+   `oh-render` one-EventLoop note, `ci-deps.sh` xvfb/Mesa, the windowed smoke
+   script; the adult `client`/`dispatch`/`android` diffs are not-applicable).
+2. `dcd9fdeb` — `fix(ci): install the winit X11 -dev libs the windowed smoke
+   dlopens` (only `tools/ci-deps.sh`: add `libxkbcommon-dev`,
+   `libxkbcommon-x11-dev`, `libx11-dev`, `libxcursor-dev`, `libxrandr-dev`,
+   `libxi-dev`). Integrate into the same `ci-deps.sh` update.
 
 ## What the commit does
 
@@ -67,12 +77,14 @@ record the not-applicable/deferred items in the changelog entry.
 7. Do not add the `client`/`dispatch`/`android` diffs; the tiny entry will use
    the hook. Do not add the windowed gate/package stages yet.
 8. Update `.agents/skills/upstream/changelog.md`:
-   - Prepend the `228a4cfb` entry (date, subject, area, disposition
-     `reimplemented (partial; front-end files not-applicable)`, mapping,
-     `Fork commit: this commit (plan 002 upstream sync)`, notes listing the
-     not-applicable/deferred files).
+   - Prepend TWO entries, newest first:
+     - `dcd9fdeb` (CI X11 dev libs; disposition `integrated`; mapping
+       `tools/ci-deps.sh`; `Fork commit: this commit`).
+     - `228a4cfb` (desktop-mode probe; disposition `reimplemented (partial;
+       front-end files not-applicable)`; mapping; `Fork commit: this commit`;
+       notes listing the not-applicable/deferred files).
    - Move the top marker to
-     `<!-- high-water-mark: 228a4cfb6690dae58d9a49dd2e412a132791cbe7 -->`.
+     `<!-- high-water-mark: dcd9fdeb9aacbba08209918620dd0ec4e7c56a7a -->`.
    - Leave the baseline entry.
 9. Update `.agents/plans/002-tinyhexagon/FEED-FORWARD.md`:
    - §07: the tiny main calls `run_probe_child_if_requested(&argv)` at the top;
@@ -94,7 +106,7 @@ rg -n 'DesktopModeSource|run_probe_child_if_requested|wants_desktop_mode|probe_d
 rg -n 'xvfb|libgl1-mesa-dri|libegl1|libegl-mesa0' tools/ci-deps.sh
 ```
 
-The windowed smoke is not run (no binary yet); note it as 07/08.
+The windowed smoke is not run (no binary yet); note it as 07/08. `tools/upstream-status.sh --no-fetch --check` must exit 0 after the marker move.
 
 ## Report
 

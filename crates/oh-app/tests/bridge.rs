@@ -340,14 +340,11 @@ fn on_render_stage_first_frame_frametime_is_the_cpp_inf() {
 
 // ---------------------------------------------------------------------
 // 029e2 (the graphics audit's M2): the per-frame character-size / origin
-// half of the C++ `updateText` (HGGraphics.cpp:545-571, :593) must reach
-// the render state every frame — the pre-fix port never called
+// half of the C++ `updateText` (HGGraphics.cpp:545-571) must reach the
+// render state every frame — the pre-fix port never called
 // `text_draw::update_text`, so every `Text` kept its constructor size
 // forever (status 19 = 25/1.27, message 29 = 38/1.27 left-anchored at
-// (0, 0), PB a static 51 = 65/1.27, replay 15 = 20/1.27).
-// (The C++'s PB-text sawtooth half was retired with the PB effect by plan
-// 002 issue 02c1 — the render `DrawState` still advances/resizes the inert
-// empty `pbText` until the 02c3/09 oh-render sweep.)
+// (0, 0)).
 // ---------------------------------------------------------------------
 
 /// The bridge applies the C++ per-frame sizes/origins (the `updateText`
@@ -381,8 +378,7 @@ fn the_bridge_applies_the_per_frame_text_sizes_and_origins() {
     // The C++ values at the default zoom 1.27 / text scaling 1.0
     // (HGGraphics.cpp:545-550, `(size / zoomFactor * textScaling)`
     // truncated): time 70 → 55, status 20 → 15 (the ctor kept 19 =
-    // 25/1.27), message 32 → 25 (the ctor kept 29 = 38/1.27),
-    // replay 16 → 12 (the ctor kept 15 = 20/1.27).
+    // 25/1.27), message 32 → 25 (the ctor kept 29 = 38/1.27).
     assert_eq!(st.time_text.get_character_size(), 55);
     assert_eq!(
         st.text.get_character_size(),
@@ -403,13 +399,9 @@ fn the_bridge_applies_the_per_frame_text_sizes_and_origins() {
         st.message_text.get_origin().x > 0.0,
         "the message text is centred (the C++'s getGlobalWidth/2 origin, :567 — the ctor left it at (0, 0))"
     );
-    // showFPS off (Config::default) + no replay UI (the C++'s
-    // `mustShowReplayUI()` gate, :574-598 — always false post-replay
-    // removal, plan 002 issue 02c2) → the fps / replay texts keep their
-    // ctor sizes (the C++'s `getShowFPS()` / `mustShowReplayUI()` gates,
-    // :560-564 / :574-598).
+    // showFPS off (Config::default) → the fps text keeps its ctor size
+    // (the C++'s `getShowFPS()` gate, :560-564).
     assert_eq!(st.fps_text.get_character_size(), 19);
-    assert_eq!(st.replay_text.get_character_size(), 15);
 }
 
 // ---------------------------------------------------------------------
@@ -421,10 +413,7 @@ fn the_bridge_applies_the_per_frame_text_sizes_and_origins() {
 // `getTextureOrNullTexture` loop + `setSmooth(true)`
 // (`HexagonGame.cpp:87-107`, called from the ctor `:453` and
 // `onRecreation` `:339`) and the ctor window branch's
-// `txStarParticle` / `txSmallCircle` (`:324-325`). The C++'s
-// `replayIcon.png` load left with the replay removal (plan 002 issue
-// 02c2) — the render `replay_icon` field stays inert until the 02c3
-// sweep.
+// `txStarParticle` / `txSmallCircle` (`:324-325`).
 // ---------------------------------------------------------------------
 
 /// The six textures are the REAL `Assets/` PNGs (their on-disk
@@ -457,9 +446,6 @@ fn app_draw_loads_the_real_hud_and_particle_textures() {
         );
         assert!(icon.is_smooth(), "{name} carries the C++ setSmooth(true)");
     }
-    // (The C++'s `replayIcon.png` (128×128, smoothed) assertion left with
-    // the replay removal, plan 002 issue 02c2 — the `replay_icon` field
-    // now carries the neutral `Texture::new()` until 02c3 sweeps it.)
 
     // The particle textures (the ctor window branch, `:324-325`) — NOT
     // smoothed (the C++ smooths only the four icon textures).
@@ -501,9 +487,6 @@ fn app_draw_missing_assets_fall_back_to_the_cpp_null_textures() {
     ] {
         assert_eq!(icon.get_size(), (1, 1), "the nullTexture is 1×1");
     }
-    // The `replay_icon` field is the neutral `Texture::new()` (inert
-    // since the replay removal, plan 002 issue 02c2) — 1×1 either way.
-    assert_eq!(st.replay_icon.get_texture().get_size(), (1, 1));
     assert_eq!(app.tx_star_particle().get_size(), (1, 1));
     assert_eq!(app.tx_small_circle().get_size(), (1, 1));
 }

@@ -93,9 +93,8 @@ pub use pack_shaders::{
 };
 pub use shader::{Shader, ShaderRegistry, ShaderType, Uniform};
 pub use text_draw::{
-    diff_format, draw_text, draw_text_message, draw_text_personal_best, draw_text_time_and_status,
-    format_time, get_scaled_character_size, time_format, update_text, update_text_sizes,
-    TextUpdateInput,
+    diff_format, draw_text, draw_text_message, draw_text_time_and_status, format_time,
+    get_scaled_character_size, time_format, update_text, update_text_sizes, TextUpdateInput,
 };
 pub use texture::{load_texture_or_null, Image, RenderTexture, Sprite, Texture};
 pub use timer::TimerStatic;

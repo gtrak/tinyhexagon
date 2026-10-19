@@ -525,10 +525,8 @@ pub fn compose_with(assets: Arc<oh_assets::Assets>, root: PathBuf, window: bool)
 /// `oh_audio::Audio` (issue 025e); the headless/server composition passes
 /// `None` (the C++'s `audio == nullptr`).
 ///
-/// (The engine's `ReplayStore` seam — issue 029a1's `replay_store`
-/// argument — was retired by plan 002 issue 02c2 with the replay
-/// removal; the C++'s `death_saveReplay`'s filesystem half no longer
-/// exists in the port.)
+/// (The engine's `ReplayStore` seam left with the replay removal — plan
+/// 002 issue 02c2.)
 ///
 /// `joystick` — the engine's `Joystick` seam (29j1): the WINDOWED
 /// desktop composition passes the shared `crate::joystick::RealJoystick`
