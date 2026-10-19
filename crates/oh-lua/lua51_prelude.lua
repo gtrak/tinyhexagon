@@ -2,11 +2,11 @@
 -- as the port's 5.1 compat set — installed by the port itself, see
 -- crates/oh-lua/src/prelude.rs + crates/oh-lua/src/api/mod.rs).
 --
--- Task: .agents/tasks/issue-030c-three-way-parity.md §2.2 (issue 30 §12's
+-- Task: .agents/plans/archive/001-rust-port/tasks/issue-030c-three-way-parity.md §2.2 (issue 30 §12's
 -- "Removed 5.1-isms" blocker row: "implement them as a Lua-level 5.1 compat
 -- prelude over Luau"). This file classifies each of the seven isms named
--- in §12 — see the classification table in
--- `crates/oh-parity/tests/lua51_compat_prelude.rs` (faithful / approximated /
+-- in §12 — see the classification table in the retired parity crate's
+-- `lua51_compat_prelude.rs` tests (git history) (faithful / approximated /
 -- not emulatable). It is Lua-level only: no Rust, no VM change; it runs in
 -- any context BEFORE a 5.1-style script does.
 --
@@ -60,8 +60,8 @@
 --     crates/oh-lua/src/context.rs (`mlua::Lua::load` exposed as the
 --     global `load`, installed in every `LuaContext`). With that binding
 --     present, this line activates `loadstring` (pinned by
---     `loadstring('return 6*7')() == 42` in
---     crates/oh-parity/tests/lua51_compat_prelude.rs).
+--     `loadstring('return 6*7')() == 42` in the retired parity crate's
+--     `lua51_compat_prelude.rs` tests — see git history).
 
 do
 	-- 1. unpack — 5.1 global. NATIVE on this Luau build ("Lua 5.1 compat"

@@ -1,19 +1,12 @@
 #!/usr/bin/env bash
-# Gate harness for the Rust port (established by issue 01, reused by every
-# later issue). Runs, in order:
+# Gate harness for the Rust port (established by issue 01 of the port,
+# reused by every later issue; the Lua-parity and additions-boundary
+# stages were retired with plan 002 — the C++ tree, the parity crate and
+# the parity/lane/additions tooling are gone). Runs, in order:
 #   1. cargo fmt --all -- --check
 #   2. cargo build --workspace
 #   3. cargo clippy --workspace --all-targets -- -D warnings
 #   4. cargo test --workspace
-#   5. tools/lua-parity.sh (the Lua parity stage — D-037: the port ships
-#      ONE Lua VM, Luau; the stage compares the shipping column against
-#      the committed C++ vectors, the probe pins, the dialect census and
-#      the prelude tests, over N separate VM processes; ~6-8 min)
-#   6. tools/check-additions-boundary.sh (the oh-additions boundary
-#      ratchet — issue 057 deliverable 3: the OURS-class deviation marker
-#      lines in the ported files must not GROW past the committed
-#      baseline; a grown count fails the gate and points at
-#      crates/oh-additions)
 #
 # Stage output goes to a log under target/ (gitignored); GATE_EXIT=<rc> is
 # printed per stage, and a FAILING stage's tail (last 200 lines) is printed
@@ -57,8 +50,6 @@ run_stage "cargo build --workspace" cargo build --workspace
 run_stage "cargo clippy --workspace --all-targets -- -D warnings" \
     cargo clippy --workspace --all-targets -- -D warnings
 run_stage "cargo test --workspace" cargo test --workspace
-run_stage "tools/lua-parity.sh" tools/lua-parity.sh
-run_stage "tools/check-additions-boundary.sh" tools/check-additions-boundary.sh
 
 printf 'log: %s\n' "$LOG"
 exit "$overall"

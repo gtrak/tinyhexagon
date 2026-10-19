@@ -30,11 +30,47 @@ re-reading the whole history.
   script was checked with `bash -n` and synthetic-repo cases (behind/current,
   bad marker, missing remote).
 
-### 01 — `.agents` history (pending)
+### 01 — `.agents` history (LANDED)
 
-- Archive path:
-- Gate stages:
-- Test files removed with parity:
+- Archive path: `.agents/plans/archive/001-rust-port/` — the old plan
+  files, `DECISIONS.md`, `PARITY.md`, `deviations.md`, `STATUS.md`,
+  `ISSUE-019-REPORT.md`, `WORKER-HYGIENE.md`, `mapping/`, the `parity/`
+  corpus, `audits/`, `evidence/`, `workflows/`, and every port-era task
+  spec under `tasks/` (the pre-plan-002 review protocol restored there as
+  `tasks/review-gate-port.md` from `4c31561a`). Nothing in the archive was
+  edited; the plan-002 task files live in `.agents/tasks/plan-002/`.
+- Gate stages (4, final result all green, gate rc 0): 1. `cargo fmt --all
+  -- --check` 2. `cargo build --workspace` 3. `cargo clippy --workspace
+  --all-targets -- -D warnings` 4. `cargo test --workspace` (1014 tests
+  passed, 0 failed). The Lua-parity and additions-boundary stages are
+  gone; the failing-stage-tail rule and `target/gate.log` are kept.
+- Test files removed with the parity crate: all 12 under
+  `crates/oh-parity/tests/` (`common/mod.rs`, `dialect_census.rs`,
+  `gen_corpus.rs`, `lua51_compat_prelude.rs`, `lua51_snippet.lua`,
+  `lua_engine_parity.rs`, `lua_vm_probes.rs`,
+  `parity_cpp_fingerprints.rs`, `parity_level_runs.rs`,
+  `parity_pack_ids.rs`, `parity_replay.rs`, `parity_rng.rs`) plus the
+  crate's `src/lib.rs` + `Cargo.toml`; the lockfile dropped only the
+  `oh-parity` entry (17 lines). No other test read a deleted path at
+  runtime — oh-parity was the only corpus consumer.
+- Reference fixes (doc comments only, no assertions weakened): the
+  `crates/oh-parity/tests/lua51_compat_prelude.rs` citations in
+  `crates/oh-lua/src/prelude.rs`, `crates/oh-lua/src/context.rs` and
+  `crates/oh-lua/lua51_prelude.lua` (×2) now point at git history; the
+  `lua51_prelude.lua` task-spec pointer retargeted to
+  `.agents/plans/archive/001-rust-port/tasks/issue-030c-three-way-parity.md`.
+- Deviations: none from the issue contract. `.git/modules/extlibs` state
+  was removed by `git submodule deinit` itself; the 5 gitlinks were
+  dropped from the index with `git rm --cached` so `git submodule status`
+  is empty. Historical doc comments elsewhere in `crates/` that cite the
+  pre-archive `.agents/plans/001-rust-port/...` or `tools/oracle/...`
+  paths were left in place (history, not build inputs — working
+  agreement); a docs sweep (Issue 09) can retarget them. `.github`
+  workflows were not in scope; `ci.yml`'s gate job runs `tools/gate.sh`
+  (now 4 stages) and is unaffected, though its header comments still
+  describe the retired lua-parity/cpp-oracle stages; the active gate job
+  already calls the four-stage `tools/gate.sh`, and the comment cleanup
+  belongs to Issue 08/09.
 
 ### 02 — crate removal / engine de-scope (pending)
 

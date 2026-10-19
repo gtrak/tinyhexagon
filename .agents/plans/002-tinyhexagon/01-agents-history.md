@@ -1,6 +1,6 @@
 # Issue 01 — `.agents` history summary/archive; retire C++ and parity tooling
 
-**Status:** PROPOSED
+**Status:** LANDED
 **Depends:** 00
 
 ## Objective

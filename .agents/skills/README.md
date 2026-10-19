@@ -26,6 +26,16 @@ library (vendored C++, third-party C++ dependency, or Rust crate), written from
 > `cpp-original/…`; both reach the same pristine files. Submodule paths are
 > `cpp-original/extlibs/…` (see `.gitmodules`).
 
+> **Plan 002 note (issue 001):** the C++ tree, the root `src`/`include`
+> symlinks and `.gitmodules` were removed by plan 002 Issue 01. The record
+> is archived at `.agents/plans/archive/001-rust-port/`; skill citations to
+> `cpp-original/…` (and the `src`/`include` paths they resolved through)
+> refer to that archived tree / git history, not a live checkout.
+
+> **Plan 002 (tinyhexagon):** the `rust-synth` and `cpal` skills are pending,
+> not missing — they land with issue 05, after the `th-synth` cross-target
+> spike (`.agents/plans/002-tinyhexagon/05-synth.md`).
+
 ## Index
 
 | Skill | Library | Source of truth | Written by |

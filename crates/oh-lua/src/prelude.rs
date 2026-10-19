@@ -29,8 +29,8 @@ use crate::context::LuaContext;
 use crate::error::LuaError;
 
 /// The shipped prelude (single source of truth: `crates/oh-lua/lua51_prelude.lua` —
-/// the file 030c's tests in `crates/oh-parity/tests/lua51_compat_prelude.rs`
-/// include by path).
+/// included by path; 030c's tests that exercised it lived in the retired
+/// parity crate — see git history).
 pub(crate) const LUA51_PRELUDE: &str = include_str!("../lua51_prelude.lua");
 
 /// Install the 5.1 compat prelude in the context (idempotent: every shim

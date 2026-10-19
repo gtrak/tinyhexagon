@@ -1,6 +1,6 @@
 # 002 — tinyhexagon
 
-Status: APPROVED (execution in progress; issue 000 landed 2026-10-19)
+Status: APPROVED (execution in progress; issues 000–001 landed 2026-10-19)
 Owner: operator; orchestrator: this session
 Plan file: `.agents/plans/002-tinyhexagon/PLAN.md`
 Issues: `00-*.md` … `09-*.md` in this folder
@@ -133,7 +133,7 @@ web `th-web` emscripten bin. All use the same `th-render`/`bridge` path.
 | # | Issue | Depends | Status |
 |---|---|---|---|
 | 00 | Upstream skill + changelog + status tooling | — | LANDED |
-| 01 | `.agents` history summary/archive; retire C++/parity tooling | 00 | PROPOSED |
+| 01 | `.agents` history summary/archive; retire C++/parity tooling | 00 | LANDED |
 | 02 | Remove retired crates; de-scope the engine (replay/Steam/Discord) | 01 | PROPOSED |
 | 03 | Rename `oh-` → `th-`; rename artifacts | 02 | PROPOSED |
 | 04 | Engine kid alterations (soft collision, difficulty, beat, text, gaps) | 03 | PROPOSED |

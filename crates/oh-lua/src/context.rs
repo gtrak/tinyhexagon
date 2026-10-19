@@ -52,7 +52,8 @@ impl LuaContext {
     /// `load`. The shipped 5.1 compat prelude's `loadstring = load` line
     /// (`install_lua51_prelude`, run from `api::init_lua_api`) then
     /// activates the 5.1 spelling; pinned by `loadstring('return 6*7')() ==
-    /// 42` (`crates/oh-parity/tests/lua51_compat_prelude.rs`).
+    /// 42` (the retired parity crate's `lua51_compat_prelude` tests — see
+    /// git history).
     ///
     /// (Creation failure is fatal: `mlua::Lua::new` panics, like a C++
     /// `bad_alloc` from `lua_newstate`.)

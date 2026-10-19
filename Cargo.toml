@@ -20,7 +20,6 @@ members = [
     "crates/oh-workshop-uploader",
     "crates/oh-steam",
     "crates/oh-discord",
-    "crates/oh-parity",
     "crates/oh-android",
     "crates/oh-web",
 ]
