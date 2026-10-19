@@ -9,6 +9,7 @@ members = [
     "crates/th-assets",
     "crates/th-game",
     "crates/th-audio",
+    "crates/th-synth",
     "crates/th-render",
     "crates/th-app",
     "crates/th-android",
@@ -34,6 +35,16 @@ edition = "2021"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+
+# Plan 002 issue 05a (th-synth): `rust-synth 0.23` pulls cpal 0.15 -> alsa
+# 0.9 -> alsa-sys ^0.3.1, while rodio 0.23 (th-render/th-audio) pulls cpal
+# 0.18 -> alsa 0.11 -> alsa-sys 0.4.0. Both alsa-sys crates declare
+# `links = "alsa"`, so Cargo refuses the graph. The vendored 0.3.1
+# (`vendor/alsa-sys-0.3.1`, byte-identical to the registry source with
+# `links = "alsa_0_3"`) patches the 0.3.x line only; the 0.4.0 registry
+# crate keeps `links = "alsa"`. See .agents/plans/002-tinyhexagon/05-synth.md.
+[patch.crates-io]
+alsa-sys = { path = "vendor/alsa-sys-0.3.1", version = "0.3.1" }
 
 # Profile tuning is finalized by issue 22 (builds/CI); issue 24 pins the
 # release profile to the C++ release build's settings.

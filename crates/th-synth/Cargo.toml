@@ -1,0 +1,13 @@
+[package]
+name = "th-synth"
+description = "The tiny-runtime soundtrack (plan 002 issue 05): a live `rust-synth` engine (8 pre-allocated tracks) driven by a `MusicDirector` — stage mapping, the `BeatView` for the visuals, collision ducking, the no-device fallback clock, and the web `start_on_gesture` boot. SFX stay in `th-audio`."
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+# The live modular synth (MIT, `audio` + `math` modules only — the TUI
+# binary's deps ride along as transitive deps of the lib, verified in the
+# cross-target spike: `.agents/plans/002-tinyhexagon/05-synth.md`).
+rust-synth = "0.23.0"
+
+[dev-dependencies]

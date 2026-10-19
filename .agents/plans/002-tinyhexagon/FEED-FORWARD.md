@@ -615,8 +615,81 @@ re-reading the whole history.
   slow-motion / SFX / the synth duck (05); the soft-collision flash (120)
   is the only engine-side bump visual.
 
-### 05 — synth (pending)
+### 05a — synth host + alsa-sys patch (LANDED)
 
+- Spike result (host): STOCK `rust-synth 0.23.0` compiles on the host —
+  the only blocker was the graph-level `links = "alsa"` collision, not the
+  crate. No second conflict appeared.
+- Patch location: `vendor/alsa-sys-0.3.1/` (registry cache copy, LICENSE
+  in; ONLY change `links = "alsa"` → `links = "alsa_0_3"`, + provenance
+  comment) wired by the root `Cargo.toml` `[patch.crates-io] alsa-sys =
+  { path = "vendor/alsa-sys-0.3.1", version = "0.3.1" }`. Lock: alsa-sys
+  0.3.1 (path, no checksum) + 0.4.0 (registry) side by side; alsa 0.9.1
+  (cpal 0.15.3) + 0.11.0 (cpal 0.18.2) both present. rodio/th-audio
+  untouched.
+- Director API (final, `th-synth`): `MusicDirector::start() -> Self`
+  (boot: live attempt on desktop/Android, `Err` → silent fallback; on
+  emscripten fallback ONLY — autoplay); `set_stage(u32)` (`Shared`
+  params only, NEVER `rebuild_graph` — click-free; idempotent);
+  `bump()` (duck 0.55 → 0.22, linear recover over 0.6 s, applied via the
+  engine's per-buffer `master_gain` `Shared` read); `tick(dt) -> BeatView`
+  (live: `t = phase_clock`, energy = `clamp(max(peak_l,peak_r)·3)`,
+  playing = live; fallback: `fallback_t += dt`, energy 0, playing false);
+  `stop()` (drops the engine, state preserved);
+  `start_on_gesture()` (**cfg-gated to emscripten**, idempotent — the web
+  boot hook from the first canvas pointer/key event); `resume()` (any
+  target, after stop/suspension; cpal 0.15 emscripten = one AudioContext
+  per stream, so a fresh engine IS the resume). `BeatView` is exactly the
+  contracted shape (`beat_phase`, `bar_phase`, `energy`, `stage`,
+  `playing`). The director is a MAIN-THREAD object (cpal 0.15 `Stream` is
+  `!Send+!Sync` — `NotSendSyncAcrossAllPlatforms` marker; only the plain
+  `BeatView` crosses threads).
+- Stage/layer table (final): 8 fixed slots, always `MAX_TRACKS = 8` (the
+  engine asserts it): PadZimmer@0 ×1.0 · DroneSub@0 ×0.5 · PluckSaw@2
+  ×1.5 · Bell@5 ×2.0 · BassPulse@8 ×0.5 · Shimmer@11 ×2.0 · Heartbeat@14
+  ×0.5 (half-time pattern = the "soft kick" role) · SuperSaw@17 ×1.0
+  (ratios to the root). `scale_mode = 0`; root A2 110 Hz; `bpm = 70 +
+  1.5·min(stage,20)` (cap 100); `brightness = 0.45 + 0.02·min(stage,20)`
+  (cap 0.85); root ×(4/3) per 3-stage block (⌊min(stage,20)/3⌋ fourths,
+  capped at the stage plan); `master_gain` 0.55, duck 0.22 / 0.6 s. 05a
+  tests: stage map monotonic/capped, table match, per-stage unlocks,
+  re-tune on shift, beat/bar phases at known times, duck lower + recover,
+  start-without-device no-panic + fallback advance, stop/resume, 8
+  tracks (12 total, green). Mechanics trap for later workers: `Track` is
+  NOT `Clone` (only `TrackParams`, whose `Shared` = `Arc<AtomicU32>` are
+  cell-sharing) — `th-synth` hands the engine a rebuilt `Vec<Track>` of
+  cloned params so the live graph reads the director's atomics.
+- Web gesture hook: `start_on_gesture()` (emscripten-only) / `resume()`;
+  issue 08 wires it to the first canvas pointer/key event. A suspended
+  AudioContext (hidden tab) freezes `phase_clock` and cpal 0.15.3 exposes
+  no suspend query, so `BeatView.playing` means "live" (not "un-suspended")
+  — 08 must re-fire the gesture hook on visibility/gesture.
+- Target caveats: HOST VERIFIED (check/test + whole-workspace gate green;
+  no device on the build host → the fallback path is what every test
+  exercised; no listen recorded — 05b/07 on a device-bearing machine).
+  Skills written from source: `lib-rust-synth.md` + `lib-cpal.md`
+  (indexed; host sections verified; android/wasm notes `TODO(05b)`).
+  cpal 0.15.3 emscripten: `Stream::play()` = `AudioContext.resume()` whose
+  REJECTED promise PANICS in a spawned task — never start pre-gesture on
+  web (the cfg gate exists for this). Oboe (android): mono/stereo only,
+  I16/F32, `default_output_device()` always `Some` (a dead device surfaces
+  as a stream error → the fallback, same as host).
+- Gate (host, 4/4 green): fmt / build / clippy `-D warnings` / test —
+  see `.agents/tasks/plan-002/issue-005a-report.md`.
+
+### 05b — synth cross-target (pending)
+
+- Hand-off from 05a (host only): run
+  `cargo check -p th-synth --target aarch64-linux-android` (the oboe
+  host — confirm AAudio-vs-OpenSL in oboe 0.6.1; the question is parked
+  in `lib-cpal.md` as `TODO(05b)`) and
+  `cargo check -p th-synth --target wasm32-unknown-emscripten` (the
+  emscripten host; the risk per plan 05 is rust-synth's UNCONDITIONAL
+  TUI/recording deps — ratatui, crossterm, flacenc, vorbis_rs,
+  tracing-subscriber — on wasm/Android). If the spike fails: vendor a
+  feature-gated rust-synth (plan 05 spike-failure path) and re-run; do
+  NOT substitute or drop music. Then re-run `bash tools/gate.sh` and fill
+  the `TODO(05b)` markers in `lib-rust-synth.md` / `lib-cpal.md`.
 - Spike result (stock vs patched):
 - Patch location:
 - Director API:
@@ -666,6 +739,7 @@ re-reading the whole history.
   `EventLoop` per process — the `th-render` `types.rs` doc paragraph +
   the `th-app::desktop_mode` module docs). The probe's CLI flag is
   `--th-desktop-mode-probe` (renamed from `--oh-desktop-mode-probe` in 03).
+- 05a handoff: host listen still pending on a device-bearing machine (05b/07); `BeatView.playing` means live, NOT un-suspended — re-fire `start_on_gesture` on visibility/gesture; `stop()` does not seed `fallback_t` from the live phase, so 07 may see a one-frame beat jump after a stop/resume; the Heartbeat half-time/root-fourth choices are 09 tuning.
 - Composition signature:
 - Journey table:
 - Touch mapping:
@@ -704,6 +778,7 @@ re-reading the whole history.
   `tools/ci-deps.sh` (upstream `228a4cfb` + `dcd9fdeb`). NOTE:
   `tools/smoke-windowed.sh` still asserts the old `[::mainClient] Finished`
   string; that half is inert until 07/08 adapts it to the tiny loop.
+- 05a handoff: `BeatView.playing` means live, not un-suspended; a hidden tab freezes `phase_clock` and cpal 0.15 exposes no suspend query — re-fire `start_on_gesture` on visibility/gesture. The web entry must start the synth only on the first gesture.
 - Web boot/audio-unlock export: 03c landed the STUB's browser half —
   `th-web`'s `#[wasm_bindgen] status()` (returns "tinyhexagon stub: the
   tiny runtime lands in plan 002 issue 07/08"; the page's
@@ -750,6 +825,7 @@ re-reading the whole history.
 ### 09 — tuning/docs (pending)
 
 - Final tunables:
+- 09 tuning notes: Heartbeat half-time pattern / root-fourth shift; the host listen (desktop/Android/web) is still pending; the 05a vendor `.orig` dead file was removed.
 - Playtest notes:
 - Per-target deviations:
 - Dead-surface/doc sweep: `th-render` `PBParticleUpdateParams`/`make_pb_particle`
