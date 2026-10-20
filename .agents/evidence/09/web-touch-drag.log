@@ -1,0 +1,6 @@
+touch-drag probe (new build, Chrome 148 headless, CDP):
+- after first key gesture: audio=live, help=off
+- during a 1.8s slow vertical DRAG on the left half: hold persists (no pointercancel fold)
+- after the drag, finger still down: angle -19.1735 -> -29.4405 over 0.7s (still rotating CCW)
+DOM checks: canvas touch-action=none, #fs button absent, body overscroll-behavior=none
+status: tinyhexagon web: booted=true;stage=0;started=true;audio=live;help=off

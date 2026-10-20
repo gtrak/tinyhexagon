@@ -1364,7 +1364,9 @@ impl Window {
         // issue 046 (F33) — the fullscreen button (`#fs`) (the
         // `web_fs_button_get_or_create` docs): the config's `fullscreen`
         // value's web applier (the `th-app`'s click sink — the browser
-        // Fullscreen API). `None` = the no-DOM edge (the setter no-ops).
+        // Fullscreen API). `None` since the 09 operator pass removed
+        // the overlay button (the in-canvas icon is the control) — the
+        // setter no-ops.
         let fs_button: Option<web_sys::Element> = web_sys::window()
             .and_then(|w| w.document())
             .and_then(|d| web_fs_button_get_or_create(&d));
@@ -3685,28 +3687,21 @@ fn web_ime_input_get(document: &web_sys::Document) -> Option<web_sys::HtmlInputE
 /// `#fs` cannot corrupt the input, only look different).
 #[cfg(target_os = "emscripten")]
 fn web_fs_button_get_or_create(document: &web_sys::Document) -> Option<web_sys::Element> {
-    if let Some(existing) = document.get_element_by_id("fs") {
-        return Some(existing);
-    }
-    let el = document.create_element("button").ok()?;
-    el.set_attribute("id", "fs").ok()?;
-    el.set_attribute("aria-label", "Toggle fullscreen").ok()?;
-    // The style contract (the committed shell's `#fs` rule — the
-    // fallback page's inline twin; the `display` is deliberately ABSENT
-    // — the shell's gate JS owns it, the fallback's button works). The
-    // TOP offset is the FALLBACK's fixed collision resolution (the shell
-    // computes 76/devicePixelRatio + 12 live — its gate JS re-scales it
-    // on a DPR change; a page WITHOUT the gate JS gets the dpr = 1 worst
-    // case — the F31 row's band bottom (76 REAL px) in CSS px + the 12px
-    // gap — which clears the band at EVERY dpr ≥ 1, the safe constant).
-    el.set_attribute(
-        "style",
-        "position: fixed; right: 12px; top: 88px; width: 44px; height: 44px; padding: 0; border: 1px solid rgba(255, 255, 255, 0.25); border-radius: 10px; background: rgba(255, 255, 255, 0.10); color: #ddd; opacity: 0.55; font-size: 20px; line-height: 1; cursor: pointer; touch-action: manipulation; pointer-events: auto; z-index: 10;",
-    )
-    .ok()?;
-    el.set_text_content(Some("⛶"));
-    document.body()?.append_child(&el).ok()?;
-    Some(el)
+    // 09 operator pass — the `#fs` DOM overlay button is GONE: the kid
+    // had two fullscreen controls (this fixed-position fallback ⛶ at
+    // `right: 12px; top: 88px` AND the game's in-canvas top-right icon)
+    // and read them as two different things. The in-canvas icon is the
+    // fullscreen control now (its tap carries the user activation
+    // `requestFullscreen` needs; the shared toggle
+    // `th_app::web_fullscreen::toggle_browser_fullscreen` applies it and
+    // the `fullscreenchange` re-sync keeps the state honest). The
+    // get-or-create stays as an inert seam (returns `None` — every
+    // `#fs` consumer no-ops: the click sink is never armed) so the
+    // plumbing around it (the slot fields, `install_sinks`) is
+    // untouched. Delete this function + its consumers in a later
+    // cleanup pass if the inert seam ever annoys.
+    let _ = document;
+    None
 }
 
 /// issue 046 (F32) — the keydown gate's DOM half: the `#ime` element is

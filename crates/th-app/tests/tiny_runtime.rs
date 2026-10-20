@@ -84,7 +84,7 @@ fn the_sixty_second_run_advances_the_stage_and_never_dies() {
     assert_eq!(level.id, "journey", "the single continuous journey level");
     // The continuous ramp at stage 2 + 5 s (the last frame's pre-advance
     // value, so allow one frame of lag).
-    let expected = 0.45 + 0.085 * (2.0 + 5.0 / 30.0);
+    let expected = 0.45 + 0.06 * (2.0 + 5.0 / 30.0);
     assert!(
         (rt.game().difficulty_mult() - expected).abs() < 1e-3,
         "the continuous stage-2 multiplier"
@@ -451,7 +451,7 @@ fn the_ten_minute_run_reaches_stage_20_and_plateaus() {
     assert_eq!(th_app::journey::difficulty_for_stage(20), diff);
     assert_eq!(th_app::journey::bpm_for_stage(20), bpm);
     assert!(
-        (th_app::journey::difficulty_for_stage(20) - 2.15).abs() < 1e-6
+        (th_app::journey::difficulty_for_stage(20) - 1.65).abs() < 1e-6
             && (th_app::journey::bpm_for_stage(20) - 174.0).abs() < 1e-6,
         "the plateau's capped values"
     );

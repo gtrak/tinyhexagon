@@ -6,14 +6,12 @@
   persistence (the tiny runtime persists nothing — the read-only
   `_RELEASE` content stays in emscripten MEMFS; the 03c stub's
   `save_session()` no-op retired with the persistence machinery).
-  The fullscreen control is NOT declared here: the `th-render`
-  emscripten window's `#fs` get-or-create provides the fallback button
-  (the committed-shell style contract — the top-right `⛶`, the 055
-  lesson: always present, top-right, clearing the in-canvas icon's
-  band), and `th_app::web_fullscreen::install_sinks` wires its click to
-  the browser Fullscreen API (the in-canvas fullscreen icon's tap
-  applies the SAME shared toggle — both read the browser's actual
-  state).
+  The fullscreen control is the GAME's in-canvas top-right icon (the
+  touch tap carries the user activation a `requestFullscreen` needs;
+  the shared toggle is `th_app::web_fullscreen::toggle_browser_fullscreen`).
+  The 09 operator pass REMOVED the window layer's fallback `#fs` DOM
+  button (two fullscreen buttons confused the kid; the get-or-create
+  now stays inert).
 
   SERVE (static, no build step): the THREE build artifacts (the loader
   `tinyhexagon.js` — MODULARIZE + EXPORT_ES6, the factory default-
@@ -55,14 +53,28 @@
 <html>
   <head>
     <meta charset="utf-8" />
+    <!-- 09 touch fix: no page zoom (double-tap zoom cancels the game's
+         touch), and the game owns every gesture. -->
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <title>tinyhexagon</title>
     <style>
       html, body { margin: 0; padding: 0; background: #111; color: #ddd;
-                   font-family: monospace; overflow: hidden; }
+                   font-family: monospace; overflow: hidden;
+                   /* 09 touch fix: no pull-to-refresh / rubber-band — an
+                      accidental drag must not take the page anywhere. */
+                   overscroll-behavior: none; }
       /* Full-viewport: the emscripten window measures the real size at
          boot (the Gl backend's canvas backing store) — the attributes
          below are the pre-boot initial values only. */
-      canvas { display: block; width: 100vw; height: 100vh; }
+      /* 09 touch fix (the drag-cancel bug): a POINTER event's
+         preventDefault does NOT stop scrolling — only `touch-action`
+         does. Without it, any small vertical drag on the canvas is the
+         browser's pan/zoom gesture: the browser fires `pointercancel`
+         (our feed folds it to TouchEnded) and the held rotation stops.
+         `none` = the canvas owns every touch gesture. */
+      canvas { display: block; width: 100vw; height: 100vh;
+               touch-action: none; }
       /* 08a fix 4 (P2 #1) — visually hidden: the page is text-free, so
          the raw status line must not show to the child; the element
          stays in the DOM (the 1 s poll keeps filling its
