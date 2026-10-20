@@ -31,10 +31,11 @@
 #                      x86_64-w64-mingw32-gcc tools/build-windows.sh needs
 #                      for the Windows release build + the cross-check).
 #                      Preinstalled on the ubuntu-latest image (defensive).
-#   * xvfb           — `xvfb-run`, the headless X server the gate's
-#                      windowed smoke (tools/smoke-windowed.sh) runs the
-#                      desktop build under when no DISPLAY is present.
-#                      NOT on the ubuntu-latest image.
+#   * xvfb           — `xvfb-run`, the headless X server the windowed
+#                      smoke (tools/smoke-windowed.sh — the package
+#                      smoke tools/package.sh runs in the release linux
+#                      job) runs the tinyhexagon build under when no
+#                      DISPLAY is present. NOT on the ubuntu-latest image.
 #   * libgl1-mesa-dri — the Mesa software GL driver (llvmpipe) Xvfb needs
 #                      to actually create a GL context for the windowed
 #                      smoke's `[th-render] context GL_SAMPLES`

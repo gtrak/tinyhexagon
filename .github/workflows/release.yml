@@ -169,13 +169,14 @@ jobs:
       - name: The CI apt prerequisites (tools/ci-deps.sh)
         run: bash tools/ci-deps.sh
 
-      - name: Build + stage + smoke (the packaged binary is tested headless)
-        run: bash tools/package.sh
-
-      - name: Tar the staged _RELEASE (binary alongside the data, the C++ layout)
-        run: |
-          tar czf "tinyhexagon-${ASSET_TAG}-linux-x86_64.tar.gz" \
-            -C target/package/linux-x86_64-unknown-linux-gnu _RELEASE
+      - name: Build + stage + smoke + tar (tools/package.sh — the tagged tar.gz at the repo root)
+        # The whole linux package in the ONE script (the 08c packager):
+        # the release build, the _RELEASE staging (the tinyhexagon binary
+        # inside, alongside the data), the windowed smoke of the staged
+        # binary (tools/smoke-windowed.sh — the display packages from
+        # tools/ci-deps.sh above), and the tar of the staged _RELEASE
+        # with the tag's name (tinyhexagon-<tag>-linux-x86_64.tar.gz).
+        run: bash tools/package.sh --tag "${ASSET_TAG}"
 
       - name: Upload
         uses: actions/upload-artifact@v4
@@ -210,21 +211,16 @@ jobs:
       - name: The CI apt prerequisites (tools/ci-deps.sh)
         run: bash tools/ci-deps.sh
 
-      - name: Cross build (release) + stage (the .exe smoke is skipped by the script on a Linux runner)
+      - name: Cross build (release) + stage + zip (the tagged zip at the repo root)
         # See the file header for why this is mingw-gnu and not cargo-xwin
         # MSVC (the C-dep autoconf / llvm-lib walls; post-sodium the
         # cross path compiles Luau only — see the file header).
-        run: bash tools/package.sh --windows
-
-      - name: Zip the staged _RELEASE
-        # ../../../ not ../../: the stage dir is THREE levels deep
-        # (target/package/windows-x86_64-pc-windows-gnu), so the zip lands
-        # at the repo root where the Upload step looks for it (issue 045,
-        # run 39105852798: the zip landed in target/ and the upload
-        # warned — silently, at the v4 default if-no-files-found: warn).
-        run: |
-          cd target/package/windows-x86_64-pc-windows-gnu
-          zip -qr "../../../tinyhexagon-${ASSET_TAG}-windows-x86_64.zip" _RELEASE
+        # The whole windows package in the ONE script (the 08c packager):
+        # the cross build (tools/build-windows.sh), the _RELEASE staging
+        # (the tinyhexagon.exe inside, alongside the data), and the zip
+        # of the staged _RELEASE with the tag's name (the .exe smoke is
+        # skipped-with-reason on the Linux runner — no .exe runtime).
+        run: bash tools/package.sh --windows --tag "${ASSET_TAG}"
 
       - name: Upload
         uses: actions/upload-artifact@v4

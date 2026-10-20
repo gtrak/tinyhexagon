@@ -1,170 +1,112 @@
 #!/usr/bin/env bash
-# Issue 24 — the Rust release packager: builds the release artifacts and
-# assembles a distributable directory that matches the C++ `_RELEASE`
-# layout EXACTLY, from a PRISTINE copy of the tracked `_RELEASE` (the
-# script never writes into the tracked `_RELEASE`).
+# Issue 08c — the tinyhexagon release packager (Linux + Windows): builds
+# the `tinyhexagon` release binary, assembles it ALONGSIDE a pristine
+# copy of the tracked `_RELEASE` (the script never writes into the
+# tracked `_RELEASE`), and packages the result as
+#
+#   tinyhexagon-<tag>-linux-x86_64.tar.gz    (default, host build)
+#   tinyhexagon-<tag>-windows-x86_64.zip     (--windows, the mingw-gnu
+#                                             cross build via
+#                                             tools/build-windows.sh)
+#
+# containing the `tinyhexagon` binary + the `_RELEASE/` data (the binary
+# inside `_RELEASE/`, alongside `Assets/`, `Packs/`, `ConfigOverrides/`,
+# `config.json` — the C++'s own install-root layout the game's
+# `resolve_game_root` walk expects: the binary next to its data).
 #
 # Usage:
-#   bash tools/package.sh                # Linux: release build + stage + smoke test
-#   bash tools/package.sh --windows      # Windows cross build (via tools/build-windows.sh)
-#   bash tools/package.sh --with-steam   # add the Steam feature + the Steam natives
-#   bash tools/package.sh --skip-smoke   # skip the packaged-binary smoke test
+#   bash tools/package.sh                     # Linux: release build + stage + smoke
+#   bash tools/package.sh --windows           # Windows cross build + stage (no smoke:
+#                                             # a Linux host has no .exe runtime)
+#   bash tools/package.sh --tag <tag>         # the artifact's <tag> (default:
+#                                             # $ASSET_TAG — the release workflow's
+#                                             # normalized github.ref_name — else "dev")
+#   bash tools/package.sh --skip-smoke        # skip the packaged-binary smoke test
 #
-# ---------------------------------------------------------------------
-# The C++ `_RELEASE` layout (D-014, cited from this tree)
-# ---------------------------------------------------------------------
-# The tracked `_RELEASE/` is the C++ install root the C++ binary runs
-# from: the game data (`Assets/`, `Packs/`, `ConfigOverrides/`), the
-# game config (`config.json` — the 101-key file `th-config` pins, issue
-# 04), the Steam/Discord natives (`steam_api64.dll`/`libsteam_api.so`,
-# `discord_game_sdk.dll`/`libdiscord_game_sdk.so`, the
-# `sdkencryptedappticket*` pair, `steam_appid.txt`), the Windows launch
-# scripts (`windowed.bat`, `fullscreen.bat`, …), the Linux launcher
-# (`run_ssvopenhexagon_linux.sh`), and the runtime-data seeds
-# (`scores.json`, `users.json`). The C++ build artifacts that CI drops
-# into it (`SSVOpenHexagon`, `SSVOpenHexagonLinux`, `OHWorkshopUploader*`
-# — all gitignored, see .gitignore) complete the layout: the BINARY
-# ALONGSIDE `Assets/`, `Packs/`, `ConfigOverrides/`, `config.json`.
-#
-# The C++'s own release-assembly scripts confirm the shipping subset:
-# `prepare_release.sh` (Windows) and `prepare_release_linux.sh` (Linux)
-# copy `Assets/`, `ConfigOverrides/`, `Packs/`, an empty `Profiles/`,
-# the game binary(ies), the platform natives, and `steam_appid.txt` —
-# the binary in the same directory as the data. (`Profiles/` and
-# `Replays/` are runtime-created by the binary itself — main.cpp:275-276,
-# ported in th-app/src/client.rs — so the package does not pre-create
-# them, exactly like the C++ prepared releases… which DO pre-create an
-# empty `Profiles/`; the difference is cosmetic: the binary creates the
-# folder on first run either way.)
-#
-# This script assembles the Rust equivalent — the `tinyhexagon` binary
-# alongside `Assets/`, `Packs/`, `ConfigOverrides/`, `config.json` — so
-# a player can drop the Rust binary into an existing C++ install's
-# `_RELEASE/` and run it unchanged (the contract's objective,
-# .agents/plans/001-rust-port/24-packaging.md).
-#
-# Deviations from the C++ prepared releases (documented, deliberate):
-#   * NO Steam/Discord natives in the DEFAULT build — the default Rust
-#     build never links them (th-app's `steam` feature is default-OFF,
-#     the C++ no-SDK build analogue, issue 20; the Rust Discord
-#     integration speaks the local-client IPC pipe, issue 21 — no DLL/
-#     .SO to bundle at all). `--with-steam` adds the Steam feature AND
-#     the loader stub the linked binary cannot start without (the
-#     `steamworks-sys` 0.13.0 bundled stub — the repo-tracked
-#     `_RELEASE` stub is one SDK generation OLDER than the linked
-#     binary, see the staging section below — + `steam_appid.txt` (1358090);
-#     `.agents/skills/lib-steamworks.md` §4).
-#   * NO Windows `.bat` launchers / Linux launcher script — those wrap
-#     the C++ binary's own args; the Rust binary takes the same CLI
-#     (see `cpp-original/release/README.md` in git history —
-#     `git show 3369fffa:cpp-original/release/README.md` — the C++ tree
-#     was deleted by plan 002 Issue 01).
-#   * NO `scores.json`/`users.json` seeds — user/leaderboard DATA the
-#     runtime manages (the C++ server DB is `ohdb.sqlite`, issue 17-18;
-#     the C++ prepared releases do not ship them either).
-#   * The full tracked `Packs/` ships (all 8 packs the th-assets count
-#     pins, issue 05); the C++ prepared releases curate 5 official
-#     packs (`prepare_release.sh:10-15`) — a curation choice, not a
-#     layout one; the extra packs are additive.
-#   * The Rust tree also builds `oh-server-control` and
-#     `oh-workshop-uploader` (issues 18-19) — they stay in
-#     `target/<...>/release/` and are NOT part of the `_RELEASE`
-#     game-install layout.
+# The final artifacts land at the REPO ROOT (the release workflow's
+# Upload steps look for them there); the staging lives under the
+# gitignored target/:
+#   target/package/linux-x86_64/_RELEASE/     the Linux staged install root
+#   target/package/windows-x86_64/_RELEASE/   the Windows staged install root
 #
 # ---------------------------------------------------------------------
 # Staging + the pristine-copy invariant
 # ---------------------------------------------------------------------
-# The staged directory is `target/package/<platform>/_RELEASE` (under
-# the gitignored `target/` — no new untracked roots in the repo). The
-# name `_RELEASE` is deliberate: the staged directory IS a drop-in
-# `_RELEASE`. Everything is COPIED from the tracked `_RELEASE`; nothing
-# is ever written back into it (verified at the end via
-# `git status --porcelain`).
+# Everything is COPIED from the tracked `_RELEASE`; nothing is ever
+# written back into it (verified at the end via `git status --porcelain`).
+# The tiny runtime persists nothing (no config / profile / replay
+# writes — plan 002 issue 07's no-storage contract), so the staged
+# `config.json` stays the shipped one.
 #
 # ---------------------------------------------------------------------
-# The smoke test (the packaged dir MUST be tested)
+# The smoke test (the packaged binary MUST be tested)
 # ---------------------------------------------------------------------
-# The headless_replay pattern (crates/th-app/tests/headless_replay.rs):
-# the packaged binary is run headless in a SANDBOXED copy of the staged
-# `_RELEASE` (the binary writes `Profiles/`, `Replays/` and saves
-# `config.json` into its CWD on every run — main.cpp:275-291 — so it
-# must never run inside the staged dir itself), replaying the committed
-# fixture `tools/fixtures/cube_1_apeirogon.ohr.z`. That fixture is a
-# compressed replay of the harness's `alwaysSpinRight` live run on
-# `cube_1`/`apeirogon` (the exact ids the C++ test names — D-018),
-# generated once by the issue-24 lane and committed: the replay carries
-# its RNG seed (`replays always re-seed from the replay file's seed`,
-# th-game/src/hexagon_game.rs:2554; `rng =
-# random_number_generator{activeReplay->replayFile._seed}` :777-783),
-# so the replayed score is ABSOLUTELY pinned — the verified value is
-# `Final time: 1.725` (stable across runs, release build; the D-018
-# cross-check: it equals the harness's own live-run score for that
-# replay). The smoke asserts: exit 0, the exact C++ `Player died.` +
-# `Final time:` line with the pinned score (main.cpp:568-573), the
-# `Finished` line (main.cpp:594), and the config-save guard's output
-# (main.cpp:285-291). On a Linux host the Windows build's smoke test is
-# skipped-with-reason (no .exe runtime; it is covered by the
-# windows-latest CI gate + a manual run).
+# The tiny `tinyhexagon` binary is a WINDOWED game (there is no
+# headless mode — the retired adult replay fixture smoke has no tiny
+# twin; tools/fixtures/cube_1_apeirogon.ohr.z is the plan-001 smoke
+# fixture, kept for history). So the packaged binary is tested
+# WINDOWED through tools/smoke-windowed.sh (the same three phases the
+# windowed column runs: the `--th-desktop-mode-probe` child, the
+# shipped-config boot, the auto-resolution reapply — a real GL context
+# up, no one-frame headless fallback, still in the frame loop at the
+# timeout). The script's own skip-with-reason (a headless box with no
+# Xvfb is NOT run, not faked) applies; on the GitHub linux runner the
+# display packages come from tools/ci-deps.sh, so the smoke runs there.
+# The Windows cross build is smoke-skipped-with-reason on a Linux host
+# (no .exe runtime; covered by the windows-latest CI gate + a manual
+# run).
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 REPO_ROOT="$(pwd)"
 RELEASE_SRC="${REPO_ROOT}/_RELEASE"
-FIXTURE="${REPO_ROOT}/tools/fixtures/cube_1_apeirogon.ohr.z"
-PINNED_FINAL_TIME="1.725"   # the fixture's replayed score (module docs)
 
 PLATFORM="linux"
-WITH_STEAM=0
+TAG=""
 SKIP_SMOKE=0
 
-for arg in "$@"; do
-    case "$arg" in
+while [ $# -gt 0 ]; do
+    case "$1" in
     --linux) PLATFORM="linux" ;;
     --windows) PLATFORM="windows" ;;
-    --with-steam) WITH_STEAM=1 ;;
     --skip-smoke) SKIP_SMOKE=1 ;;
+    --tag)
+        [ $# -ge 2 ] || { echo "error: --tag needs a value" >&2; exit 2; }
+        TAG="$2"; shift ;;
+    --tag=*) TAG="${1#--tag=}" ;;
     -h | --help)
         grep '^#' "$0" | sed 's/^# \{0,1\}//'
         exit 0
         ;;
     *)
-        echo "unknown flag: $arg (see --help)" >&2
+        echo "unknown flag: $1 (see --help)" >&2
         exit 2
         ;;
     esac
+    shift
 done
 
-# ---------------------------------------------------------------------
-# The build
-# ---------------------------------------------------------------------
-CARGO_FEATURES=()
-if [ "$WITH_STEAM" -eq 1 ]; then
-    CARGO_FEATURES=(--features th-app/steam)
-fi
+# The artifact's <tag>: --tag, else ASSET_TAG (release.yml's normalized
+# github.ref_name — the workflow env, already filesystem-safe), else
+# "dev" (a local run without a tag).
+TAG="${TAG:-${ASSET_TAG:-dev}}"
+case "$TAG" in */*|'') echo "error: unsafe artifact tag: '$TAG'" >&2; exit 2 ;; esac
 
 if [ "$PLATFORM" = "linux" ]; then
-    echo "== cargo build --workspace --release ${CARGO_FEATURES[*]:-}"
-    cargo build --workspace --release "${CARGO_FEATURES[@]+"${CARGO_FEATURES[@]}"}"
+    echo "== cargo build --workspace --release"
+    cargo build --workspace --release
     BIN="target/release/tinyhexagon"
-    PLATFORM_DIR="linux-$(rustc -vV | awk '/^host:/{print $2}')"
+    PLATFORM_DIR="linux-x86_64"
 else
-    # The Windows cross build (issue 22's tools/build-windows.sh:
-    # the full cargo cross-compile + link of the .exe's, no libsodium
-    # prebuild — th-net went in issue 02b; `--release` = the release
-    # profile, added by issue 24 for this packager). Its prereqs (the
-    # rustup target, mingw-w64) are checked inside that script.
-    echo "== bash tools/build-windows.sh --build --release ${CARGO_FEATURES[*]:-}"
-    if [ "${#CARGO_FEATURES[@]}" -gt 0 ]; then
-        # build-windows.sh execs a fixed cargo line; the steam-feature
-        # Windows build is a documented manual extension (the default
-        # cross path is feature-OFF, like the C++'s shipped build).
-        echo "error: --with-steam is not wired into the cross path yet (build-windows.sh's fixed cargo line); use the default (feature-OFF) Windows build" >&2
-        exit 1
-    fi
+    # The Windows cross build (tools/build-windows.sh: the full
+    # cargo cross-compile + link of the .exe's, no libsodium prebuild —
+    # Luau is the only C dep in the graph). Its prereqs (the rustup
+    # target, mingw-w64) are checked inside that script.
+    echo "== bash tools/build-windows.sh --build --release"
     bash tools/build-windows.sh --build --release
     BIN="target/x86_64-pc-windows-gnu/release/tinyhexagon.exe"
-    PLATFORM_DIR="windows-x86_64-pc-windows-gnu"
+    PLATFORM_DIR="windows-x86_64"
 fi
 
 [ -f "$BIN" ] || { echo "error: release binary missing: $BIN" >&2; exit 1; }
@@ -179,11 +121,10 @@ echo "== staging ${STAGE} (from a pristine copy of ${RELEASE_SRC})"
 rm -rf "${STAGE_ROOT}/${PLATFORM_DIR}"
 mkdir -p "$STAGE"
 
-# The layout's four data entries (copied — never moved, never written
-# back): the C++ layout's `Assets/` + `Packs/` + `ConfigOverrides/` +
-# `config.json` (prepare_release.sh / prepare_release_linux.sh copy the
-# same data set; the tracked _RELEASE/config.json is the binary's
-# config root, main.cpp:279-283).
+# The layout's data entries (copied — never moved, never written back):
+# `Assets/` + `Packs/` + `ConfigOverrides/` + `config.json` (the tracked
+# _RELEASE/config.json is the binary's config root; the tiny runtime
+# reads it and never writes it back).
 cp -R "${RELEASE_SRC}/Assets" "$STAGE/"
 cp -R "${RELEASE_SRC}/Packs" "$STAGE/"
 cp -R "${RELEASE_SRC}/ConfigOverrides" "$STAGE/"
@@ -193,99 +134,50 @@ cp "${RELEASE_SRC}/config.json" "$STAGE/"
 cp "$BIN" "$STAGE/"
 chmod +x "$STAGE/$(basename "$BIN")"
 
-# --with-steam: the natives the linked binary cannot start without
-# (.agents/skills/lib-steamworks.md §4). IMPORTANT — the stub must be the
-# one the build actually linked against: `steamworks-sys` 0.13.0 (the
-# Cargo.lock pin) bundles the official loader stubs, and its build.rs
-# links the binary against the BUNDLED stub — the newer SDK generation.
-# The repo-tracked `_RELEASE/libsteam_api.so` / `steam_api64.dll` (the
-# OLDER stubs the C++ links, CMakeLists.txt:419-425) stop one vtable
-# generation behind (the tracked Linux stub exports
-# `SteamAPI_SteamUserStats_v012` but not `..._v013`): verified, a
-# steam-linked binary run against the tracked stub aborts at startup
-# with `undefined symbol: SteamAPI_SteamUserStats_v013`. So the packager
-# stages the bundled stub (found in the cargo registry cache). Only
-# `steam_appid.txt` (1358090 — SDK-generation-independent) comes from
-# the tracked _RELEASE.
-if [ "$WITH_STEAM" -eq 1 ]; then
-    STEAM_SYS_DIR="$(ls -d "${CARGO_HOME:-$HOME/.cargo}"/registry/src/*/steamworks-sys-0.13.0 2>/dev/null | head -n1)"
-    if [ -z "${STEAM_SYS_DIR:-}" ]; then
-        # Fetch the crate into the registry cache once (the build above
-        # already did; this is the defensive re-check).
-        cargo fetch
-        STEAM_SYS_DIR="$(ls -d "${CARGO_HOME:-$HOME/.cargo}"/registry/src/*/steamworks-sys-0.13.0 2>/dev/null | head -n1)"
-    fi
-    [ -n "${STEAM_SYS_DIR:-}" ] || { echo "error: steamworks-sys-0.13.0 not found in the cargo registry cache" >&2; exit 1; }
-    if [ "$PLATFORM" = "linux" ]; then
-        cp "${STEAM_SYS_DIR}/lib/steam/redistributable_bin/linux64/libsteam_api.so" "$STAGE/"
-    else
-        cp "${STEAM_SYS_DIR}/lib/steam/redistributable_bin/win64/steam_api64.dll" "$STAGE/"
-    fi
-    cp "${RELEASE_SRC}/steam_appid.txt" "$STAGE/"
-    echo "== steam natives staged (steamworks-sys bundled loader stub + steam_appid.txt; the repo-tracked _RELEASE stub is one SDK generation older than the linked binary — see module docs)"
-fi
-# Discord: NEVER a native in the Rust build (issue 21: the local-client
-# IPC pipe via discord-rich-presence — the C++'s discord_game_sdk.*
-# natives are for the official Game-SDK C++ link only).
-
 # ---------------------------------------------------------------------
-# The smoke test: the packaged binary, headless, in a sandboxed copy
+# The smoke test: the packaged binary, windowed, in a sandboxed copy
 # ---------------------------------------------------------------------
 if [ "$SKIP_SMOKE" -eq 1 ]; then
     echo "== smoke test skipped (--skip-smoke)"
+elif [ "$PLATFORM" != "linux" ]; then
+    echo "== smoke test skipped-with-reason: no .exe runtime on this Linux host (covered by the windows-latest CI gate + a manual run)"
 else
-    [ "$PLATFORM" = "linux" ] || {
-        echo "== smoke test skipped-with-reason: no .exe runtime on this Linux host (covered by the windows-latest CI gate + a manual run)"
-        SKIP_SMOKE=1
-    }
+    # tools/smoke-windowed.sh: the three windowed-boot phases against
+    # the STAGED binary (it sandboxes the binary + a copy of the
+    # tracked _RELEASE itself — the same bytes as the staged one; the
+    # pristine-copy invariant below proves that). Skips with reason
+    # (exit 0) when no display / xvfb is available — not faked.
+    echo "== smoke: tools/smoke-windowed.sh against the staged binary"
+    bash tools/smoke-windowed.sh "${STAGE}/$(basename "$BIN")"
 fi
-if [ "$SKIP_SMOKE" -eq 0 ]; then
-    [ -f "$FIXTURE" ] || { echo "error: fixture missing: $FIXTURE" >&2; exit 1; }
-    SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/th-package-smoke.XXXXXX")"
-    trap 'rm -rf "$SANDBOX"' EXIT
-    # A SANDBOXED copy (module docs: the binary writes into its CWD —
-    # the staged dir must stay pristine).
-    cp -R "$STAGE/." "$SANDBOX/"
-    cp "$FIXTURE" "$SANDBOX/cube_1_apeirogon.ohr.z"
 
-    echo "== smoke: ./tinyhexagon -headless cube_1_apeirogon.ohr.z (in ${SANDBOX})"
-    SMOKE_RC=0
-    # The C++ launcher pattern (run_ssvopenhexagon_linux.sh:
-    # LD_LIBRARY_PATH=".") — needed iff the package carries the Steam
-    # loader stub (the plain NEEDED entry does not search the binary's
-    # own directory).
-    if [ -f "$SANDBOX/libsteam_api.so" ]; then
-        SMOKE_OUT="$(cd "$SANDBOX" && LD_LIBRARY_PATH=. ./tinyhexagon -headless cube_1_apeirogon.ohr.z 2>/dev/null)" || SMOKE_RC=$?
+# ---------------------------------------------------------------------
+# The artifact (the tagged tar.gz / zip at the repo root)
+# ---------------------------------------------------------------------
+ARTIFACT=""
+if [ "$PLATFORM" = "linux" ]; then
+    ARTIFACT="${REPO_ROOT}/tinyhexagon-${TAG}-linux-x86_64.tar.gz"
+    echo "== taring ${ARTIFACT#"$REPO_ROOT"/} (the _RELEASE layout: the binary inside)"
+    tar czf "$ARTIFACT" -C "${STAGE_ROOT}/${PLATFORM_DIR}" _RELEASE
+else
+    ARTIFACT="${REPO_ROOT}/tinyhexagon-${TAG}-windows-x86_64.zip"
+    echo "== zipping ${ARTIFACT#"$REPO_ROOT"/} (the _RELEASE layout: the binary inside)"
+    if command -v zip >/dev/null; then
+        (cd "${STAGE_ROOT}/${PLATFORM_DIR}" && zip -qr "$ARTIFACT" _RELEASE)
     else
-        SMOKE_OUT="$(cd "$SANDBOX" && ./tinyhexagon -headless cube_1_apeirogon.ohr.z 2>/dev/null)" || SMOKE_RC=$?
+        echo "== zip not found; using python3 (same layout: the _RELEASE dir at the zip root)"
+        python3 - "$STAGE_ROOT/${PLATFORM_DIR}" "$ARTIFACT" <<'PY'
+import sys, zipfile, os
+root, out = sys.argv[1], sys.argv[2]
+with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+    for dirpath, _dirnames, filenames in os.walk(os.path.join(root, "_RELEASE")):
+        for name in filenames:
+            full = os.path.join(dirpath, name)
+            z.write(full, os.path.relpath(full, root))
+PY
     fi
-    if [ "$SMOKE_RC" -ne 0 ]; then
-        echo "error: smoke test exit ${SMOKE_RC} (expected 0); output:" >&2
-        echo "$SMOKE_OUT" >&2
-        exit 1
-    fi
-    grep -q "Player died.$" <<<"$SMOKE_OUT" || {
-        echo "error: no 'Player died.' line; output:" >&2; echo "$SMOKE_OUT" >&2; exit 1
-    }
-    grep -q "Final time: ${PINNED_FINAL_TIME}$" <<<"$SMOKE_OUT" || {
-        echo "error: pinned score '${PINNED_FINAL_TIME}' not printed (the replay carries its seed — the score must be exact); output:" >&2
-        echo "$SMOKE_OUT" >&2
-        exit 1
-    }
-    grep -q '\[::mainClient\] Finished$' <<<"$SMOKE_OUT" || {
-        echo "error: no Finished line; output:" >&2; echo "$SMOKE_OUT" >&2; exit 1
-    }
-    grep -q '\[::main\] Done saving config$' <<<"$SMOKE_OUT" || {
-        echo "error: no config-save guard output; output:" >&2; echo "$SMOKE_OUT" >&2; exit 1
-    }
-    [ -d "$SANDBOX/Profiles" ] && [ -d "$SANDBOX/Replays" ] || {
-        echo "error: runtime folders (Profiles/, Replays/) not created by the packaged binary" >&2; exit 1
-    }
-    [ -f "$SANDBOX/config.json" ] || {
-        echo "error: the config-save guard did not save config.json into the sandbox" >&2; exit 1
-    }
-    echo "== smoke: PASS (exit 0, 'Final time: ${PINNED_FINAL_TIME}', Finished + config-save guard verified)"
 fi
+[ -s "$ARTIFACT" ] || { echo "error: artifact not produced: $ARTIFACT" >&2; exit 1; }
 
 # ---------------------------------------------------------------------
 # The layout report + the pristine-copy invariant
@@ -293,6 +185,8 @@ fi
 echo
 echo "== staged layout (${STAGE}):"
 (cd "$STAGE" && find . -maxdepth 1 | sort)
+echo
+echo "== artifact: ${ARTIFACT#"$REPO_ROOT"/} ($(du -h "$ARTIFACT" | cut -f1))"
 echo
 echo "== tracked _RELEASE untouched (git status):"
 if [ -n "$(git status --porcelain -- _RELEASE)" ]; then
@@ -302,4 +196,4 @@ if [ -n "$(git status --porcelain -- _RELEASE)" ]; then
 fi
 echo "(clean)"
 echo
-echo "PACKAGED: ${STAGE}"
+echo "PACKAGED: ${ARTIFACT#"$REPO_ROOT"/} (staged: ${STAGE})"

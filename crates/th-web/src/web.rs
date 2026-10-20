@@ -47,7 +47,7 @@ pub fn boot() {
 /// count, the journey stage, the engine's started flag, the player
 /// angle, the synth's live-vs-fallback state, the helping-hand state).
 /// The page's `window.ohStatus` / `#status` poll reads this every second
-/// (the `tools/web-stub-probe.mjs` wait + assertions ride on it).
+/// (the `tools/web-tiny-probe.mjs` wait + assertions ride on it).
 #[wasm_bindgen]
 pub fn status() -> String {
     th_app::tiny::web_status()

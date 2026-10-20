@@ -1,0 +1,50 @@
+== tools/web-tiny-probe.mjs — 2026-10-20 00:38 local run (Chrome 148.0.7778.97, headless CDP)
+
+Command:
+  OH_CHROME=/home/gary/.agent-browser/browsers/chrome-148.0.7778.97/chrome \
+    node tools/web-tiny-probe.mjs http://127.0.0.1:18321/ \
+    --shot=.agents/evidence/08c/web-tiny-probe.png --timeout=180
+
+Served: target/package/web/_WEB (the 08a release artifacts — the same
+index.html + tinyhexagon.js + tinyhexagon.wasm + tinyhexagon.data the
+release job would ship; no emscripten toolchain on this host, so the
+wasm build itself is 08a's, unchanged by 08c).
+
+Output (PROBE_RC=0):
+
+web-tiny-probe: http://127.0.0.1:18321/
+  baseline : tinyhexagon web: booted=true;ticks=11;stage=0;started=true;angle=0.0000;audio=fallback;energy=0.0000;help=auto
+  post     : tinyhexagon web: booted=true;ticks=114;stage=0;started=true;angle=-12.1226;audio=live;energy=0.0454;help=off
+  PASS  the game booted + started (status line reached booted=true;started=true)
+  PASS  baseline: started=true (the engine started the game)
+  PASS  baseline: ticks is a number (the rAF loop is recording frames)
+  PASS  baseline: stage is an integer >= 0
+  PASS  baseline: angle is finite
+  PASS  baseline: audio in {live, fallback} (the synth is armed one way or the other)
+  PASS  baseline: energy is finite (the beat clock is ticking)
+  PASS  baseline: help=auto (the helping hand is armed before any input)
+  PASS  input: audio=live (the first gesture unlocked the live synth — the fallback clock is over)
+  PASS  input: help=off (any input disabled the helping hand — the input reached the frame)
+  PASS  input: ticks advanced (the sim ran through the key press)
+  PASS  input: angle turned counter-clockwise (the A steer reached the engine)
+  PASS  input: the page fired the unlock export ([shell] audio unlock requested logged)
+  PASS  document.title contains "tinyhexagon"
+  PASS  a <canvas> exists with non-zero width/height
+  PASS  window.ohStatus() contains "tinyhexagon" + "booted=true"
+  PASS  #status contains "tinyhexagon" + "booted=true"
+  PASS  no console errors (favicon + the boot autoplay warning tolerated)
+  PASS  no 4xx/5xx responses (favicon tolerated)
+  PASS  no failed loads (favicon / canceled aborts tolerated)
+  PASS  screenshot captured (.agents/evidence/08c/web-tiny-probe.png)
+  console  : no errors
+  non-200  : none
+  loads    : none
+  screenshot: .agents/evidence/08c/web-tiny-probe.png
+  RESULT   : PASS
+
+Note: the FIRST local run (port 8080) FAILED with "the module never
+resolved" — the box's port 8080 is held by an unrelated long-running
+filebrowser service, so the probe measured the stale server (the
+lane-058 "stale state" failure mode). Re-run on a free port: PASS.
+CI pins its own throwaway http.server + port 8080 on a clean runner,
+where the same shape holds.

@@ -1,0 +1,35 @@
+== gate.sh — 2026-10-20 00:43 UTC (worktree @ 2deca9c4)
+
+== cargo fmt --all -- --check
+GATE_EXIT=0
+== cargo build --workspace
+GATE_EXIT=0
+== cargo clippy --workspace --all-targets -- -D warnings
+GATE_EXIT=0
+== cargo test --workspace
+GATE_EXIT=0
+
+== test results (aggregated over the workspace):
+67 suites — total passed=570 failed=0 ignored=0
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 167 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+== host bin collision (the known P2 — cargo warning, build succeeds):
+warning: output filename collision at /home/gary/dev/tinyhexagon/.agents/worktrees/slot-1/target/debug/tinyhexagon
+  |
+--
+warning: output filename collision at /home/gary/dev/tinyhexagon/.agents/worktrees/slot-1/target/debug/tinyhexagon.dwp
+  |

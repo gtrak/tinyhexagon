@@ -14,11 +14,10 @@
 # Fork (plan 002): the booted binary is this fork's `tinyhexagon` (Issue
 # 07), and the assertions above target the tiny runtime's frame loop — a
 # real GL context, no one-frame headless fallback line, still in the loop
-# at the timeout. This script is NOT wired into tools/gate.sh or
-# tools/package.sh yet: the windowed gate/package stage lands in Issues
-# 07/08 once the `tinyhexagon` binary exists. CI installs the display
-# packages (xvfb + Mesa EGL/DRI + the winit X11 -dev libs) via
-# tools/ci-deps.sh.
+# at the timeout. It IS wired into tools/package.sh (the release linux
+# job's package smoke — plan 002 issue 08c); it is NOT a tools/gate.sh
+# stage. CI installs the display packages (xvfb + Mesa EGL/DRI + the
+# winit X11 -dev libs) via tools/ci-deps.sh.
 #
 # Usage:
 #   tools/smoke-windowed.sh [path-to-tinyhexagon]

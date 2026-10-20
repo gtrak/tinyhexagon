@@ -1,0 +1,4 @@
+== tools/build-windows.sh --check --all-targets (the ci.yml windows-cross job's command) — 2026-10-20 00:43 UTC
+    Checking th-android v0.1.0 (/home/gary/dev/tinyhexagon/.agents/worktrees/slot-1/crates/th-android)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 25.74s
+WINRC=0

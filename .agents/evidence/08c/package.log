@@ -1,0 +1,46 @@
+== tools/package.sh — 2026-10-20 00:43 UTC (bash tools/package.sh, tag default 'dev')
+   Compiling vec_map v0.8.2
+   Compiling rustc-hash v2.1.3
+   Compiling uuid v1.28.0
+   Compiling signal-hook v0.3.18
+   Compiling signal-hook-registry v1.4.8
+   Compiling fnv v1.0.7
+   Compiling th-web v0.1.0 (/home/gary/dev/tinyhexagon/.agents/worktrees/slot-1/crates/th-web)
+   Compiling toml v0.8.23
+   Compiling gilrs-core v0.6.8
+   Compiling wayland-protocols-wlr v0.3.12
+   Compiling wayland-protocols-plasma v0.3.12
+   Compiling rust-synth v0.23.0 (/home/gary/dev/tinyhexagon/.agents/worktrees/slot-1/vendor/rust-synth-0.23.0)
+   Compiling sctk-adwaita v0.10.1
+   Compiling th-synth v0.1.0 (/home/gary/dev/tinyhexagon/.agents/worktrees/slot-1/crates/th-synth)
+   Compiling x11rb v0.13.2
+   Compiling th-render v0.1.0 (/home/gary/dev/tinyhexagon/.agents/worktrees/slot-1/crates/th-render)
+   Compiling th-audio v0.1.0 (/home/gary/dev/tinyhexagon/.agents/worktrees/slot-1/crates/th-audio)
+   Compiling mlua v0.10.5
+   Compiling th-lua v0.1.0 (/home/gary/dev/tinyhexagon/.agents/worktrees/slot-1/crates/th-lua)
+   Compiling th-app v0.1.0 (/home/gary/dev/tinyhexagon/.agents/worktrees/slot-1/crates/th-app)
+   Compiling th-android v0.1.0 (/home/gary/dev/tinyhexagon/.agents/worktrees/slot-1/crates/th-android)
+    Finished `release` profile [optimized] target(s) in 39.84s
+== staging /home/gary/dev/tinyhexagon/.agents/worktrees/slot-1/target/package/linux-x86_64/_RELEASE (from a pristine copy of /home/gary/dev/tinyhexagon/.agents/worktrees/slot-1/_RELEASE)
+== smoke: tools/smoke-windowed.sh against the staged binary
+phase A (probe child): OK — OH_DESKTOP_MODE=1280x720
+phase B (shipped-config windowed boot): OK — GL context up, no Finished, killed by timeout (exit 124)
+phase C (auto-resolution windowed boot): OK — GL context up, no Finished, killed by timeout (exit 124)
+PASS: windowed smoke — phase A (probe child) + phase B (shipped-config windowed boot) + phase C (auto-resolution reapply) all green
+== taring tinyhexagon-dev-linux-x86_64.tar.gz (the _RELEASE layout: the binary inside)
+
+== staged layout (/home/gary/dev/tinyhexagon/.agents/worktrees/slot-1/target/package/linux-x86_64/_RELEASE):
+.
+./Assets
+./config.json
+./ConfigOverrides
+./Packs
+./tinyhexagon
+
+== artifact: tinyhexagon-dev-linux-x86_64.tar.gz (4.8M)
+
+== tracked _RELEASE untouched (git status):
+(clean)
+
+PACKAGED: tinyhexagon-dev-linux-x86_64.tar.gz (staged: /home/gary/dev/tinyhexagon/.agents/worktrees/slot-1/target/package/linux-x86_64/_RELEASE)
+PKG_RC=0
