@@ -329,7 +329,10 @@ impl StreamTrait for Stream {
 fn audio_callback_fn<D>(
     mut data_callback: D,
     sample_format: SampleFormat,
-) -> impl FnOnce(Stream, StreamConfig, u32)
+    config: StreamConfig,
+    buffer_size_frames: u32,
+    stream: Stream,
+) -> impl FnOnce()
 where
     D: FnMut(&mut Data, &OutputCallbackInfo) + Send + 'static,
 {
@@ -348,13 +351,13 @@ where
             const { std::cell::RefCell::new(Vec::new()) };
         static NEXT_START: std::cell::Cell<f64> = const { std::cell::Cell::new(0.0) };
     }
-    move |stream, config, buffer_size_frames| {
+    move || {
         let sample_rate = config.sample_rate.0;
-        let buffer_size_samples = buffer_size_frames * config.channels as u32;
+        let buffer_size_samples = buffer_size_frames as usize * config.channels as usize;
         let audio_ctxt = &stream.audio_ctxt;
 
         // TODO: We should be re-using a buffer.
-        let mut temporary_buffer = vec![0f32; buffer_size_samples as usize];
+        let mut temporary_buffer = vec![0f32; buffer_size_samples];
 
         {
             let len = temporary_buffer.len();
@@ -384,7 +387,7 @@ where
         let buffer = context
             .create_buffer(
                 config.channels as u32,
-                buffer_size_frames as u32,
+                buffer_size_frames,
                 sample_rate as f32,
             )
             .expect("Buffer could not be created");
@@ -446,11 +449,11 @@ where
         // and there may be underflows
         set_timeout(
             1000 * buffer_size_frames as i32 / sample_rate as i32,
-            stream.clone().clone(),
+            stream,
             data_callback,
             &config,
             sample_format,
-            buffer_size_frames as u32,
+            buffer_size_frames,
         );
     }
 }
@@ -466,15 +469,25 @@ fn set_timeout<D>(
     D: FnMut(&mut Data, &OutputCallbackInfo) + Send + 'static,
 {
     let window = web_sys::window().expect("Not in a window somehow?");
+    // 09 fix (tinyhexagon) — ZERO JS ARGUMENTS: the timer chain used to
+    // pass (stream, config, buffer_size_frames) as setTimeout arguments,
+    // and the emscripten glue's argument delivery can corrupt them (the
+    // user's Chrome 155 measured a garbage buffer_size_frames →
+    // create_buffer(2, 0, …) → zero-length buffers → silence with a
+    // perfectly healthy graph). Everything is now captured IN the
+    // closure; the timer callback takes no arguments.
     window
-        .set_timeout_with_callback_and_timeout_and_arguments_3(
-            &Closure::once_into_js(audio_callback_fn(data_callback, sample_format))
-                .dyn_ref::<js_sys::Function>()
-                .expect("The function was somehow not a function"),
+        .set_timeout_with_callback_and_timeout_and_arguments_0(
+            &Closure::once_into_js(audio_callback_fn(
+                data_callback,
+                sample_format,
+                (*config).clone(),
+                buffer_size_frames,
+                stream,
+            ))
+            .dyn_ref::<js_sys::Function>()
+            .expect("The function was somehow not a function"),
             time,
-            &stream.into(),
-            &((*config).clone()).into(),
-            &buffer_size_frames.into(),
         )
         .expect("The timeout could not be set");
 }

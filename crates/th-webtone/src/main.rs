@@ -65,9 +65,6 @@ pub fn start_tone() -> String {
             // continuing = the loop renders but the playback wiring is
             // the thief).
             ticks += 1;
-            if ticks % 10 == 1 {
-                console_log(&format!("webtone: callback tick {ticks} ({} frames)", data.len() / 2));
-            }
             for frame in data.chunks_mut(2) {
                 for s in frame.iter_mut() {
                     *s = 0.4 * phase.sin();
@@ -76,6 +73,15 @@ pub fn start_tone() -> String {
                 if phase > 2.0 * std::f32::consts::PI {
                     phase -= 2.0 * std::f32::consts::PI;
                 }
+            }
+            // Measure AFTER the fill (the pre-fill zeros fooled the last
+            // instrument): 0.4 expected; 0.0 = the write itself is lost.
+            let fill_max = data.iter().fold(0.0f32, |m, &v| m.max(v.abs()));
+            if ticks % 10 == 1 {
+                console_log(&format!(
+                    "webtone: callback tick {ticks} ({} frames) fill_max={fill_max}",
+                    data.len() / 2
+                ));
             }
         },
         |err| console_log(&format!("webtone: stream error: {err}")),

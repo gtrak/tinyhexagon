@@ -2735,6 +2735,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "th-webtone"
+version = "0.1.0"
+dependencies = [
+ "cpal 0.15.3",
+ "js-sys",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
 name = "thingbuf"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
