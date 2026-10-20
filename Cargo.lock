@@ -2720,6 +2720,7 @@ version = "0.1.0"
 name = "th-synth"
 version = "0.1.0"
 dependencies = [
+ "fundsp",
  "rust-synth",
 ]
 

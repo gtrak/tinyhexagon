@@ -253,11 +253,17 @@ await k('keyUp');
 await sleep(800);
 const post = await readStatus();
 const pf = parseLine(post?.statusText || post?.oh || '');
+const audioStatsRaw = await send('Runtime.evaluate', { expression: 'JSON.stringify(window.__audioStats || {buffers:-1,maxPeak:-1})', returnByValue: true });
+let audioStats = { buffers: -1, maxPeak: -1 };
+try { audioStats = JSON.parse(audioStatsRaw.result.result.value); } catch { /* keep the sentinel */ }
+console.log('  audioStats:', JSON.stringify(audioStats));
 const postAngle = Number(pf.angle);
 const inputChecks = [
   ['input: audio=live (the first gesture unlocked the live synth — the fallback clock is over)', pf.audio === 'live'],
   ['input: the WebAudio context is RUNNING (ctx=running — the setTimeout graph renders even suspended; only this proves playback)', pf.ctx === 'running'],
   ['input: the unlock attempt reached the export (attempts>=1 — a gesture that never increments this is a page/input problem)', Number(pf.attempts) >= 1],
+  ['audio: the host buffers carry sound (buffer maxPeak >= 0.05 — the offline bus measures peak ~0.4; near zero = the graph is silent IN the browser)', audioStats.maxPeak >= 0.05],
+  ['audio: the host actually scheduled buffers (buffers >= 20 over the run)', audioStats.buffers >= 20],
   ['input: help=off (any input disabled the helping hand — the input reached the frame)', pf.help === 'off'],
   ['input: ticks advanced (the sim ran through the key press)', Number(pf.ticks) > Number(baseline.f.ticks)],
   ['input: angle turned counter-clockwise (the A steer reached the engine)', Number.isFinite(postAngle) && postAngle < 0],

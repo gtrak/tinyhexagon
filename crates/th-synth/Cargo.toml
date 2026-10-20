@@ -15,3 +15,6 @@ edition.workspace = true
 rust-synth = "0.23.0"
 
 [dev-dependencies]
+# The offline_render example builds the SAME fundsp graph the vendored
+# engine builds (Preset::build + master_bus are public) — version-matched.
+fundsp = "0.20"

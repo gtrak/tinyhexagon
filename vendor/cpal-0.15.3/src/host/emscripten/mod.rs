@@ -333,6 +333,21 @@ fn audio_callback_fn<D>(
 where
     D: FnMut(&mut Data, &OutputCallbackInfo) + Send + 'static,
 {
+    // 09 fix (tinyhexagon) — the host's playback wiring had two defects:
+    // (a) every `AudioBufferSourceNode` was dropped right after
+    //     `start()` — a GC'd node can stop mid-playback: silence on real
+    //     browsers while the context still reads "running";
+    // (b) `node.start()` played AT CALL TIME on a main-thread timer —
+    //     overlap/gaps under jitter.
+    // The fix: hold the live sources (the GC cannot reap them) and
+    // schedule each buffer on the AUDIO THREAD's clock with gapless
+    // look-ahead (`start_with_when`), so timer drift only changes the
+    // look-ahead depth, never the playback continuity.
+    thread_local! {
+        static LIVE_SOURCES: std::cell::RefCell<Vec<web_sys::AudioBufferSourceNode>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+        static NEXT_START: std::cell::Cell<f64> = const { std::cell::Cell::new(0.0) };
+    }
     move |stream, config, buffer_size_frames| {
         let sample_rate = config.sample_rate.0;
         let buffer_size_samples = buffer_size_frames * config.channels as u32;
@@ -396,7 +411,35 @@ where
         node
             .connect_with_audio_node(&context.destination())
             .expect("Could not connect the audio node to the destination");
-        node.start().expect("Could not start the audio node");
+        // 09 fix (tinyhexagon) — gapless audio-clock scheduling + held
+        // sources (see the closure-head note): the buffer plays at
+        // `NEXT_START` (>= now + 20 ms), and the cursor advances by the
+        // buffer's real duration; the main-thread timer only re-arms the
+        // NEXT buffer's render, so its jitter cannot overlap or gap the
+        // playback. The node is held until eviction (~1.6 s of history)
+        // so the GC cannot reap a playing source.
+        let buffer_duration_secs = buffer_size_frames as f64 / sample_rate as f64;
+        let now = audio_ctxt.current_time();
+        let when = {
+            let scheduled = NEXT_START.get();
+            if scheduled < now + 0.02 {
+                now + 0.02
+            } else {
+                scheduled
+            }
+        };
+        node.start_with_when(when)
+            .expect("Could not start the audio node");
+        NEXT_START.set(when + buffer_duration_secs);
+        LIVE_SOURCES.with(|live| {
+            let mut live = live.borrow_mut();
+            live.push(node);
+            let keep = (buffer_duration_secs.recip() * 1.6).max(4.0) as usize;
+            if live.len() > keep {
+                let excess = live.len() - keep;
+                live.drain(0..excess);
+            }
+        });
 
         // TODO: handle latency better ; right now we just use setInterval with the amount of sound
         // data that is in each buffer ; this is obviously bad, and also the schedule is too tight
