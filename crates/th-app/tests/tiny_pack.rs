@@ -25,7 +25,7 @@ const LEVELS: &[(&str, f32, f32)] = &[
     ("meadow", 0.55, 1.75),
     ("river", 0.62, 1.70),
     ("stars", 0.70, 1.65),
-    ("journey", 0.40, 1.05),
+    ("journey", 0.33, 1.05),
 ];
 
 /// The bridge test's `_RELEASE` load idiom.

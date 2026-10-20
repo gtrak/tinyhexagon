@@ -142,3 +142,32 @@ the ambient score didn't read as music, and the web page was silent.
   (The old web-probe.mjs's "booted NO / user activation no" lines parse
   the ADULT status format — the new `tools/web-tiny-probe.mjs` from 08c
   replaces it; the Module.status read above is authoritative.)
+
+## Taste pass 3 (09 fix pass 2, shrapnel) — mix, speed, chain shatter
+
+Operator feedback after playing the deployed build: desktop music audible
+but faint + overly reverby; web silent (SFX audible); cursor still fast;
+and the walls should EXPLODE.
+
+- **Mix**: master 0.55 → 0.9; drum/bass/lead gains up (kick 0.78, snare
+  0.52, hat 0.26, bass 0.68, lead 0.40); reverb mixes cut hard (drums
+  0.05, bass 0.08, lead 0.20, pad/bell 0.28, sub 0.15) — the reverb
+  smear is what made it both faint and mushy.
+- **Slower cursor**: speedMult 0.40 → 0.33, the ramp softened again
+  (0.055/stage; plateau 1.55).
+- **Web unlock hardened**: the shell calls `resumeAudio()` on EVERY
+  gesture until the status says `audio=live` — a first gesture whose
+  activation check failed used to lock the page on the silent fallback
+  forever (the SFX device unlocks through emscripten's own listeners,
+  which is exactly why SFX could work while the synth stayed silent).
+- **Collision shrapnel (engine)**: a soft hit now SHATTERS the wall —
+  12 spinning wedge pieces spawn at the impact point (the wall vertex
+  nearest the player), fly outward with the cosmetic rng, and fade over
+  ~0.8 s (48 FT units); the pieces draw into the wall vertex batch
+  (one draw call, the wall's own color). The blast chains into the TWO
+  nearest neighbour walls ~90 ms and ~180 ms later (a plain
+  mid-angle + delay queue — the victim is re-looked-up at fire time, so
+  the wall `retain` cannot invalidate it; chains do not re-chain).
+  ONE bump per physical hit (the chain walls die "for free" — no
+  extra slow-motion/duck). Engine tests: `th-game/tests/shrapnel.rs`
+  (5 tests) + the shrapnel.rs unit tests; gate 579/0.

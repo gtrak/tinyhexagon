@@ -51,56 +51,56 @@ pub const SLOTS: [Slot; 8] = [
         unlock: 0,
         ratio: 0.5,
         chord: false,
-        gain: 0.62,
+        gain: 0.78,
     }, // kick
     Slot {
         kind: PresetKind::Heartbeat,
         unlock: 0,
         ratio: 1.6,
         chord: false,
-        gain: 0.38,
+        gain: 0.52,
     }, // snare
     Slot {
         kind: PresetKind::Heartbeat,
         unlock: 0,
         ratio: 8.0,
         chord: false,
-        gain: 0.18,
+        gain: 0.26,
     }, // hat
     Slot {
         kind: PresetKind::BassPulse,
         unlock: 0,
         ratio: 0.5,
         chord: false,
-        gain: 0.50,
+        gain: 0.68,
     }, // bass
     Slot {
         kind: PresetKind::PluckSaw,
         unlock: 0,
         ratio: 2.0,
         chord: false,
-        gain: 0.30,
+        gain: 0.40,
     }, // lead
     Slot {
         kind: PresetKind::PadZimmer,
         unlock: 4,
         ratio: 1.0,
         chord: true,
-        gain: 0.16,
+        gain: 0.20,
     }, // pad
     Slot {
         kind: PresetKind::Bell,
         unlock: 2,
         ratio: 2.0,
         chord: true,
-        gain: 0.16,
+        gain: 0.20,
     }, // bell
     Slot {
         kind: PresetKind::DroneSub,
         unlock: 0,
         ratio: 0.25,
         chord: true,
-        gain: 0.20,
+        gain: 0.28,
     }, // sub
 ];
 
@@ -117,7 +117,7 @@ pub const BPM_PER_STAGE: f32 = 1.2;
 pub const BRIGHTNESS_BASE: f32 = 0.45;
 pub const BRIGHTNESS_PER_STAGE: f32 = 0.025;
 /// The master gain.
-pub const MASTER_GAIN: f32 = 0.55;
+pub const MASTER_GAIN: f32 = 0.9;
 /// The collision-duck target.
 pub const DUCK_GAIN: f32 = 0.22;
 /// The duck recovery time.
@@ -355,7 +355,7 @@ impl MusicDirector {
                     1 => 0.85,
                     _ => 0.95,
                 });
-                pms.reverb_mix.set_value(0.12);
+                pms.reverb_mix.set_value(0.05);
                 pms.pattern_hits.set_value(bits.count_ones() as f32);
                 pms.pattern_rotation.set_value(0.0);
                 pms.pattern_bits.store(bits, Ordering::Relaxed);
@@ -364,7 +364,7 @@ impl MusicDirector {
                 pms.pulse_depth.set_value(0.0);
                 pms.lfo_depth.set_value(0.0);
                 pms.character.set_value(0.45);
-                pms.reverb_mix.set_value(0.20);
+                pms.reverb_mix.set_value(0.08);
             }
             PresetKind::PluckSaw => {
                 pms.pulse_depth.set_value(0.0);
@@ -372,7 +372,7 @@ impl MusicDirector {
                 pms.lfo_rate.set_value(0.2);
                 pms.lfo_target.set_value(LFO_FREQ as f32);
                 pms.character.set_value(0.62);
-                pms.reverb_mix.set_value(0.45);
+                pms.reverb_mix.set_value(0.20);
             }
             PresetKind::PadZimmer => {
                 pms.pulse_depth.set_value(0.12);
@@ -380,7 +380,7 @@ impl MusicDirector {
                 pms.lfo_rate.set_value(0.07);
                 pms.lfo_target.set_value(LFO_CUTOFF as f32);
                 pms.character.set_value(0.40);
-                pms.reverb_mix.set_value(0.60);
+                pms.reverb_mix.set_value(0.28);
             }
             PresetKind::Bell => {
                 pms.pulse_depth.set_value(0.0);
@@ -388,7 +388,7 @@ impl MusicDirector {
                 pms.lfo_rate.set_value(0.15);
                 pms.lfo_target.set_value(LFO_FREQ as f32);
                 pms.character.set_value(0.50);
-                pms.reverb_mix.set_value(0.60);
+                pms.reverb_mix.set_value(0.28);
             }
             PresetKind::DroneSub => {
                 pms.pulse_depth.set_value(0.18);
@@ -396,7 +396,7 @@ impl MusicDirector {
                 pms.lfo_rate.set_value(0.05);
                 pms.lfo_target.set_value(LFO_CUTOFF as f32);
                 pms.character.set_value(0.35);
-                pms.reverb_mix.set_value(0.40);
+                pms.reverb_mix.set_value(0.15);
             }
             PresetKind::Shimmer | PresetKind::SuperSaw => {
                 pms.pulse_depth.set_value(0.0);

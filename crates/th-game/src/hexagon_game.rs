@@ -49,6 +49,7 @@ use crate::camera::Camera;
 use crate::lua_state::{ReentrantMutex, ReentrantMutexGuard, SharedState, SharedStore};
 use crate::renderer::Renderer;
 use crate::seams::{Audio, CosmeticRng, Joystick, ScriptHost};
+use crate::shrapnel::{PendingChain, Shrapnel};
 use crate::wall::{compute_wall_gaps, WallGap};
 use crate::{
     CPlayer, CWall, FastVertexVectorTris, HexagonGameStatus, LevelStatus, SpeedData, StateChange,
@@ -216,6 +217,11 @@ pub struct EngineState {
     pub(crate) trail_particles: Vec<TrailParticle>,
     pub(crate) swap_particles: Vec<SwapParticle>,
     pub(crate) swap_particles_spawn_info: Option<SwapParticleSpawnInfo>,
+
+    // plan 002 issue 09 — the kid's collision shrapnel: the flying wedge
+    // pieces + the queued chain victims (`shrapnel.rs` for the contract).
+    pub(crate) shrapnel: Vec<Shrapnel>,
+    pub(crate) shrapnel_chains: Vec<PendingChain>,
 
     // C++ `sf::Text messageText / (os -> status) / fpsText / timeText`
     // — the string content only (fonts/layout are
@@ -488,6 +494,8 @@ impl<S: SharedStore> HexagonGame<S> {
             trail_particles: Vec::new(),
             swap_particles: Vec::new(),
             swap_particles_spawn_info: None,
+            shrapnel: Vec::new(),
+            shrapnel_chains: Vec::new(),
             message_text: String::new(),
             status_text: String::new(),
             fps_text: String::new(),
@@ -721,6 +729,9 @@ impl<S: SharedStore> HexagonGame<S> {
         e.particles.clear();
         e.trail_particles.clear();
         e.swap_particles.clear();
+        // 09 shrapnel cleanup.
+        e.shrapnel.clear();
+        e.shrapnel_chains.clear();
 
         // Re-init default flash effect.
         self.init_flash_effect(255, 255, 255);
@@ -2022,9 +2033,17 @@ impl<S: SharedStore> HexagonGame<S> {
                 w.draw(color_wall, &mut wall_quads);
             }
             g.cw_manager.draw(&mut wall_quads);
-            // C++ `status.started` (HGGraphics.cpp:142).
             g.status.started
         };
+
+        // plan 002 issue 09 — the shrapnel wedges ride the wall batch
+        // (the same draw call, the Alpha blend fades them).
+        {
+            let e = self.est();
+            for s in &e.shrapnel {
+                s.draw(&mut wall_quads);
+            }
+        }
 
         if must_draw_player {
             // C++ `HGGraphics.cpp:144-145` — the 4th argument is the

@@ -117,37 +117,36 @@
         document.getElementById("status").textContent = s;
         console.log("status " + s);
       }, 1000);
-      // plan 002 issue 08a — the FIRST-GESTURE audio unlock: the first
-      // pointerdown / keydown calls the exported `resumeAudio()` once
-      // (idempotent — the Rust side re-checks the browser's user
-      // activation and arms the live synth engine; the `th-audio` SFX
-      // device (emscripten's OpenAL) unlocks on the SAME first gesture
-      // through its own listeners). The fallback clock runs until then.
-      let gestureUnlock = false;
+      // plan 002 issue 08a — the FIRST-GESTURE audio unlock, hardened
+      // in the 09 pass: EVERY pointerdown / keydown calls the exported
+      // `resumeAudio()` until the status says `audio=live` (the export
+      // is idempotent and cheap while live; the Rust side re-checks
+      // the browser's user activation and arms the live synth engine).
+      // A one-shot flag had a hole: a first gesture whose activation
+      // check failed locked the page on the silent fallback forever
+      // (the th-audio SFX device unlocks through emscripten's own
+      // listeners — that's why SFX could work while the synth stayed
+      // silent).
+      let audioLive = false;
       const onGesture = (source) => {
-        if (gestureUnlock) return;
-        gestureUnlock = true;
         try {
           mod.resumeAudio();
-          console.log("[shell] audio unlock requested (" + source + ")");
+          if (!audioLive && mod.status().includes("audio=live")) {
+            audioLive = true;
+            console.log("[shell] audio unlocked (" + source + ")");
+          }
         } catch (err) {
           console.error("[shell] resumeAudio failed: " + err);
-          gestureUnlock = false; // the export threw — allow the re-fire
         }
       };
       window.addEventListener("pointerdown", () => onGesture("first pointerdown"));
       window.addEventListener("keydown", () => onGesture("first keydown"));
       // The 05a handoff's re-fire: a hidden tab freezes the
-      // AudioContext's phase clock; returning to the tab re-arms (the
-      // unlock is idempotent — a no-op while live).
+      // AudioContext's phase clock; returning to the tab re-arms
+      // (the next gesture also re-tries — onGesture runs on every one).
       document.addEventListener("visibilitychange", () => {
         if (document.visibilityState !== "visible") return;
-        try {
-          mod.resumeAudio();
-          console.log("[shell] audio re-fire (visibility -> visible)");
-        } catch (err) {
-          console.error("[shell] resumeAudio re-fire failed: " + err);
-        }
+        onGesture("visibility -> visible");
       });
     </script>
   </body>

@@ -18,7 +18,7 @@ function onInit()
     l_setSidesMin(3)
     l_setWallSpawnDistance(1050) -- walls appear ~1 s after spawn instead of 3 s
     l_setSidesMax(8)
-    l_setSpeedMult(0.40)        -- the 09 pass-2 base: the cursor is slower overall (the ramp also softened)
+    l_setSpeedMult(0.33)        -- the 09 pass-3 base: the cursor slower still (the ramp also softened)
     l_setSpeedInc(0.0)          -- the app's continuous multiplier owns escalation
     l_setSpeedMax(2.5)
     l_setRotationSpeed(0.03)

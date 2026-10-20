@@ -23,9 +23,15 @@ use crate::hexagon_game::{
     SwapParticleSpawnInfo, TrailParticle,
 };
 use crate::lua_state::SharedStore;
+use crate::shrapnel::{
+    angle_distance, wall_mid_angle, PendingChain, Shrapnel, CHAIN_HOP_FT, CHAIN_WALLS,
+    PIECES_PER_WALL, PIECE_LIFE_FT, PIECE_SIZE_MAX, PIECE_SIZE_MIN, PIECE_SPEED_MAX,
+    PIECE_SPEED_MIN, PIECE_SPIN_MAX, PIECE_SPREAD_RAD,
+};
 use crate::timeline::Outcome;
 use crate::{StateChange, Timeline2Runner};
 use th_config::{Jdir, Jid, TIME_STEP};
+use th_math::ssvs::vector2::{get_mag, get_rad};
 use th_math::ssvs::{get_vec_from_rad, Vec2};
 use th_math::ssvu::{get_clamped, get_sign};
 use th_math::{
@@ -124,6 +130,12 @@ impl<S: SharedStore> HexagonGame<S> {
                 let mut e = self.est();
                 e.effect_timeline_manager.update(m_ft);
             }
+            // plan 002 issue 09 — the shrapnel pieces + the chain queue
+            // (outside the window gate: the bursts spawn on soft kills in
+            // headless runs too, so the update keeps the vector bounded
+            // there as well).
+            self.update_shrapnel(m_ft);
+            self.update_shrapnel_chains(m_ft);
 
             // C++ `if(!mustReplayInput()) updateInput(); else
             // <replay playback>` — the replay-playback half was retired by
@@ -533,10 +545,21 @@ impl<S: SharedStore> HexagonGame<S> {
             // SFX/slow-motion belongs to the app (07); none is invented
             // here.
             if soft {
-                let mut g = self.st();
-                g.walls[i].kill();
-                g.status.flash_effect = f32::max(g.status.flash_effect, 120.0_f32);
+                // plan 002 issue 04a — soft: the wall dies instead of the
+                // player (flash + one bump per PHYSICAL hit — the shrapnel
+                // chain's extra walls die "for free", one bump total).
+                // plan 002 issue 09 — the shatter: the hit wall bursts
+                // into wedge pieces and up to two neighbours follow a
+                // short hop later (the blast visibly spreading).
+                let mid = self.shatter_wall(i, &p_pos);
+                {
+                    let mut g = self.st();
+                    g.status.flash_effect = f32::max(g.status.flash_effect, 120.0_f32);
+                }
                 self.est().bump_serial += 1;
+                if let Some(mid) = mid {
+                    self.queue_shrapnel_chain(mid);
+                }
                 collided = true;
                 continue;
             }
@@ -638,6 +661,164 @@ impl<S: SharedStore> HexagonGame<S> {
             let mut g = self.st();
             g.status.flash_effect = f32::max(g.status.flash_effect, 120.0_f32);
             self.est().bump_serial += killed as u64;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // plan 002 issue 09 — the collision shrapnel (the shatter + the
+    // chain). `shrapnel.rs` owns the piece/queue contract.
+    // ------------------------------------------------------------------
+
+    /// Shatter wall `index`: kill it (the existing `retain` drops it),
+    /// spawn its wedge burst at the impact point (the wall vertex nearest
+    /// the player — the outward direction is the radial one), and return
+    /// the wall's mid-angle for the chain queue (`None` = degenerate
+    /// span; the wall still died).
+    fn shatter_wall(&self, index: usize, p_pos: &Vec2) -> Option<f32> {
+        let (origin, outward, mid, wall_color) = {
+            let g = self.st();
+            let w = &g.walls[index];
+            // The impact point: the wall vertex nearest the player.
+            let vertices = w.get_vertex_positions();
+            let mut origin = vertices[0];
+            let mut best = get_mag(&(vertices[0] - *p_pos));
+            for v in &vertices[1..] {
+                let d = get_mag(&(*v - *p_pos));
+                if d < best {
+                    best = d;
+                    origin = *v;
+                }
+            }
+            let outward = get_rad(&origin);
+            let mid = w.angle_span().map(|(s, e, _)| wall_mid_angle(s, e));
+            let color = self.get_color_wall();
+            (origin, outward, mid, color)
+        };
+
+        {
+            let mut g = self.st();
+            g.walls[index].kill();
+        }
+
+        // The burst: a cone around the outward direction, cosmetic rng
+        // (non-simulation — same policy as the swap particles).
+        let mut e = self.est();
+        let mut spawned = 0;
+        while spawned < PIECES_PER_WALL {
+            let angle = outward
+                + self
+                    .0
+                    .cosmetic_rng
+                    .get_rnd_r(-PIECE_SPREAD_RAD, PIECE_SPREAD_RAD);
+            let speed = self
+                .0
+                .cosmetic_rng
+                .get_rnd_r(PIECE_SPEED_MIN, PIECE_SPEED_MAX);
+            let size = self
+                .0
+                .cosmetic_rng
+                .get_rnd_r(PIECE_SIZE_MIN, PIECE_SIZE_MAX);
+            e.shrapnel.push(Shrapnel {
+                position: origin,
+                velocity: get_vec_from_rad(angle, speed),
+                angle,
+                spin: self
+                    .0
+                    .cosmetic_rng
+                    .get_rnd_r(-PIECE_SPIN_MAX, PIECE_SPIN_MAX),
+                size,
+                life: PIECE_LIFE_FT,
+                max_life: PIECE_LIFE_FT,
+                color: wall_color,
+            });
+            spawned += 1;
+        }
+        mid
+    }
+
+    /// Queue up to [`CHAIN_WALLS`] neighbours of the hit wall — the two
+    /// live walls whose mid-angle is nearest the hit's — each with its
+    /// hop delay. The victim lookup happens at FIRE time (the wall
+    /// vector's `retain` may have removed candidates by then).
+    fn queue_shrapnel_chain(&self, hit_mid: f32) {
+        let victims: Vec<f32> = {
+            let g = self.st();
+            let mut mids: Vec<f32> = g
+                .walls
+                .iter()
+                .filter(|w| !w.is_dead())
+                .filter_map(|w| w.angle_span())
+                .map(|(s, e, _)| wall_mid_angle(s, e))
+                .collect();
+            mids.sort_by(|a, b| {
+                angle_distance(*a, hit_mid)
+                    .partial_cmp(&angle_distance(*b, hit_mid))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            mids.truncate(CHAIN_WALLS);
+            mids
+        };
+        let mut e = self.est();
+        for (i, mid) in victims.iter().enumerate() {
+            e.shrapnel_chains.push(PendingChain {
+                mid_angle: *mid,
+                delay: CHAIN_HOP_FT * (i as f32 + 1.0),
+            });
+        }
+    }
+
+    /// Advance the pieces: ride + drag + spin + fade; cull the dead.
+    fn update_shrapnel(&self, ft: f32) {
+        let mut e = self.est();
+        for s in e.shrapnel.iter_mut() {
+            s.update(ft);
+        }
+        e.shrapnel.retain(|s| s.is_alive());
+    }
+
+    /// Fire the due chain victims: the nearest live wall to the recorded
+    /// mid-angle shatters (no further chaining — bounded). Re-looked-up
+    /// by angle, so the wall vector's mutations cannot invalidate it.
+    fn update_shrapnel_chains(&self, ft: f32) {
+        let due: Vec<f32> = {
+            let mut e = self.est();
+            for c in e.shrapnel_chains.iter_mut() {
+                c.delay -= ft;
+            }
+            let due: Vec<f32> = e
+                .shrapnel_chains
+                .iter()
+                .filter(|c| c.delay <= 0.0)
+                .map(|c| c.mid_angle)
+                .collect();
+            e.shrapnel_chains.retain(|c| c.delay > 0.0);
+            due
+        };
+        if due.is_empty() {
+            return;
+        }
+        let p_pos = self.get_player_position();
+        for mid in due {
+            let idx = {
+                let g = self.st();
+                let mut best: Option<(usize, f32)> = None;
+                for (i, w) in g.walls.iter().enumerate() {
+                    if w.is_dead() {
+                        continue;
+                    }
+                    let Some((s, e, _)) = w.angle_span() else {
+                        continue;
+                    };
+                    let d = angle_distance(wall_mid_angle(s, e), mid);
+                    if best.is_none_or(|(_, bd)| d < bd) {
+                        best = Some((i, d));
+                    }
+                }
+                best.map(|b| b.0)
+            };
+            if let Some(i) = idx {
+                self.shatter_wall(i, &p_pos);
+            }
         }
     }
 
@@ -1455,6 +1636,18 @@ impl<S: SharedStore> HexagonGame<S> {
     #[must_use]
     pub fn swap_particles(&self) -> Vec<SwapParticle> {
         self.est().swap_particles.clone()
+    }
+
+    /// The shrapnel pieces (test access; plan 002 issue 09).
+    #[must_use]
+    pub fn shrapnel(&self) -> Vec<Shrapnel> {
+        self.est().shrapnel.clone()
+    }
+
+    /// The pending chain victims (test access).
+    #[must_use]
+    pub fn shrapnel_chains(&self) -> Vec<PendingChain> {
+        self.est().shrapnel_chains.clone()
     }
 
     /// The C++ `messageText` content (test access).

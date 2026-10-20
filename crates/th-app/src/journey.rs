@@ -11,8 +11,8 @@
 //! The difficulty is a **continuous** function of the journey clock
 //! (`stage + elapsed / 30`), so the walls speed up smoothly instead of in
 //! 30-second steps. It starts at 0.45× (much slower than the old 0.55×)
-//! and reaches 1.65× at the plateau, then holds (the 09 operator
-//! pass slowed the cursor: the ramp and the level `speedMult` both
+//! and reaches 1.55× at the plateau, then holds (the 09 operator
+//! passes slowed the cursor: the ramp and the level `speedMult` both
 //! came down).
 
 /// Seconds per stage (the contract: 30 s × 20 transitions = 10 minutes to
@@ -107,11 +107,11 @@ pub fn block_for_stage(stage: u32) -> &'static Block {
     &BLOCKS[((stage / 2).min((BLOCKS.len() - 1) as u32)) as usize]
 }
 
-/// `difficulty = 0.45 + 0.06 * min(t, 20)` (the arc 0.45..=1.65; the
+/// `difficulty = 0.45 + 0.055 * min(t, 20)` (the arc 0.45..=1.55; the
 /// engine's `set_difficulty_mult` clamps 0.1..=4.0, so every value lands).
 #[must_use]
 pub fn difficulty_for_stage(stage: u32) -> f32 {
-    0.45 + 0.06 * stage.min(MAX_STAGE) as f32
+    0.45 + 0.055 * stage.min(MAX_STAGE) as f32
 }
 
 /// `bpm = 150 + 1.2 * min(stage, 20)` (cap 174 — the chiptune drum-and-bass
@@ -169,7 +169,7 @@ impl Journey {
     /// `new_game` argument / the per-frame `set_difficulty_mult` value).
     #[must_use]
     pub fn difficulty(&self) -> f32 {
-        0.45 + 0.06 * self.t()
+        0.45 + 0.055 * self.t()
     }
 
     /// The level id the run plays (the single journey level).
@@ -226,7 +226,7 @@ mod tests {
             );
         }
         assert!((difficulty_for_stage(0) - 0.45).abs() < 1e-6);
-        assert!((difficulty_for_stage(MAX_STAGE) - 1.65).abs() < 1e-6);
+        assert!((difficulty_for_stage(MAX_STAGE) - 1.55).abs() < 1e-6);
         assert!((bpm_for_stage(0) - 150.0).abs() < 1e-6);
         assert!((bpm_for_stage(MAX_STAGE) - 174.0).abs() < 1e-6);
         for beyond in (MAX_STAGE + 1)..=64 {
@@ -263,19 +263,19 @@ mod tests {
         mid.advance(15.0);
         assert_eq!(mid.stage, 0);
         assert!(mid.difficulty() > start.difficulty());
-        assert!((mid.difficulty() - (0.45 + 0.06 * 0.5)).abs() < 1e-6);
+        assert!((mid.difficulty() - (0.45 + 0.055 * 0.5)).abs() < 1e-6);
         let late = Journey {
             stage: 2,
             elapsed: 5.0,
         };
         assert!((late.t() - 2.0 - 5.0 / 30.0).abs() < 1e-5);
-        assert!((late.difficulty() - (0.45 + 0.06 * (2.0 + 5.0 / 30.0))).abs() < 1e-5);
+        assert!((late.difficulty() - (0.45 + 0.055 * (2.0 + 5.0 / 30.0))).abs() < 1e-5);
         let plateau = Journey {
             stage: MAX_STAGE,
             elapsed: 29.0,
         };
         assert!((plateau.t() - 20.0).abs() < 1e-6);
-        assert!((plateau.difficulty() - 1.65).abs() < 1e-6);
+        assert!((plateau.difficulty() - 1.55).abs() < 1e-6);
     }
 
     /// The arena style/shape table: the upstream cube levels in menu order,

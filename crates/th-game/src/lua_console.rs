@@ -956,6 +956,8 @@ mod tests {
             trail_particles: Vec::new(),
             swap_particles: Vec::new(),
             swap_particles_spawn_info: None,
+            shrapnel: Vec::new(),
+            shrapnel_chains: Vec::new(),
             message_text: String::new(),
             status_text: String::new(),
             fps_text: String::new(),
