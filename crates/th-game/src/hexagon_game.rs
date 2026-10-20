@@ -218,10 +218,14 @@ pub struct EngineState {
     pub(crate) swap_particles: Vec<SwapParticle>,
     pub(crate) swap_particles_spawn_info: Option<SwapParticleSpawnInfo>,
 
-    // plan 002 issue 09 — the kid's collision shrapnel: the flying wedge
-    // pieces + the queued chain victims (`shrapnel.rs` for the contract).
+    // plan 002 issue 09 (rework) — the kid's collision shrapnel: the
+    // flying glass shards + the queued chain victims + the shatter
+    // sequence (each shatter event gets a unique burst id so the pieces
+    // of one wall never collide with each other — `shrapnel.rs` owns
+    // the contract).
     pub(crate) shrapnel: Vec<Shrapnel>,
     pub(crate) shrapnel_chains: Vec<PendingChain>,
+    pub(crate) shrapnel_burst_seq: u64,
 
     // C++ `sf::Text messageText / (os -> status) / fpsText / timeText`
     // — the string content only (fonts/layout are
@@ -496,6 +500,7 @@ impl<S: SharedStore> HexagonGame<S> {
             swap_particles_spawn_info: None,
             shrapnel: Vec::new(),
             shrapnel_chains: Vec::new(),
+            shrapnel_burst_seq: 0,
             message_text: String::new(),
             status_text: String::new(),
             fps_text: String::new(),
@@ -2036,8 +2041,9 @@ impl<S: SharedStore> HexagonGame<S> {
             g.status.started
         };
 
-        // plan 002 issue 09 — the shrapnel wedges ride the wall batch
-        // (the same draw call, the Alpha blend fades them).
+        // plan 002 issue 09 (rework) — the glass shards ride the wall
+        // batch (the same draw call; the Alpha blend fades them, and the
+        // per-vertex colors give the brightened glass edges).
         {
             let e = self.est();
             for s in &e.shrapnel {

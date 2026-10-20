@@ -24,9 +24,8 @@ use crate::hexagon_game::{
 };
 use crate::lua_state::SharedStore;
 use crate::shrapnel::{
-    angle_distance, wall_mid_angle, PendingChain, Shrapnel, CHAIN_HOP_FT, CHAIN_WALLS,
-    PIECES_PER_WALL, PIECE_LIFE_FT, PIECE_SIZE_MAX, PIECE_SIZE_MIN, PIECE_SPEED_MAX,
-    PIECE_SPEED_MIN, PIECE_SPIN_MAX, PIECE_SPREAD_RAD,
+    angle_distance, bounce_pairs, make_room, split_wall_quad, wall_mid_angle, PendingChain,
+    Shrapnel, CHAIN_HOP_FT, CHAIN_WALLS,
 };
 use crate::timeline::Outcome;
 use crate::{StateChange, Timeline2Runner};
@@ -548,9 +547,9 @@ impl<S: SharedStore> HexagonGame<S> {
                 // plan 002 issue 04a — soft: the wall dies instead of the
                 // player (flash + one bump per PHYSICAL hit — the shrapnel
                 // chain's extra walls die "for free", one bump total).
-                // plan 002 issue 09 — the shatter: the hit wall bursts
-                // into wedge pieces and up to two neighbours follow a
-                // short hop later (the blast visibly spreading).
+                // plan 002 issue 09 (rework) — the shatter: the hit wall's
+                // quad bursts into glass shards and up to two neighbours
+                // shatter a short hop later (the blast visibly spreading).
                 let mid = self.shatter_wall(i, &p_pos);
                 {
                     let mut g = self.st();
@@ -665,34 +664,33 @@ impl<S: SharedStore> HexagonGame<S> {
     }
 
     // ------------------------------------------------------------------
-    // plan 002 issue 09 — the collision shrapnel (the shatter + the
-    // chain). `shrapnel.rs` owns the piece/queue contract.
+    // plan 002 issue 09 (rework) — the collision shrapnel: the glass
+    // shatter + the chain. `shrapnel.rs` owns the shard/queue contract.
     // ------------------------------------------------------------------
 
     /// Shatter wall `index`: kill it (the existing `retain` drops it),
-    /// spawn its wedge burst at the impact point (the wall vertex nearest
-    /// the player — the outward direction is the radial one), and return
-    /// the wall's mid-angle for the chain queue (`None` = degenerate
-    /// span; the wall still died).
+    /// cut its quad into glass shards that burst from the impact point
+    /// (the wall vertex nearest the player), and return the wall's
+    /// mid-angle for the chain queue (`None` = degenerate span; the wall
+    /// still died).
     fn shatter_wall(&self, index: usize, p_pos: &Vec2) -> Option<f32> {
-        let (origin, outward, mid, wall_color) = {
+        let (corners, impact, outward, mid, wall_color) = {
             let g = self.st();
             let w = &g.walls[index];
             // The impact point: the wall vertex nearest the player.
-            let vertices = w.get_vertex_positions();
-            let mut origin = vertices[0];
-            let mut best = get_mag(&(vertices[0] - *p_pos));
-            for v in &vertices[1..] {
+            let corners = w.get_vertex_positions();
+            let mut impact = corners[0];
+            let mut best = get_mag(&(corners[0] - *p_pos));
+            for v in &corners[1..] {
                 let d = get_mag(&(*v - *p_pos));
                 if d < best {
                     best = d;
-                    origin = *v;
+                    impact = *v;
                 }
             }
-            let outward = get_rad(&origin);
+            let outward = get_rad(&impact);
             let mid = w.angle_span().map(|(s, e, _)| wall_mid_angle(s, e));
-            let color = self.get_color_wall();
-            (origin, outward, mid, color)
+            (corners, impact, outward, mid, self.get_color_wall())
         };
 
         {
@@ -700,38 +698,30 @@ impl<S: SharedStore> HexagonGame<S> {
             g.walls[index].kill();
         }
 
-        // The burst: a cone around the outward direction, cosmetic rng
-        // (non-simulation — same policy as the swap particles).
-        let mut e = self.est();
-        let mut spawned = 0;
-        while spawned < PIECES_PER_WALL {
-            let angle = outward
-                + self
-                    .0
-                    .cosmetic_rng
-                    .get_rnd_r(-PIECE_SPREAD_RAD, PIECE_SPREAD_RAD);
-            let speed = self
-                .0
-                .cosmetic_rng
-                .get_rnd_r(PIECE_SPEED_MIN, PIECE_SPEED_MAX);
-            let size = self
-                .0
-                .cosmetic_rng
-                .get_rnd_r(PIECE_SIZE_MIN, PIECE_SIZE_MAX);
-            e.shrapnel.push(Shrapnel {
-                position: origin,
-                velocity: get_vec_from_rad(angle, speed),
-                angle,
-                spin: self
-                    .0
-                    .cosmetic_rng
-                    .get_rnd_r(-PIECE_SPIN_MAX, PIECE_SPIN_MAX),
-                size,
-                life: PIECE_LIFE_FT,
-                max_life: PIECE_LIFE_FT,
-                color: wall_color,
-            });
-            spawned += 1;
+        // The glass burst: the wall's ACTUAL quad cut into 6..10
+        // irregular pieces (a jittered fan), each carrying mass-scaled
+        // radial impulse from the impact point + tangential jitter (the
+        // cosmetic rng — non-simulation, same policy as the swap
+        // particles). The cap evicts the oldest shards first; each
+        // shatter event gets a unique burst id (the pieces of one wall
+        // never collide with each other).
+        let burst = {
+            let mut e = self.est();
+            e.shrapnel_burst_seq += 1;
+            e.shrapnel_burst_seq
+        };
+        let shards = split_wall_quad(
+            corners,
+            impact,
+            outward,
+            wall_color,
+            burst,
+            &*self.0.cosmetic_rng,
+        );
+        {
+            let mut e = self.est();
+            make_room(&mut e.shrapnel, shards.len());
+            e.shrapnel.extend(shards);
         }
         mid
     }
@@ -767,14 +757,17 @@ impl<S: SharedStore> HexagonGame<S> {
         }
     }
 
-    /// Advance the pieces: ride + drag + spin + fade + the core bounce
-    /// (the core edge tracks the breathing radius); cull the dead.
+    /// Advance the shards: ride + drag + tumble + life, the core bounce
+    /// (the core edge tracks the breathing radius), and the light
+    /// pairwise shard-shard bounce; cull the dead.
     fn update_shrapnel(&self, ft: f32) {
         let core_radius = self.get_radius() * 1.05_f32;
         let mut e = self.est();
         for s in e.shrapnel.iter_mut() {
             s.update(ft, core_radius);
         }
+        // The light pairwise shard-shard bounce (cheap at the 64 cap).
+        bounce_pairs(&mut e.shrapnel);
         e.shrapnel.retain(|s| s.is_alive());
     }
 

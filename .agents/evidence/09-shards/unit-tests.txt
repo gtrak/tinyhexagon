@@ -1,0 +1,14 @@
+
+running 9 tests
+test shrapnel::tests::a_shard_bounces_elastically_off_the_core ... ok
+test shrapnel::tests::angle_distance_is_seam_aware ... ok
+test shrapnel::tests::bounce_pairs_separate_and_exchange_momentum ... ok
+test shrapnel::tests::draw_emits_the_fan_with_per_vertex_glass_colors ... ok
+test shrapnel::tests::mid_angle_bisects_the_span_across_the_seam ... ok
+test shrapnel::tests::make_room_evicts_the_oldest_first ... ok
+test shrapnel::tests::split_bursts_outward_from_the_impact_point ... ok
+test shrapnel::tests::update_rides_velocity_drags_tumbles_and_burns_life ... ok
+test shrapnel::tests::split_cut_the_quad_into_6_to_10_pieces_inside_it ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 63 filtered out; finished in 0.00s
+

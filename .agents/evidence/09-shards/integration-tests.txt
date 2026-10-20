@@ -1,0 +1,10 @@
+
+running 5 tests
+test a_soft_hit_shatters_the_wall_into_glass_shards_cut_from_its_quad ... ok
+test shard_physics_ride_momentum_drag_tumble_and_cull ... ok
+test the_shards_reach_the_draw_batches_as_glass_fans ... ok
+test the_chain_takes_out_the_two_nearest_walls_a_hop_apart_with_no_extra_bumps ... ok
+test a_new_game_clears_the_shrapnel ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+

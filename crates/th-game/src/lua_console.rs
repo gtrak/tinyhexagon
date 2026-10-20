@@ -958,6 +958,7 @@ mod tests {
             swap_particles_spawn_info: None,
             shrapnel: Vec::new(),
             shrapnel_chains: Vec::new(),
+            shrapnel_burst_seq: 0,
             message_text: String::new(),
             status_text: String::new(),
             fps_text: String::new(),
