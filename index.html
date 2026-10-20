@@ -26,7 +26,7 @@
   URL: http://127.0.0.1:8080/
   (Any static file server works — the page is plain ES module + three
   files. The `.data` is the `--preload-file=_RELEASE@/RELEASE` package;
-  tools/web-stub-probe.mjs waits on `#status` reaching
+  tools/web-tiny-probe.mjs waits on `#status` reaching
   `booted=true` (default 120 s), not the page load — the 22 MB preload
   fetches during the factory's boot, and the engine's boot (assets +
   config + Luau + the first frame) follows.)
@@ -96,7 +96,7 @@
       // self-owns; the browser owns the frames from here).
       import Module from "./tinyhexagon.js";
       const mod = await Module();
-      // The probe hook (tools/web-stub-probe.mjs's `window.ohStatus` —
+      // The probe hook (tools/web-tiny-probe.mjs's `window.ohStatus` —
       // the module scope's `mod` is not a global, so the page exposes
       // the `#[wasm_bindgen]` export on `window`).
       window.ohStatus = () => mod.status();
