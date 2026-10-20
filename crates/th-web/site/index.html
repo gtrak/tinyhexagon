@@ -139,7 +139,16 @@
       // the `#[wasm_bindgen]` export on `window`).
       window.ohStatus = () => mod.status();
       setInterval(() => {
-        const s = mod.status();
+        let s = mod.status();
+        // The on-device buffer stats appended to the status line (the
+        // diagnostic: `buffers=` the host's scheduled sources,
+        // `bufPeak=` their true content peak — a loud bufPeak with
+        // running ctx and still silence means the playback wiring, a
+        // near-zero bufPeak means the graph renders silence there).
+        try {
+          const a = window.__audioStats;
+          if (a) s += `;buffers=${a.buffers};bufPeak=${a.maxPeak.toFixed(4)}`;
+        } catch { /* diagnostics only */ }
         document.getElementById("status").textContent = s;
         console.log("status " + s);
         // The unlock CONFIRMATION: the first poll that sees `audio=live`

@@ -19,6 +19,14 @@
     <button id="go">start the 440 Hz sine (cpal's emscripten host)</button>
     <div id="out"></div>
     <script>
+      // The pinned wasm-bindgen 0.2.129 CLI's emscripten glue emits
+      // `new lAudioContext` (its vendor-prefixed alias) but drops the
+      // alias's definition — the SAME shim the game page carries (08a).
+      // Without it cpal's availability probe throws → "no default output
+      // device" even though the raw constructor works.
+      window.lAudioContext = window.AudioContext || window.webkitAudioContext;
+    </script>
+    <script>
       const out = (t) => { document.getElementById("out").textContent += t + "\n"; };
       let mod = null;
       document.getElementById("go").onclick = async () => {
