@@ -56,6 +56,16 @@ th-synth = { path = "../th-synth" }
 # keep the signal context to a single atomic store / one `write(2)`.
 signal-hook = "0.3"
 
+[target.'cfg(target_os = "android")'.dependencies]
+# plan 002 issue 08b — the Android entry (`src/tiny.rs`'s `tiny_android`):
+# the winit android surface — the `EventLoopBuilderExtAndroid`'s
+# `with_android_app` binding + the `activity::AndroidApp` type. winit's
+# `android-native-activity` feature hard-depends on exactly one glue crate
+# (`android-activity` 0.6) and only on the android target (th-render
+# carries the same version + feature — no lockfile change; harmless off
+# target).
+winit = { version = "0.30", features = ["android-native-activity"] }
+
 [target.'cfg(not(any(target_os = "android", target_family = "wasm")))'.dependencies]
 # The desktop controller backend behind `RealJoystick`
 # (`src/joystick.rs`): the C++ `sf::Joystick` controller-0 poll's

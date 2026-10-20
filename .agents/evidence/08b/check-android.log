@@ -1,0 +1,5 @@
+android env ready: aarch64-linux-android API 28
+== cargo check -p th-app -p th-android --target aarch64-linux-android
+    Checking th-app v0.1.0 (/home/gary/dev/tinyhexagon/.agents/worktrees/slot-1/crates/th-app)
+    Checking th-android v0.1.0 (/home/gary/dev/tinyhexagon/.agents/worktrees/slot-1/crates/th-android)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.45s

@@ -70,13 +70,17 @@ name: Release
 # (no MSVC CRT requirement at runtime).
 #
 # ANDROID SIGNING — tools/package-android.sh signs with the project's
-# SELF-DISTRIBUTION keystore (tools/android/openhexagon-release.keystore;
+# SELF-DISTRIBUTION keystore (tools/android/tinyhexagon-release.keystore;
 # generated on first use, fixed password documented in that script's
 # header). That is fine for a non-store release. For store distribution
 # the operator must create the repo secrets ANDROID_RELEASE_KEYSTORE
 # (base64 .keystore), ANDROID_RELEASE_KEYSTORE_PASSWORD and
 # ANDROID_RELEASE_KEYSTORE_ALIAS and extend tools/package-android.sh to
-# consume them — a keystore must NEVER be committed.
+# consume them. A STORE-distribution keystore must NEVER be committed
+# (its identity + password are the store's secret); the committed
+# tools/android/tinyhexagon-release.keystore is the documented exception
+# — the project's self-distribution key with the fixed password in the
+# script's header (a non-store release identity, not a store secret).
 #
 # GH-PAGES OPERATOR-SIDE SETTING (cannot be set from this file):
 #   Settings -> Pages -> Build and deployment -> Source: "Deploy a

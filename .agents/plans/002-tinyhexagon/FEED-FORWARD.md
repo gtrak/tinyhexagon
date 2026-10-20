@@ -396,8 +396,10 @@ re-reading the whole history.
   `tinyhexagon-web.zip`); `th-android`: `apk_name = "tinyhexagon"`,
   `[lib] name = "th_android"` (`libth_android.so` — `package-android.sh`
   checks + manifest comments updated), app `label = "tinyhexagon"`,
-  staging dir `target/th-apk-assets`; the Android `package` id stays
-  `info.vittorioromeo.openhexagon` (the plan does not rename it).
+  staging dir `target/th-apk-assets`; the Android `package` id is
+  `com.gtrak.tinyhexagon` (08b post-review, orchestrator-directed —
+  the plan's "stays `info.vittorioromeo.openhexagon`" note was
+  superseded; section 08b's application-id bullet).
   Release artifacts: `tinyhexagon-<tag>-{linux-x86_64.tar.gz,
   windows-x86_64.zip, android-arm64-v8a.apk, web.zip}` (both workflows).
 - Rename exceptions (left as `oh-*`, 22 doc-only lines — see the report's
@@ -411,7 +413,9 @@ re-reading the whole history.
   `ohvrvanilla_*`, `oh.filelist` (APK asset marker), `OH_*` env vars,
   the page-JS handles `window.ohStatus` / `ohWebModule` /
   `ohWebPersistBoot` / `ohstatechange` (the probes rely on them),
-  `tools/android/openhexagon-release.keystore` (live keystore identity),
+  `tools/android/tinyhexagon-release.keystore` (the committed
+  self-distribution key — 08b re-identified it from the retired
+  `openhexagon-release.keystore`; section 08b),
   and the stale `.gitignore` rule `crates/oh-parity/oh030b-corpus/`
   (inert; 09 sweep candidate).
 - `default-members`: `["crates/th-app"]` (root `Cargo.toml`) — `cargo run`
@@ -952,6 +956,161 @@ re-reading the whole history.
       verified: probe **19/19 PASS**, `audio=live`, clean console,
       screenshot `.agents/evidence/08a/08a-web-probe-fix4.png` (no status
       text); host gate **567 passed / 0 failed** (baseline).
+
+### 08b — android (aarch64) tiny entry (DONE — 2026-10-19: check green + debug APK verified; device smoke = the manual half)
+
+- Android entry: `th_app::tiny::tiny_android(app: AndroidApp)` (a
+  `#[cfg(target_os = "android")]` in `th-app/src/tiny.rs` — the
+  `tiny_web` boot's android twin): `Assets::new(internal_dir)` →
+  `load_and_reapply(Fixed(VideoMode::new(0, 0)))` (**no child probe on
+  Android** — the plan's note: winit's monitor API exists only inside a
+  RUNNING event loop and the activity's loop is consumed by the game's
+  own `run`; inert: both auto-resolution flags default false + the
+  platform window is screen-sized) → `kid_config` (in-memory, never
+  written back) → `th_audio::Audio::new` + `set_sound_volume(60.0)` →
+  `MusicDirector::start()` (the non-emscripten live attempt — oboe/
+  AAudio; `Err` → the fallback clock, **never a panic**; the SFX's
+  failed-sink-open degrades to the headless device, logged — the
+  `th-audio` contract) → `EventLoopBuilderExtAndroid` (`with_android_
+  app` + `build`) → `Window::create_android` (physical = config logical
+  × `pixel_mult`; the C++ `main.cpp:305-310` setters — the android
+  record halves, AA/vsync applied at the first-`resumed`
+  materialization; the icon load is the no-op platform half) → the
+  shared `run` loop. Every boot failure logs + returns without
+  panicking (the activity's main-loop thread stays alive).
+- `th-android` (the 02a stub → the real entry, `src/android.rs`):
+  `#[no_mangle] pub fn android_main(app: AndroidApp)` (the D-026 entry
+  contract — the android-activity glue's C wrapper links this Rust
+  symbol; the 02a shape from git history): (1) the `__android_log_
+  write` engine sink FIRST, tag **`tinyhexagon`** (the adult
+  `OpenHexagon` tag renamed with the product — `adb logcat -s
+  tinyhexagon`); (2) the base dir = `internal_data_path()`; (3)
+  `extract_content` (the verified SG4 glue carried over: the
+  packaging-generated `oh.filelist`-driven `AAssetManager` open/read —
+  NO `openDir` enumeration; the atomic `.th_partial` + rename per
+  file; the 0-file refusal; **the content marker re-named
+  `.oh_content_extracted` → `.th_content_extracted`** — the `.th_`
+  prefix is the product-consistent name (the `.th_partial` sibling's);
+  with the application-id change below, a device that carried the
+  retired adult app's extracted tree gets a FRESH internal data dir
+  for the new application anyway (Android isolates app data per
+  package id); **the marker's CONTENT is `CONTENT_VERSION` (`u32 = 1`
+  — the 08b review fix: the skip check is the marker's content, not
+  its presence, so an app UPDATE over the surviving internal data dir
+  re-extracts on a version mismatch instead of leaving the stale
+  `_RELEASE` — the 09-taste journey level update is exactly that);
+  BUMP the const on every `_RELEASE` change (the 09-taste updates are
+  the first bump)) —
+  (4) `chdir_to_base_dir`; (5)
+  `th_app::tiny::tiny_android(app)`.
+- Deps: `th-app` gains `[target.'cfg(target_os = "android")'.
+  dependencies] winit = {"0.30", features = ["android-native-activity"]}`
+  (th-render carries the same version/feature — no lockfile version
+  change). `th-android` gains the common deps `th-app` + `th-game` (the
+  log-sink FFI names the crate directly) + the android-target `winit`
+  + `ndk = "0.9"` (already locked — winit's `android-activity` dep;
+  `AndroidApp::asset_manager()` returns this crate's `AssetManager`
+  directly). Lock: +7 lines (the `th-android` entry's dep list only —
+  zero new packages).
+- Conditions: **no SIGINT** (the activity lifecycle is the stop
+  mechanism — the back button's `CloseRequested` closes the winit
+  window → the loop exit; the `th-app` `sigint` module is never called
+  from the android path), **no Steam/Discord/profiles/config/replay**
+  (the 02c1-retired de-scoped composition + the kid's in-memory config
+  — every run starts stage 0), **no IME / soft input** (the kid has no
+  text — the retired adult `ImeController` has no twin).
+- Touch / icons: the SHARED 07 `touch.rs` / `tiny.rs` (no android-
+  specific geometry — the window layer feeds `FrameEvents` from the
+  window's `finger_down_positions` in the shared `run`): the finger-
+  captured halves + the two 64×64 corner icons, 8px margin (the plan's
+  "48–64 dp" band; the hit tests + the draw share the window's pixel
+  space by construction). The fullscreen icon's action is `Window::
+  set_fullscreen`'s **record half** (the winit call is
+  `cfg(not(target_os = "android"))`-gated in `th-render` — the
+  platform activity window owns the fullscreen surface; the record
+  drives the bookkeeping).
+- **Application id (08b post-review, orchestrator-directed):** the
+  first pass kept the plan's "the package id stays" note and shipped
+  under the ADULT identity `info.vittorioromeo.openhexagon` — the 08b
+  brief forbids the adult APK identity. `[package.metadata.android]
+  package` is now **`com.gtrak.tinyhexagon`** (the badging
+  `package: name=`; the manifest's `android:label` stays
+  `tinyhexagon` — 03's rename); the debug APK was REBUILT +
+  re-verified (the Evidence bullet). The 03 "live keystore identity"
+  exception is void with the id change — see the keystore half of the
+  tools bullet; the §03 entries' "package id stays" / keystore notes
+  are superseded by this section (the §03 lines are now updated +
+  cross-referenced in place — the review fixes below).
+- Review fixes (post-PASS, orchestrator-directed — the 08b final
+  pass): (1) the versioned `CONTENT_MARKER` above (the
+  blocking-in-practice P2 — the bare `marker.exists()` skip check left
+  a stale `_RELEASE` after an app update); (2) the `th-android`
+  Cargo.toml's stale `.filelist` comments aligned to the actual
+  `oh.filelist`; (3) the `package-android.sh` manual check is
+  level-agnostic ("the stage-0 level" — survives the 09-taste journey
+  merge); (4) `release.yml`'s keystore-never-committed line clarified
+  (a STORE key never; the committed fixed-password
+  `tools/android/tinyhexagon-release.keystore` self-distribution key
+  is the documented exception); (5) the §03 stale package-id +
+  keystore lines updated + cross-referenced here; (6) the evidence
+  refreshed — `host-gate.log` carries the `test result:` aggregate
+  (TOTAL 567 passed / 0 failed), `check-android.log` is the clean
+  re-run (both `Checking th-app` + `Checking th-android` after
+  removing both crates' aarch64 artifacts/fingerprints/incremental
+  state), the debug APK REBUILT (the marker change moved the `.so` —
+  `T android_main` @ 0x4dc41c) + re-verified (`com.gtrak.tinyhexagon`
+  badging unchanged). Re-ran: host gate 567/0, `check-android.sh`
+  exit 0.
+- tools: `tools/check-android.sh` is now `cargo check -p th-app -p
+  th-android --target aarch64-linux-android` (the tiny runtime's
+  android entry + the cdylib's `android_main`; the NDK r27c pin + the
+  self-installing rustup target unchanged) — `ci.yml`'s android job
+  header comment updated to match (comment-only; the job runs the same
+  script; the workflow behaviour is 08c's lane). `tools/
+  package-android.sh` unchanged except the tail "MANUAL checks" list
+  reworded to the tiny game (stage-0 meadow, the synth/SFX fallback,
+  the icon taps, the no-persistence relaunch, the logcat tag) — the
+  release APK path (signing, the 16KB-page `RUSTFLAGS`,
+  `tinyhexagon-<tag>-android-arm64-v8a.apk`) + the workflow renames are
+  08c. The self-distribution keystore was RE-IDENTIFIED with the
+  product (the application-id bullet): `tools/android/tinyhexagon-
+  release.keystore` (regenerated — alias `tinyhexagon`, fixed password
+  `tinyhexagon`, `CN=TinyHexagon (self-distribution), OU=Rust port,
+  O=TinyHexagon`; the old `openhexagon-release.keystore` deleted from
+  the tree — the new id has no prior installs, so a fresh signing
+  identity costs no update continuity); `package-android.sh`'s
+  `KEYSTORE` / `KEYSTORE_PASS` / alias / DN + `release.yml`'s
+  keystore-path comment (comment-only) follow.
+- Evidence (host, 2026-10-19): `bash tools/check-android.sh` **exit 0**;
+  the REBUILT debug APK `target/debug/apk/tinyhexagon.apk` (`cargo apk
+  build --manifest-path crates/th-android/Cargo.toml --target
+  aarch64-linux-android` AFTER the application-id change; the staging
+  step: 232 asset files + `oh.filelist`; cargo-apk 0.10's auto
+  debug-keystore signing, `apksigner verify` verified): `aapt dump
+  badging` → **package `com.gtrak.tinyhexagon`** v0.1.0 (the first
+  pass's badging carried the adult `info.vittorioromeo.openhexagon`
+  id — the fix above), `sdkVersion:'28'`, `targetSdkVersion:'34'`,
+  `launchable-activity: android.app.NativeActivity`,
+  `native-code: 'arm64-v8a'`; `aapt dump xmltree` → `A:
+  package="com.gtrak.tinyhexagon"` + `android:label="tinyhexagon"`;
+  contents → `lib/arm64-v8a/libth_android.so` + 233 `assets/` entries
+  (160 `Packs/`, **10 `Packs/tiny/`** — the 06 pack's levels/scripts/
+  styles are IN the APK) + `assets/oh.filelist` (the extractor's
+  source); `llvm-nm -D` → **`T android_main`** exported (the
+  NativeActivity's dlsym target); the debug .so's 4KB ELF LOAD
+  alignment is expected (the 16KB alignment is the release script's
+  `RUSTFLAGS` half). Logs: `.agents/evidence/08b/` (`check-android.log`,
+  `debug-apk-build.log` = the rebuild, `host-gate.log`,
+  `apk-verification.txt` = the rebuilt APK's). Host gate **567 passed
+  / 0 failed** (baseline — the new code is android-gated; the fix pass
+  is metadata/comment-only: `check-android.sh` + `cargo fmt --check`
+  re-ran green after it).
+- Device gap (the exact residual): `adb devices` empty on this host —
+  the install/boot/touch/audio/rotation smoke is the
+  `package-android.sh` tail's documented MANUAL list (08c/09 on a
+  device-bearing machine); the 05b parked on-device AAudio
+  confirmation stays open with it. No release APK, no workflow edits
+  beyond the comment, no web/packaging work (08c's lanes).
 
 ### 09 — tuning/docs (pending)
 

@@ -23,7 +23,7 @@
 # Signing: cargo-apk refuses an UNSIGNED release build (the `dev` profile
 # gets the auto debug keystore, `release` must name one). This script
 # owns a project SELF-DISTRIBUTION keystore at
-# tools/android/openhexagon-release.keystore (generated with keytool on
+# tools/android/tinyhexagon-release.keystore (generated with keytool on
 # first use, fixed password below — NOT a store-distribution key: a real
 # store release must bring its own keystore + CARGO_APK_RELEASE_KEYSTORE).
 #
@@ -69,17 +69,17 @@ fi
 # ----------------------------------------------------------------------
 # The self-distribution release keystore (see the header). keytool ships
 # with the JDK the SDK tooling requires (Java 25 here).
-KEYSTORE="tools/android/openhexagon-release.keystore"
-KEYSTORE_PASS="openhexagon"
+KEYSTORE="tools/android/tinyhexagon-release.keystore"
+KEYSTORE_PASS="tinyhexagon"
 if [ ! -f "$KEYSTORE" ]; then
     echo "Generating the self-distribution release keystore: $KEYSTORE"
     mkdir -p tools/android
     keytool -genkeypair -v \
         -keystore "$KEYSTORE" \
-        -alias openhexagon \
+        -alias tinyhexagon \
         -keyalg RSA -keysize 2048 -validity 10000 \
         -storepass "$KEYSTORE_PASS" -keypass "$KEYSTORE_PASS" \
-        -dname "CN=Open Hexagon (self-distribution), OU=Rust port, O=SSVOpenHexagon, C=IT" >/dev/null
+        -dname "CN=TinyHexagon (self-distribution), OU=Rust port, O=TinyHexagon" >/dev/null
 fi
 # ABSOLUTE path: cargo-apk runs apksigner with cwd = target/<profile>/apk/
 # (a relative keystore path would 404 against that cwd).
@@ -207,11 +207,17 @@ echo
 echo "APK OK — $APK"
 echo "MANUAL checks (device host, the 25b spec's on-device list):"
 echo "  1. adb install -r $APK   (the first install: the SG4 extraction"
-echo "     runs — the [::mainClient] extracted N content files line)"
-echo "  2. launch — the menu renders (the GLES 3.0 context + the"
-echo "     translated internal shaders, SG2/SG3)"
-echo "  3. start a game — touch left/right screen half = CCW/CW"
-echo "     (the SG5 touch seam), a tap's behavior matches the C++"
+echo "     runs — the [::mainClient] extracted N content files line;"
+echo "     adb logcat -s tinyhexagon carries the engine + boot lines)"
+echo "  2. launch — the stage-0 level renders (the GLES 3.0"
+echo "     context + the translated internal shaders, SG2/SG3; the"
+echo "     th-synth soundtrack at boot — the fallback clock on a dead"
+echo "     audio device — + the th-audio SFX at volume 60)"
+echo "  3. touch left/right screen half = CCW/CW (the 07 touch halves);"
+echo "     tap the top-left icon = the stage reset, the top-right icon ="
+echo "     the fullscreen toggle (the window's record half)"
 echo "  4. quit + relaunch — the content marker skips the re-extraction"
+echo "     (the kid's run starts stage 0 again — no config/profile/"
+echo "     replay persistence)"
 echo "  5. rotate the device — the sensorLandscape activity keeps"
 echo "     landscape without a game-state loss (the config_changes)"

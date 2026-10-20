@@ -22,8 +22,9 @@ name: CI
 #                   is the only place it was visible). Never drop this
 #                   job.
 #   android       — the fast android-target check (tools/check-android.sh:
-#                   cargo check -p th-app --target aarch64-linux-android,
-#                   the NDK r27c pin). The slow, signing-dependent release
+#                   cargo check -p th-app -p th-android --target
+#                   aarch64-linux-android, the NDK r27c pin). The slow,
+#                   signing-dependent release
 #                   APK (tools/package-android.sh) is a RELEASE-workflow
 #                   job, not a per-push one.
 #   wasm          — the emscripten compile proof (tools/package-web.sh:

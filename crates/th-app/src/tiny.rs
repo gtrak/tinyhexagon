@@ -742,6 +742,169 @@ pub fn run_windowed(
 }
 
 // ---------------------------------------------------------------------
+// The Android surface (plan 002 issue 08b)
+//
+// `th-android`'s `android_main` over the shared [`run`]: the `_RELEASE`
+// content is already ON DISK in the app's internal data dir (the crate's
+// `extract_content` — the verified SG4 filelist-driven extraction), and
+// this is the boot (the `tiny_web` emscripten boot's android twin): the
+// kid composition over the internal dir (assets + `load_and_reapply`
+// with `DesktopModeSource::Fixed(zero)` — the plan's Android
+// desktop-mode note — + the kid overrides), the real `th-audio` SFX at
+// the gentle volume (a failed AAudio/oboe sink open degrades to the
+// headless device — logged, never a panic, the `th-audio` contract),
+// the `th-synth` soundtrack started at boot (oboe/AAudio — `start()`
+//'s `Err` arm degrades to the fallback clock, never a panic), the
+// winit android event loop (the `AndroidApp`-bound builder —
+// `EventLoopBuilderExtAndroid`) and the `Window::create_android` window
+// (the EGL/GLES context materializes on the first `resumed` — the
+// `th-render` android GL note). The 07 touch halves + the two 64×64
+// corner icons ride the shared frame loop (the window's
+// `finger_down_positions` feed; the fullscreen icon's action is the
+// window's record half — the platform activity window owns the
+// surface). No IME / no text / no config-profile-replay writes (the
+// kid's in-memory config, the 02c1-retired persistence).
+// ---------------------------------------------------------------------
+
+/// The Android boot (the shared tiny entry's android half — plan 002
+/// issue 08b): see the section docs above. `base` is the app's internal
+/// data dir (the extracted `_RELEASE` content — `th-android`'s
+/// `android_main` extracts + chdirs before calling this). Every boot
+/// failure is logged (logcat through the `th-android` sink + the
+/// composition's own `eprintln!` lines) and returns without panicking
+/// (the activity's main-loop thread stays alive — the platform keeps
+/// the (blank) activity, the C++'s no-crash-on-failed-boot posture).
+#[cfg(target_os = "android")]
+use winit::platform::android::EventLoopBuilderExtAndroid;
+
+#[cfg(target_os = "android")]
+pub fn tiny_android(app: winit::platform::android::activity::AndroidApp) {
+    let base = match app.internal_data_path() {
+        Some(dir) => dir,
+        None => {
+            eprintln!("[::mainClient] AndroidApp::internal_data_path is None (activity destroyed)");
+            return;
+        }
+    };
+
+    // The assets (the kid's android run is windowed — the activity
+    // window IS the window; `headless = false`, `levels_only = false` —
+    // the `_RELEASE` tree on the internal dir's disk, the C++'s
+    // `HGAssets{nullptr, false}` no-workshop shape: the 02c3-retired
+    // workshop seam's discovery half is gone).
+    let assets = match th_assets::Assets::new(&base, false, false) {
+        Ok(a) => Arc::new(a),
+        Err(e) => {
+            eprintln!("[FATAL ERROR] Asset loading failed: {}", e.reason);
+            th_game::log_sink::emit_log("android", &format!("asset loading failed: {}", e.reason));
+            return;
+        }
+    };
+
+    // The kid's config: `Config::default()` → `load_and_reapply` (the C++
+    // `mainClient`'s load + reapply ONCE) → the kid overrides (they win
+    // over the file's values). The plan's Android desktop-mode note:
+    // `Fixed(zero)` — winit's monitor API exists only inside a RUNNING
+    // event loop and the activity's loop is consumed by the game's own
+    // `run` (a probe here would consume it); inert in practice (both
+    // auto-resolution flags default false and the platform window is
+    // screen-sized independently of the config values). Never written
+    // back (no config / profile / replay persistence — the kid's
+    // in-memory config).
+    let mut config = th_config::Config::default();
+    if let Err(e) = crate::lifecycle::load_and_reapply(
+        &mut config,
+        &base,
+        &[],
+        crate::lifecycle::DesktopModeSource::Fixed(th_render::VideoMode::new(0, 0)),
+    ) {
+        eprintln!("[::mainClient] config load failed: {e}");
+        return;
+    }
+    let config = kid_config(config);
+
+    // The SFX at the gentle volume (the plan's "set a gentle sound
+    // volume" — the SFML 0..=100 units; the synth's master gain stays
+    // independent). The rodio/oboe output device opens eagerly; a
+    // failed open (a dead AAudio device) degrades to the headless
+    // device — every SFX no-ops while the object state stays correct
+    // (the `th-audio` contract: `Audio::new` never panics; the failure
+    // is logged for logcat).
+    let audio = Arc::new(th_audio::Audio::new(assets.clone()));
+    audio.set_sound_volume(60.0);
+    // The soundtrack (05a: the non-emscripten boot attempt — live on
+    // oboe/AAudio (API 28+ → AAudio, the 05b source-verified note);
+    // a stream failure degrades to the fallback clock — `BeatView`
+    // keeps advancing, never a panic).
+    let music = th_synth::MusicDirector::start();
+
+    // The winit android event loop (the `AndroidApp` from `android_main`
+    // — MUST be created before any winit window / GL work; the platform
+    // `ANativeWindow` exists only between `InitWindow` and
+    // `TerminateWindow`, so the window + the EGL context materialize on
+    // the first `resumed` — the `th-render` android GL note).
+    let mut builder = winit::event_loop::EventLoop::<()>::with_user_event();
+    builder.with_android_app(app);
+    let event_loop = match builder.build() {
+        Ok(el) => el,
+        Err(e) => {
+            eprintln!("[::mainClient] winit event loop build failed: {e}");
+            return;
+        }
+    };
+
+    // The activity's window (the C++ `main.cpp:297-332` setters over the
+    // platform window — the android platform window is screen-sized;
+    // the CONFIG logical size drives the logical members + the
+    // touch-half split, the framebuffer size comes from the native
+    // window on GL init — the `th-render` android note). The C++
+    // `recreateWindow` (GameWindow.hpp:89-93): the render window is
+    // sized `width * pixelMult × height * pixelMult`.
+    let logical_w = config.get_width().max(1) as f32;
+    let logical_h = config.get_height().max(1) as f32;
+    let pixel_mult = config.get_pixel_multiplier() as f32;
+    let physical_w = (logical_w * pixel_mult) as u32;
+    let physical_h = (logical_h * pixel_mult) as u32;
+    // The activity has no visible title (NoActionBar.Fullscreen theme);
+    // the title feeds the window's bookkeeping only (the kid's product
+    // name — the C++'s adult title string was the adult product's
+    // identity, 03's rename).
+    let mut window = th_render::window::Window::create_android(
+        event_loop,
+        physical_w.max(1),
+        physical_h.max(1),
+        "tinyhexagon",
+    );
+    // Restore the logical size members (the C++ `setSize(logical)`).
+    window.set_size(logical_w as u32, logical_h as u32);
+    // The C++ main.cpp:305-310 setters (in the C++ order): the android
+    // consumption halves are the documented record no-ops (the platform
+    // window owns the surface — the `th-render` window docs); the
+    // antialiasing level + vsync are APPLIED at the first `resumed`'s GL
+    // materialization (`ensure_android_gl` → `create_android_parts`).
+    window.set_pixel_mult(pixel_mult);
+    window.set_fullscreen(config.get_fullscreen());
+    window.set_antialiasing_level(config.get_antialiasing_level());
+    window.set_vsync(config.get_vsync());
+    window.set_fps_limited(config.get_limit_fps());
+    window.set_max_fps(config.get_max_fps() as f32);
+    // The C++ main.cpp:312-328 icon half (the launcher icon is the APK
+    // manifest's; on the android platform window the set is a no-op —
+    // the load mirrors the C++'s load-failure-tolerant shape).
+    if let Ok(icon) = th_render::Image::load_png(&base.join("Assets/icon.png")) {
+        window.set_icon(&icon);
+    }
+
+    // The shared loop (plan loop steps 1–9): the touch halves + the
+    // corner icons (the `FrameEvents` fed from the window's
+    // `finger_down_positions`; the fullscreen icon's toggle is the
+    // window's record half — the platform activity window is already
+    // the fullscreen surface), the bump / journey / beat / SFX, the
+    // bridge draw + the icon pass, the swap.
+    run(window, assets, base, config, audio, music, None);
+}
+
+// ---------------------------------------------------------------------
 // The web (emscripten) surface (plan 002 issue 08a)
 //
 // `th-web`'s entry over the shared [`run`]: the boot (the 07 composition

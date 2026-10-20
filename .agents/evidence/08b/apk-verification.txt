@@ -1,0 +1,29 @@
+== aapt dump badging (target/debug/apk/tinyhexagon.apk — rebuilt after the 08b review fixes: versioned content marker)
+package: name='com.gtrak.tinyhexagon' versionCode='16777472' versionName='0.1.0' platformBuildVersionName='14' platformBuildVersionCode='34' compileSdkVersion='34' compileSdkVersionCodename='14'
+sdkVersion:'28'
+targetSdkVersion:'34'
+launchable-activity: name='android.app.NativeActivity'  label='' icon=''
+native-code: 'arm64-v8a'
+
+== manifest (aapt dump xmltree)
+    A: package="com.gtrak.tinyhexagon" (Raw: "com.gtrak.tinyhexagon")
+      A: android:label(0x01010001)="tinyhexagon" (Raw: "tinyhexagon")
+
+== APK contents (lib + manifest)
+     2360  1980-01-01 00:00   AndroidManifest.xml
+156849768  1980-01-01 00:00   lib/arm64-v8a/libth_android.so
+  1794776  1980-01-01 00:00   lib/arm64-v8a/libc++_shared.so
+asset entries: 233
+Packs/ entries: 160
+Packs/tiny/ entries: 10
+
+== android_main symbol (llvm-nm -D libth_android.so)
+00000000004dc41c T android_main
+
+== apksigner verify
+signature: verified (debug keystore)
+
+== release keystore (tools/android/tinyhexagon-release.keystore, 08b identity)
+
+tinyhexagon, Oct 19, 2026, PrivateKeyEntry, 
+Certificate fingerprint (SHA-256): 43:A8:72:F8:A9:64:C3:33:2A:86:47:05:D6:9A:F1:44:07:1B:BD:ED:A1:BA:FD:4D:00:0D:3F:C8:CF:8D:0A:64

@@ -1,6 +1,6 @@
 [package]
 name = "th-android"
-description = "The Android (aarch64) entry crate (plan 002): stubbed by issue 02a (the adult android_main entry retired with th-app's windowed front-end) — the cdylib target + the cargo-apk packaging metadata are kept for Issue 08, which lands the real Android entry over the tiny runtime"
+description = "The Android (aarch64) entry crate (plan 002 issue 08b): the android_main native-activity entry over the shared th-app tiny runtime — the verified _RELEASE asset extraction into the app's internal data dir + the cargo-apk packaging metadata"
 version.workspace = true
 edition.workspace = true
 
@@ -18,7 +18,12 @@ edition.workspace = true
 # 2.1.7 identity lives in the label / the window title, not the APK
 # identity: cargo-apk 0.10 forbids TOML overrides of both).
 [package.metadata.android]
-package = "info.vittorioromeo.openhexagon"
+# The APK's application id (the badging `package: name=`): the fork's own
+# identity — the adult `info.vittorioromeo.openhexagon` id (and its
+# installed app data) is retired with the adult app; the new id installs
+# the tiny APK as its own application (08b, orchestrator-directed —
+# superseding the plan's "the package id stays" note).
+package = "com.gtrak.tinyhexagon"
 # The APK file name (default: the package name).
 apk_name = "tinyhexagon"
 # The ABI (the 25b spec: arm64-v8a only — no 32-bit armv7 / x86 halves).
@@ -29,11 +34,11 @@ build_targets = ["aarch64-linux-android"]
 # Smoke fix (issue 25, on-device): `AAssetManager_openDir("")` returns an
 # EMPTY root listing on the emulator (the classic NDK root-enum quirk), so
 # the extractor no longer enumerates directories at all — it reads the
-# packaging-generated `.filelist` (every assets path, one per line,
+# packaging-generated `oh.filelist` (every assets path, one per line,
 # produced by tools/package-android.sh into this staging dir). The
-# staging copy (never the tracked `_RELEASE/`) also carries `.filelist`;
-# a bare `cargo apk build` without the script stages nothing (empty or
-# stale dir) — the script is the canonical build path.
+# staging copy (never the tracked `_RELEASE/`) also carries
+# `oh.filelist`; a bare `cargo apk build` without the script stages
+# nothing (empty or stale dir) — the script is the canonical build path.
 assets = "../../target/th-apk-assets"
 
 # SDK range: minSdk 28 / target 34 — the NDK's API-28 clang target
@@ -69,12 +74,35 @@ orientation = "sensorLandscape"
 config_changes = "orientation|keyboardHidden|keyboard|screenSize|screenLayout|smallestScreenSize|uiMode"
 exported = true
 
+[dependencies]
+# The tiny runtime the entry boots (plan 002 issue 08b): `android_main`
+# installs the logcat sink + extracts the APK content into the app's
+# internal data dir (the verified SG4 glue, `src/android.rs`), then hands
+# the `AndroidApp` to `th_app::tiny::tiny_android` — the shared tiny
+# boot (assets / config / audio / synth / winit event loop / window /
+# the frame loop), the `tiny_web` emscripten boot's android twin.
+th-app = { path = "../th-app" }
+# The engine-log sink install (`src/android.rs`'s `__android_log_write`
+# logcat route — the engine's `[channel]` lines + the boot diagnostics;
+# th-app carries th-game, but the sink's FFI call names the crate
+# directly).
+th-game = { path = "../th-game" }
+
+[target.'cfg(target_os = "android")'.dependencies]
+# The entry only exists on the Android target (the `android_main` symbol +
+# the winit android event-loop module are `target_os = "android"`-gated);
+# on every other target this package builds to an empty cdylib so the
+# desktop gate (`cargo build/clippy/test --workspace`) stays green.
+winit = { version = "0.30", features = ["android-native-activity"] }
+# The APK asset extraction (`src/android.rs::extract_content`) — the
+# `AAssetManager` open/read over the packaging-generated `oh.filelist`.
+# `0.9` is already in the lockfile (winit's `android-activity` dependency)
+# — no version change; winit's `AndroidApp::asset_manager()` returns this
+# crate's `AssetManager` directly.
+ndk = "0.9"
+
 [lib]
 # The cdylib the APK loads (`libth_android.so` in `lib/arm64-v8a/`); the
 # `android.app.lib_name` meta-data cargo-apk writes is this lib name.
-# Issue 02a: the entry (`android_main`) is stubbed out — the crate builds
-# to an empty cdylib on every target so the desktop gate stays green;
-# Issue 08 lands the real entry (and re-adds the `th-app` / `winit`
-# target dependencies it needs).
 name = "th_android"
 crate-type = ["cdylib"]

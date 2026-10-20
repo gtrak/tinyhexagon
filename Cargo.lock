@@ -2602,6 +2602,12 @@ dependencies = [
 [[package]]
 name = "th-android"
 version = "0.1.0"
+dependencies = [
+ "ndk 0.9.0",
+ "th-app",
+ "th-game",
+ "winit",
+]
 
 [[package]]
 name = "th-app"
@@ -2621,6 +2627,7 @@ dependencies = [
  "th-rng",
  "th-synth",
  "web-sys",
+ "winit",
 ]
 
 [[package]]
