@@ -114,3 +114,31 @@ The new `journey` style:
    the new page's audio (the first-gesture unlock) and the fallback pulse.
 6. 08b/08c are still separate landings; this pass does not touch Android
    or packaging.
+
+## Taste pass 2 (09-taste-2) — original styles + chiptune DnB + wasm audio
+
+Commit 6780a935. Operator feedback: the invented dynamic hue looked wonky,
+the ambient score didn't read as music, and the web page was silent.
+
+- **Arena = the original upstream levels in order**: 10 blocks x 2 stages
+  (pointless, flatteringshape, seconddimension, apeirogon, commando(4),
+  euclideanpc(8), pi(24), labyrinth(3), goldenratio, hypercube
+  acceleradiant). The app swaps the real upstream `StyleData` live and
+  `set_sides`; the style's own hue/pulse wins (the app's beat-hue override
+  is removed; `apply_music_pulse` only bumps the central polygon).
+  Desktop evidence: stage2 shows upstream flatteringshape (green/gray
+  bevel) at 6 sides — `.agents/evidence/09/stage2-flatteringshape.png`.
+- **Music = step-sequenced chiptune drum-and-bass**: 3x Heartbeat drums
+  (kick/snare/hat 16-step bitmasks that densify), BassPulse syncopated
+  line over the bar chord, PluckSaw A-minor motif, pad/bell/sub on the
+  chord (I-vi-IV-V, i-VI-III-VII dark half), BPM 150->174.
+- **Wasm audio verified fixed**: gesture-time start (`resumeAudio` ->
+  `MusicDirector::start_on_gesture` inside the activation, thread_local
+  `Rc<RefCell<MusicDirector>>`) instead of the flag-consumed-next-rAF
+  path. Fresh emsdk build + probe on a REAL page:
+  `audio=live;energy=0.0403` (the synth graph produces output), th-audio
+  unlocked on first input, no console errors. Evidence:
+  `.agents/evidence/09/web-stage1-audio-live.png`, `web-status-line.txt`.
+  (The old web-probe.mjs's "booted NO / user activation no" lines parse
+  the ADULT status format — the new `tools/web-tiny-probe.mjs` from 08c
+  replaces it; the Module.status read above is authoritative.)

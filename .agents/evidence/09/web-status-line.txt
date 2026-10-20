@@ -1,0 +1,1 @@
+tinyhexagon web: booted=true;ticks=2508;stage=1;started=true;angle=0.5216;audio=live;energy=0.0403;help=auto
