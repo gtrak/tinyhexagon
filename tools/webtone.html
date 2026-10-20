@@ -19,6 +19,34 @@
     <button id="go">start the 440 Hz sine (cpal's emscripten host)</button>
     <div id="out"></div>
     <script>
+      // 09 diagnostics: record the TRUE content peak of every buffer the
+      // host starts (same instrumentation the game page carries).
+      window.__audioStats = { buffers: 0, maxPeak: 0.0 };
+      (() => {
+        if (!window.AudioBufferSourceNode) return;
+        const origStart = window.AudioBufferSourceNode.prototype.start;
+        const wrap = function (...args) {
+          try {
+            if (this.buffer) {
+              window.__audioStats.buffers++;
+              for (let ch = 0; ch < this.buffer.numberOfChannels; ch++) {
+                const d = this.buffer.getChannelData(ch);
+                for (let i = 0; i < d.length; i += 8) {
+                  const a = Math.abs(d[i]);
+                  if (a > window.__audioStats.maxPeak) window.__audioStats.maxPeak = a;
+                }
+              }
+            }
+          } catch (err) { /* diagnostics only */ }
+          return origStart.apply(this, args);
+        };
+        window.AudioBufferSourceNode.prototype.start = wrap;
+        if (window.AudioBufferSourceNode.prototype.startWithWhen) {
+          window.AudioBufferSourceNode.prototype.startWithWhen = wrap;
+        }
+      })();
+    </script>
+    <script>
       // The pinned wasm-bindgen 0.2.129 CLI's emscripten glue emits
       // `new lAudioContext` (its vendor-prefixed alias) but drops the
       // alias's definition — the SAME shim the game page carries (08a).
@@ -29,13 +57,20 @@
     <script>
       const out = (t) => { document.getElementById("out").textContent += t + "\n"; };
       let mod = null;
+      let theCtx = null;
       document.getElementById("go").onclick = async () => {
         if (!mod) {
+          theCtx = new (window.AudioContext || window.webkitAudioContext)();
+          out(`probe ctx: state=${theCtx.state} rate=${theCtx.sampleRate}`);
           const m = await import("./webtone.js");
           mod = await m.default();
           out("module booted");
         }
         out(mod.startTone());
+        setInterval(() => {
+          const a = window.__audioStats;
+          if (a) out(`buffers=${a.buffers} maxPeak=${a.maxPeak.toFixed(4)} ctx=${theCtx ? theCtx.state : "?"}`);
+        }, 2000);
       };
     </script>
   </body>

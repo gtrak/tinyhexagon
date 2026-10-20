@@ -29,6 +29,19 @@ pub fn start_tone() -> String {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     use cpal::{SampleRate, StreamConfig};
 
+    console_log(&format!(
+        "webtone: ua={}",
+        web_sys::window().map(|w| w.navigator().user_agent().unwrap_or_default()).unwrap_or_default()
+    ));
+    // Surface the constructor's REAL exception (the host's availability
+    // probe discards it): create one directly and log the DOMException.
+    match js_sys::eval(
+        "(() => { try { return String(new (window.AudioContext||window.webkitAudioContext)().state) } catch (e) { return 'THREW: ' + (e && e.name) + ': ' + (e && e.message) } })()",
+    ) {
+        Ok(v) => console_log(&format!("webtone: direct ctx probe: {:?}", v)),
+        Err(e) => console_log(&format!("webtone: direct ctx probe eval failed: {:?}", e)),
+    }
+
     let host = cpal::default_host();
     let Some(device) = host.default_output_device() else {
         let m = "webtone: no default output device".to_string();
@@ -43,9 +56,18 @@ pub fn start_tone() -> String {
     console_log(&format!("webtone: building stream ({config:?})"));
 
     let mut phase: f32 = 0.0;
+    let mut ticks: u32 = 0;
     let built = device.build_output_stream(
         &config,
         move |data: &mut [f32], _| {
+            // One line per ~0.5 s of callbacks: the console must show
+            // these CONTINUING (a stalled log = the timer loop died;
+            // continuing = the loop renders but the playback wiring is
+            // the thief).
+            ticks += 1;
+            if ticks % 10 == 1 {
+                console_log(&format!("webtone: callback tick {ticks} ({} frames)", data.len() / 2));
+            }
             for frame in data.chunks_mut(2) {
                 for s in frame.iter_mut() {
                     *s = 0.4 * phase.sin();
