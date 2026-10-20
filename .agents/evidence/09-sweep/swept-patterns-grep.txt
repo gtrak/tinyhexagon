@@ -1,0 +1,11 @@
+### 1. dead web-IME identifiers in th-render (expect: none)
+CLEAN
+
+### 2. #ime references outside the tiny shell's own contract line (expect: only index.html:5)
+crates/th-web/site/index.html:5:  4; the page is text-free) + the first-gesture audio-unlock wiring. No IME / `#ime`, no text entry, no IDBFS /
+
+### 3. retired web-probe.mjs citations in source/tools/workflows (expect: none; archive + plan docs are history)
+tools/web-tiny-probe.mjs:35:// launch / connect reuses tools/web-probe.mjs's (retired in 08c)
+
+### 4. web-stub / oh-web in source, tools, workflows, th-web (expect: none)
+CLEAN

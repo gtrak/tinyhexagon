@@ -1,0 +1,21 @@
+== baseline (pre-change, at bb300047)
+== cargo fmt --all -- --check
+GATE_EXIT=0
+== cargo build --workspace
+GATE_EXIT=0
+== cargo clippy --workspace --all-targets -- -D warnings
+GATE_EXIT=0
+== cargo test --workspace
+GATE_EXIT=0
+
+== post-change
+== cargo fmt --all -- --check
+GATE_EXIT=0
+== cargo build --workspace
+GATE_EXIT=0
+== cargo clippy --workspace --all-targets -- -D warnings
+GATE_EXIT=0
+== cargo test --workspace
+GATE_EXIT=0
+
+post gate test totals: passed=575 failed=0 ignored=1

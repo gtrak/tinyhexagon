@@ -663,132 +663,9 @@ impl WebPointerFeed {
     }
 }
 
-// ---------------------------------------------------------------------------
-// issue 046 (F32) — the web's IME (the hidden-but-focusable `#ime` input)
-// ---------------------------------------------------------------------------
-
-/// issue 046 (F32) — the IME text ROUTING machine: the hidden input's DOM
-/// events (`compositionstart` / `compositionend` / `input`) → the `char`s
-/// that become the game's `Event::TextEntered`s (the existing entered-text
-/// sink — the issue-025d chain — fed, never a second pipeline).
-///
-/// The four cases the port's `TextEntered` path must see (the task's
-/// "the four cases that decide this"):
-///
-/// * **printable text** — the `input` event's `data` (the phone's soft
-///   keyboard AND the desktop typing into the focused element);
-/// * **Backspace** — NOT a keypress: the `input` event with
-///   `inputType: deleteContentBackward` (and the `deleteContent*`
-///   siblings) routed as ONE unicode 8 — the port's `TextEntered(8)`
-///   `pop_back` arm (the C++'s second `TextEntered` handler, the dialog
-///   erase, MenuGame.cpp:509-516);
-/// * **Enter** — produces NO `input` event at all; it is NOT this
-///   machine's (the game's `KeyPressed(ENTER)` — the C++'s `okAction`
-///   bind, MenuGame.cpp:960 — CREATES the profile, the 025d/025f device
-///   flow's "Enter created the profile");
-/// * **composition** — `compositionstart` / `update` / `end` (a phone
-///   keyboard, an autocomplete, any CJK method): the INTERMEDIATE `input`
-///   events (the `insertCompositionText` inputType, fired DURING the
-///   composition) must not feed — the `compositionend`'s `data` is the
-///   commit and is fed EXACTLY ONCE (the double-commit guard below covers
-///   the browser that ALSO fires a final `input` carrying the same data
-///   after the `compositionend` — feeding both would double every
-///   character; a CANCELLED composition — the empty-`data` `end` — feeds
-///   nothing).
-///
-/// Pure + host-testable (no `web-sys`): the emscripten listeners (the
-/// `attach_web_ime_listeners` below) are the thin wrapper that hands it
-/// the DOM event's fields and pushes its chars as `TextEntered`s into the
-/// window's DOM→SFML event queue.
-pub struct WebImeFeed {
-    /// A composition is in flight (`compositionstart` seen, the
-    /// `compositionend` not yet): the `input` events are the intermediate
-    /// ones — suppressed (the `compositionend` is the commit's source).
-    composing: bool,
-    /// The last `compositionend`'s `data` (the single-shot double-commit
-    /// guard: a subsequent `input` carrying the SAME text is the same
-    /// commit the `end` already fed — a different event, the same text,
-    /// fed twice = doubled characters).
-    last_committed: Option<String>,
-}
-
-impl Default for WebImeFeed {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl WebImeFeed {
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            composing: false,
-            last_committed: None,
-        }
-    }
-
-    /// `compositionstart` — the composition's first `input` event is the
-    /// intermediate one (suppressed from here to the `compositionend`).
-    pub fn composition_start(&mut self) {
-        self.composing = true;
-    }
-
-    /// `compositionend` — the COMMIT: feed the `data`'s chars (a CJK
-    /// method / an autocomplete / a phone keyboard that composes); the
-    /// empty `data` (a CANCELLED composition — the Esc) feeds nothing.
-    #[must_use]
-    pub fn composition_end(&mut self, data: &str) -> Vec<char> {
-        self.composing = false;
-        if data.is_empty() {
-            self.last_committed = None;
-            return Vec::new();
-        }
-        self.last_committed = Some(data.to_string());
-        data.chars().collect()
-    }
-
-    /// `input` — the SOLE text path while the element is focused (the
-    /// keydown listener's `web_keydown_ime_policy` gate): the printable
-    /// `data` (the insertions) + the Backspace (the `deleteContent*`
-    /// inputTypes — ONE unicode 8 per event, the port's `pop_back` arm's
-    /// granularity: one deletion event, one pop).
-    #[must_use]
-    pub fn input(&mut self, input_type: &str, data: &str) -> Vec<char> {
-        // The composition's territory (the flag: a composition in flight;
-        // the inputType: the `insertCompositionText` final-commit event a
-        // browser fires AFTER the `compositionend` cleared the flag —
-        // that commit's data is the `end`'s, fed above, exactly once).
-        if self.composing || input_type == "insertCompositionText" {
-            return Vec::new();
-        }
-        // Backspace (the `deleteContentBackward` the task names + the
-        // `deleteContent*` siblings — a selected-range delete is ONE event
-        // too: one pop, the port's `pop_back` arm's granularity — under
-        // feeding is the safe side of the mismatch).
-        if input_type.starts_with("delete") {
-            self.last_committed = None;
-            return vec!['\u{8}'];
-        }
-        // An insertion (the `insertText` / `insertReplacementText` /
-        // `insertFromPaste` / `insertFromDrop` — and the `data`-less
-        // browser variants): the `data` is the text.
-        if data.is_empty() {
-            return Vec::new();
-        }
-        // The double-commit guard (the docs): the same text the
-        // `compositionend` JUST fed is the same commit — not a new one.
-        if Some(data) == self.last_committed.as_deref() {
-            self.last_committed = None;
-            return Vec::new();
-        }
-        self.last_committed = None;
-        data.chars().collect()
-    }
-}
-
-/// issue 046 (F32) — the `keydown`'s modifier / state fields (the
-/// `web_keydown_ime_policy`'s input bundle — the clippy 7-argument
-/// bound's: the `code` / `key` + these five + the IME gate):
+/// issue 32 — the `keydown`'s modifier / state fields (the
+/// `web_keydown_policy`'s input bundle — the clippy 7-argument
+/// bound's: the `code` / `key` + these five):
 /// the `KeyboardEvent`'s `ctrlKey` / `altKey` / `metaKey` / `repeat` /
 /// `isComposing`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -822,60 +699,32 @@ impl WebKeydownState {
     }
 }
 
-/// issue 046 (F32) — the `keydown`'s text policy (pure + host-testable —
+/// issue 32 — the `keydown`'s text policy (pure + host-testable —
 /// the emscripten keydown listener applies it): `(prevent_default, text)`.
 ///
 /// `text` = the char this keydown should push as the alongside
 /// `TextEntered` (the issue-32 keydown→`TextEntered` half — the C++
 /// `runEvents` polls SFML's `TextEntered` ALONGSIDE the `KeyPressed`;
 /// the winit fold's twin's paired-event suppression, the
-/// `RunHandler::window_event`'s `KeyboardInput` docs) — or `None`:
+/// `RunHandler::window_event`'s `KeyboardInput` docs) — or `None` when
+/// the key produces no text (the functional keys — the `key` "Enter" /
+/// "Escape" / "…" are WORDS, not chars — the modifier combos, the
+/// repeats: the issue-32 guards, byte-identical). The listener's
+/// `KeyPressed` / `KeyReleased` mapping halves are outside this policy
+/// (it covers the `TextEntered` + `preventDefault` halves only).
 ///
-/// * the key produces no text (the functional keys — the `key` "Enter" /
-///   "Escape" / "…" are WORDS, not chars — the modifier combos, the
-///   repeats: the issue-32 guards, byte-identical);
-/// * **the IME input is focused** (`ime_active` = `document.activeElement`
-///   is the `#ime` element): the DOUBLE-TYPING gate. With the hidden input
-///   focused the window STILL receives the `keydown` (it bubbles) — so the
-///   same character would arrive twice: once through the keydown's
-///   `TextEntered` and once through the browser's own insertion into the
-///   focused input (the `input` event the feed rides on). The keydown
-///   must push NO text (printable AND the Backspace's unicode-8 restore —
-///   the browser's deletion fires the `deleteContentBackward` `input`
-///   event instead) while the IME is focused: exactly ONE path per
-///   keypress. The game's keys (the Enter that CREATES the profile — the
-///   C++'s `okAction` bind's `KeyPressed(ENTER)`, the Escape, the
-///   navigation) still flow as `KeyPressed` / `KeyReleased` — the
-///   listener's mapping halves are UNCHANGED (this policy covers the
-///   `TextEntered` + `preventDefault` halves only).
-///
-/// `prevent_default` = the issue-32 `web_keydown_prevent_default` policy —
-/// EXCEPT `false` while the IME input is focused: the browser's own text
-/// editing (the char insertion / the backspace the `input` events' feed
-/// is) must RUN; a swallowed keydown inserts nothing and fires no
-/// `input` event (no text at all — the 041 class of a headless-looking
-/// path that is actually dead). The C++'s desktop behaviour is
-/// UNCHANGED: `#ime` exists only on the emscripten window, and when it
-/// is not focused (every non-text-entry state — the `soft_input.hide()`
-/// blur on the transition edge) `ime_active` is `false` and both halves
-/// behave exactly as issue 32.
+/// `prevent_default` = the issue-32 `web_keydown_prevent_default` policy
+/// (the page must not also scroll / zoom / move focus on a key the game
+/// consumes; the browser-reserved keys + a live composition stay the
+/// browser's).
 #[must_use]
-pub fn web_keydown_ime_policy(
-    code: &str,
-    key: &str,
-    state: &WebKeydownState,
-    ime_active: bool,
-) -> (bool, Option<char>) {
-    let prevent = if ime_active {
-        false
-    } else {
-        web_keydown_prevent_default(code, key, state.ctrl, state.meta, state.is_composing)
-    };
-    // The text half (the docs): the IME gate AND the issue-32 guards
-    // (the modifier combos / the repeat) close it — the `None` block;
-    // the single-char / Backspace arms below are the byte-identical
-    // issue-32 halves (reached only when none of the gates holds).
-    let text = if ime_active || state.ctrl || state.alt || state.meta || state.repeat {
+pub fn web_keydown_policy(code: &str, key: &str, state: &WebKeydownState) -> (bool, Option<char>) {
+    let prevent =
+        web_keydown_prevent_default(code, key, state.ctrl, state.meta, state.is_composing);
+    // The text half (the docs): the issue-32 guards (the modifier combos /
+    // the repeat) close it — the `None` block; the single-char / Backspace
+    // arms are the byte-identical issue-32 halves.
+    let text = if state.ctrl || state.alt || state.meta || state.repeat {
         None
     } else if key.chars().count() == 1 {
         key.chars().next()
@@ -1127,17 +976,6 @@ pub struct Window {
     #[cfg(target_os = "emscripten")]
     #[allow(dead_code)] // never read — the closures must outlive the registration
     dom_listeners: Vec<Closure<dyn FnMut(web_sys::Event)>>,
-    // issue 046 (F32) — the hidden-but-focusable IME input element
-    // (`#ime`) (the `web_ime_input_get_or_create` docs): the web
-    // `SoftInput` controller's (`th-app` `WebIme` — the 025f
-    // `ImeController`'s web twin) focus / blur target on the menu's
-    // `is_entering_text` transition edge (the `windowed::
-    // MenuSlotAdapter::refresh_input` docs — once per transition, never
-    // per frame). `None` = the headless fallback / no DOM (the
-    // controller's no-op arm; the desktop / Android windows never have
-    // one — their `SoftInput` arms are the no-op / the android-activity).
-    #[cfg(target_os = "emscripten")]
-    ime_input: Option<web_sys::HtmlInputElement>,
     // issue 046 (F33) — the fullscreen button's (`#fs`) click sink slot
     // (the `set_fullscreen_click_sink` docs): the `th-app`'s callback
     // (the config's `fullscreen` toggle + the browser Fullscreen API) —
@@ -1349,18 +1187,6 @@ impl Window {
             Some(canvas) => canvas,
             None => return base,
         };
-        // issue 046 (F32) — the hidden-but-focusable IME input (`#ime`)
-        // (the `web_ime_input_get` docs — 08a's get-only half): the
-        // phone's soft keyboard's focus target (a mobile browser raises
-        // it ONLY for a focused editable element) + its `input` /
-        // `compositionend` feed (the `attach_web_ime_listeners` below).
-        // `None` = the page declares no `#ime` (the 08a tiny shell's
-        // normal case — no text entry) or the no-DOM edge (the web
-        // `SoftInput` controller's no-op arm — the `th-app` `WebIme`'s
-        // `None` arm).
-        let ime: Option<web_sys::HtmlInputElement> = web_sys::window()
-            .and_then(|w| w.document())
-            .and_then(|d| web_ime_input_get(&d));
         // issue 046 (F33) — the fullscreen button (`#fs`) (the
         // `web_fs_button_get_or_create` docs): the config's `fullscreen`
         // value's web applier (the `th-app`'s click sink — the browser
@@ -1412,13 +1238,7 @@ impl Window {
         let queue: std::sync::Arc<std::cell::RefCell<Vec<Event>>> =
             std::sync::Arc::new(std::cell::RefCell::new(Vec::new()));
         let dom_listeners = {
-            let mut listeners = attach_web_listeners(&canvas, &queue, ime.as_ref());
-            // issue 046 (F32) — the IME input's feed listeners (the
-            // `compositionstart` / `compositionend` / `input` →
-            // `TextEntered` halves — the `attach_web_ime_listeners` docs).
-            if let Some(ime_el) = ime.as_ref() {
-                listeners.extend(attach_web_ime_listeners(ime_el, &queue));
-            }
+            let mut listeners = attach_web_listeners(&canvas, &queue);
             // issue 046 (F33) — the `#fs`'s click (the slot's callback —
             // the `set_fullscreen_click_sink`'s `th-app` half: the
             // config's `fullscreen` toggle + the browser Fullscreen API).
@@ -1475,10 +1295,6 @@ impl Window {
             gl,
             event_queue: Some(queue),
             dom_listeners,
-            // issue 046 (F32) — the IME input element (the `Window`
-            // field's docs): the web `SoftInput` controller's focus / blur
-            // target (the `web_ime_input` accessor below).
-            ime_input: ime,
             // issue 046 (F33) — the `#fs`'s click sink slot (the field's
             // docs).
             fullscreen_click_slot,
@@ -1636,8 +1452,6 @@ impl Window {
             event_queue: None,
             #[cfg(target_os = "emscripten")]
             dom_listeners: Vec::new(),
-            #[cfg(target_os = "emscripten")]
-            ime_input: None,
             #[cfg(target_os = "emscripten")]
             fullscreen_click_slot: None,
             #[cfg(target_os = "emscripten")]
@@ -2283,17 +2097,6 @@ impl Window {
     pub fn set_icon(&mut self, image: &crate::Image) {
         let _ = image;
         self.icon_set = true;
-    }
-
-    /// issue 046 (F32) — the page's hidden IME input element (the `#ime`
-    /// field's docs): the web `SoftInput` controller's focus / blur
-    /// target (the `th-app` `WebIme`'s `SoftInput::show` / `hide` ride
-    /// the menu's `is_entering_text` transition edge). `None` = the
-    /// headless fallback (no canvas / no DOM — the controller no-ops).
-    #[cfg(target_os = "emscripten")]
-    #[must_use]
-    pub fn web_ime_input(&self) -> Option<web_sys::HtmlInputElement> {
-        self.ime_input.clone()
     }
 
     /// issue 046 (F33, issue 055) — install the fullscreen button's
@@ -3352,11 +3155,6 @@ fn canvas_position(canvas: &web_sys::HtmlCanvasElement, client_x: f64, client_y:
 fn attach_web_listeners(
     canvas: &web_sys::HtmlCanvasElement,
     queue: &std::sync::Arc<std::cell::RefCell<Vec<Event>>>,
-    // issue 046 (F32) — the hidden-but-focusable IME input (`#ime`) when
-    // the page has a DOM (the keydown listener's `web_keydown_ime_policy`
-    // double-typing gate: `None` = the element is absent, the gate is
-    // inactive — the issue-32 behaviour byte-identical).
-    ime: Option<&web_sys::HtmlInputElement>,
 ) -> Vec<Closure<dyn FnMut(web_sys::Event)>> {
     let window = web_sys::window().expect("web window (attach is web-only)");
     let document = window
@@ -3383,28 +3181,14 @@ fn attach_web_listeners(
     // (29b3, the desktop fold's twin): SFML emits a `TextEntered` with
     // unicode 8 for Backspace (the C++'s dialog-input `pop_back` arm —
     // the erase, MenuGame.cpp:509-516); the DOM carries no `key` char
-    // for it, so it is restored from the physical `code`. issue 046
-    // (F32): BOTH the `TextEntered` half AND the `preventDefault` are
-    // gated on the IME input's focus (the `web_keydown_ime_policy` docs —
-    // the DOUBLE-TYPING gate: while `#ime` is focused its `input` event
-    // is the sole text path, and a swallowed keydown would insert
-    // nothing into the focused input and fire no `input` event at all);
-    // the `KeyPressed` / `KeyReleased` mapping halves (the Enter that
-    // CREATES the profile — the C++'s `okAction` bind — the Escape, the
-    // navigation) are UNCHANGED below.
+    // for it, so it is restored from the physical `code`. The
+    // `KeyPressed` / `KeyReleased` mapping halves below are UNCHANGED.
     let q = queue.clone();
-    let ime_el = ime.map(|el| el.clone());
     add_dom_listener(&window, "keydown", &mut listeners, move |e| {
         let Some(ke) = e.dyn_ref::<web_sys::KeyboardEvent>() else {
             return;
         };
-        // issue 046 (F32) — the double-typing gate's DOM half: the
-        // `#ime` element is the focused element (the `keydown` bubbles
-        // from it to the window — without the gate the same character
-        // would arrive twice: the keydown's `TextEntered` + the browser's
-        // own insertion's `input` event the feed rides on).
-        let ime_active = ime_el.as_ref().is_some_and(web_ime_is_active);
-        let (prevent, text) = web_keydown_ime_policy(
+        let (prevent, text) = web_keydown_policy(
             ke.code().as_str(),
             ke.key().as_str(),
             &WebKeydownState::new(
@@ -3414,7 +3198,6 @@ fn attach_web_listeners(
                 ke.repeat(),
                 ke.is_composing(),
             ),
-            ime_active,
         );
         if prevent {
             e.prevent_default(); // the page must not also scroll / zoom / move focus
@@ -3590,77 +3373,8 @@ fn attach_web_listeners(
     listeners
 }
 
-/// issue 046 (F32) — the hidden-but-focusable IME input element (`#ime`)
-/// — the phone's soft keyboard's target (a mobile browser raises the
-/// on-screen keyboard ONLY for a focused editable element; the canvas'
-/// `keydown` listener never gets one — the task's diagnosis):
-///
-/// * **hidden but FOCUSABLE** — off-screen (`position: fixed; left:
-///   -10000px`) + `opacity: 0`, NEVER `display: none` (browsers refuse to
-///   focus those);
-/// * the attribute contract (F32): `type="text"`, `inputmode="text"`,
-///   `autocapitalize="off"`, `autocomplete="off"`, `spellcheck="false"`,
-///   `enterkeyhint="done"` (the soft keyboard's commit key — the Enter
-///   that CREATES the profile, the C++'s `okAction` bind, the 025d/025f
-///   device flow) + a **16 px font** (a smaller font makes iOS zoom the
-///   page on focus — the operator's target is Android Chrome, where the
-///   floor is harmless);
-/// * **get-only** (plan 002 issue 08a — the 042/052 get-OR-CREATE
-///   retires with the shell it served): the tiny web shell has NO text
-///   entry, so it does not declare `#ime` and this returns `None` for
-///   it — the soft-input controller's `None` arm (the no-op). The
-///   attribute + style contract is still re-applied on a page-declared
-///   `#ime` (the Rust side is the single source of truth — the page's
-///   copy is the discoverability twin).
-///
-/// Returns `None` when the page declares no `#ime` (the tiny shell's
-/// normal case) or has no `document` at all (the no-DOM edge — the web
-/// `SoftInput` controller's no-op arm).
-#[cfg(target_os = "emscripten")]
-fn web_ime_input_get(document: &web_sys::Document) -> Option<web_sys::HtmlInputElement> {
-    // plan 002 issue 08a — GET-only (the 042/052 get-OR-CREATE retires
-    // with the shell it served): the tiny web shell (`th-web`'s
-    // `site/index.html`) has NO text entry (the 08 contract: "no IME,
-    // no `#ime`, no text entry"), so the page does not declare `#ime`
-    // and Rust no longer auto-creates the hidden input either (a DOM
-    // element the contract says must not exist). `th-web`'s shell is
-    // the only emscripten window consumer — a page that DOES declare
-    // `#ime` still gets the attribute / style contract (re-applied
-    // below) + the IME feed (the get half is kept).
-    let el = document
-        .get_element_by_id("ime")
-        .map(|el| el.unchecked_into::<web_sys::HtmlInputElement>())?;
-    // The attribute contract (the docs) — re-applied on the
-    // page-declared element (a stale / custom page is brought back to
-    // the contract). The typed setters (the `type` / `inputmode` /
-    // `autocomplete` / `spellcheck` web-sys exposes) + `set_attribute`
-    // for the two web-sys 0.3.106 has no typed setter for
-    // (`autocapitalize` / `enterkeyhint` — the same DOM attributes, the
-    // generic attribute route) + the `style` attribute (web-sys exposes
-    // the `style` declaration read-only — the attribute is the write
-    // route; the SAME string the committed shell's inline style
-    // carries).
-    el.set_type("text");
-    el.set_input_mode("text");
-    el.set_autocomplete("off");
-    el.set_spellcheck(false);
-    el.set_attribute("autocapitalize", "off").ok()?;
-    el.set_attribute("enterkeyhint", "done").ok()?;
-    // The style contract (the docs): off-screen (focusable — never
-    // `display: none`), invisible (`opacity: 0`), the 16 px floor (the
-    // iOS no-zoom; the Android target is unaffected — the floor is the
-    // web's minimum-tappable-font convention, not an Android behaviour).
-    el.set_attribute(
-        "style",
-        "position: fixed; left: -10000px; top: 0; opacity: 0; font-size: 16px;",
-    )
-    .ok()?;
-    Some(el)
-}
-
 /// issue 046 (F33, relocated by issue 055) — the fullscreen button's
-/// (`#fs`) get-or-create (the `Window` field's twin's `#ime` half — the
-/// `web_ime_input_get_or_create` docs): the config's `fullscreen` value's
+/// (`#fs`) get-or-create: the config's `fullscreen` value's
 /// web applier's button (the `th-app`'s click sink's target — the
 /// `set_fullscreen_click_sink` docs).
 ///
@@ -3683,8 +3397,8 @@ fn web_ime_input_get(document: &web_sys::Document) -> Option<web_sys::HtmlInputE
 /// game's own top-right buttons, a DOM button over them would swallow
 /// their touches — the exact failure 046 avoided). A found element (a
 /// custom page that DOES declare `#fs`) is left AS-IS (its styling is
-/// the page stylesheet's; unlike the `#ime`'s text contract, a stale
-/// `#fs` cannot corrupt the input, only look different).
+/// the page stylesheet's; a stale `#fs` cannot corrupt the game, only
+/// look different).
 #[cfg(target_os = "emscripten")]
 fn web_fs_button_get_or_create(document: &web_sys::Document) -> Option<web_sys::Element> {
     // 09 operator pass — the `#fs` DOM overlay button is GONE: the kid
@@ -3702,89 +3416,6 @@ fn web_fs_button_get_or_create(document: &web_sys::Document) -> Option<web_sys::
     // cleanup pass if the inert seam ever annoys.
     let _ = document;
     None
-}
-
-/// issue 046 (F32) — the keydown gate's DOM half: the `#ime` element is
-/// the page's focused element (`document.activeElement`). The `is_same_node`
-/// comparison (NOT `==`): the web-sys stable API's object identity — the
-/// DOM's node identity, not a structural compare (the DOM's `isSameNode`
-/// takes a NULLABLE node — web-sys's `Option<&Node>` signature).
-#[cfg(target_os = "emscripten")]
-fn web_ime_is_active(ime: &web_sys::HtmlInputElement) -> bool {
-    web_sys::window()
-        .and_then(|w| w.document())
-        .and_then(|d| d.active_element())
-        .is_some_and(|active| web_sys::Node::is_same_node(&active, Some(ime)))
-}
-
-/// issue 046 (F32) — the IME input's DOM → `Event::TextEntered` listeners
-/// (the `WebImeFeed` docs — the four cases): `compositionstart` (the
-/// composing flag), `compositionend` (the commit's `data` — fed exactly
-/// once), `input` (the printable `data` + the `deleteContentBackward`
-/// Backspace — the `WebImeFeed`'s routing decides what reaches the
-/// queue). Pushed into the SAME DOM→SFML event queue the keydown
-/// listener feeds (the `Window::run` rAF drain → the `TextEntered` fold
-/// → the windowed client's `entered_text_sink` → the menu's
-/// `handle_text_entered` — the EXISTING entered-text sink fed, not a
-/// second pipeline). Returns the closures — the caller MUST keep them
-/// alive for the window's life (the `dom_listeners` field's contract).
-#[cfg(target_os = "emscripten")]
-fn attach_web_ime_listeners(
-    ime: &web_sys::HtmlInputElement,
-    queue: &std::sync::Arc<std::cell::RefCell<Vec<Event>>>,
-) -> Vec<Closure<dyn FnMut(web_sys::Event)>> {
-    // The routing machine (the `WebImeFeed` docs): the pure half the host
-    // tests pin; the listeners are the thin wrapper (the `WebPointerFeed`
-    // pattern).
-    let feed = std::rc::Rc::new(std::cell::RefCell::new(WebImeFeed::new()));
-    let mut listeners = Vec::new();
-
-    // `compositionstart` — the composing flag (the DURING-composition
-    // `input` events are the intermediate ones — suppressed; the
-    // `compositionend`'s `data` is the commit).
-    let f = feed.clone();
-    add_dom_listener(ime, "compositionstart", &mut listeners, move |_| {
-        f.borrow_mut().composition_start();
-    });
-    // `compositionend` — the COMMIT (a phone keyboard, an autocomplete,
-    // any CJK method): feed the `data` (empty = a CANCELLED composition —
-    // nothing fed). The `data` is an owned `String` (the web-sys 0.3.106
-    // codegen's `Option<String>` — no borrow to manage).
-    let f = feed.clone();
-    let q = queue.clone();
-    add_dom_listener(ime, "compositionend", &mut listeners, move |e| {
-        let data = e
-            .dyn_ref::<web_sys::CompositionEvent>()
-            .and_then(|c| c.data())
-            .unwrap_or_default();
-        for c in f.borrow_mut().composition_end(&data) {
-            q.borrow_mut().push(Event::TextEntered { character: c });
-        }
-    });
-    // `input` — the SOLE text path while this element is focused (the
-    // keydown listener's `web_keydown_ime_policy` gate): the printable
-    // text (the `data`) + the Backspace (the `inputType`
-    // `deleteContentBackward` — NOT a keypress — the port's
-    // `TextEntered(8)`'s `pop_back` arm). Both fields are owned strings
-    // (the web-sys 0.3.106 codegen: the `input_type()`'s `String`, the
-    // `data()`'s `Option<String>` — no borrow out of the event).
-    let f = feed.clone();
-    let q = queue.clone();
-    add_dom_listener(ime, "input", &mut listeners, move |e| {
-        let (input_type, data) = match e.dyn_ref::<web_sys::InputEvent>() {
-            Some(i) => {
-                let t = i.input_type();
-                let d = i.data().unwrap_or_default();
-                (t, d)
-            }
-            None => (String::new(), String::new()),
-        };
-        for c in f.borrow_mut().input(&input_type, &data) {
-            q.borrow_mut().push(Event::TextEntered { character: c });
-        }
-    });
-
-    listeners
 }
 
 #[cfg(test)]
@@ -4762,126 +4393,16 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // issue 046 (F32) — the IME text routing (`WebImeFeed`) + the keydown
-    // double-typing gate (`web_keydown_ime_policy`). The pure halves the
-    // emscripten listeners apply — the four cases the task names, pinned
-    // host-side (the DOM halves ride the web build + the CDP probe).
+    // issue 32 — the keydown's text + prevent policy
+    // (`web_keydown_policy`). The pure half the emscripten keydown
+    // listener applies, pinned host-side (the DOM half rides the web
+    // build + the CDP probe).
     // ------------------------------------------------------------------
 
-    /// issue 046 (F32) — printable text via the `input` event (the
-    /// `insertText` inputType — the phone's soft keyboard AND the desktop
-    /// typing into the focused element): the `data`'s chars, in order, one
-    /// `TextEntered` each (the menu drain's C++ `isAlphanumeric` / `
-    /// isPunctuation` filter is the game's half, not the feed's — the
-    /// feed delivers the browser's text as-is, exactly one path per
-    /// event).
-    #[test]
-    fn web_ime_feed_inserts_printable_data_in_order() {
-        let mut feed = WebImeFeed::new();
-        assert_eq!(feed.input("insertText", "0"), vec!['0']);
-        assert_eq!(feed.input("insertText", "46"), vec!['4', '6']);
-        // The paste / replacement / drop insertions feed their `data` too
-        // (the `insertFromPaste` / `insertReplacementText` / `insertFrom
-        // Drop` inputTypes — the non-`delete` non-composition arm).
-        assert_eq!(feed.input("insertFromPaste", "ab"), vec!['a', 'b']);
-        assert_eq!(feed.input("insertReplacementText", "Z"), vec!['Z']);
-    }
-
-    /// issue 046 (F32) — the Backspace case: a deletion arrives as an
-    /// `input` event with `inputType: deleteContentBackward` (NOT as a
-    /// keypress) and is routed as EXACTLY ONE unicode 8 — the port's
-    /// `TextEntered(8)`'s `pop_back` arm (the C++'s second `TextEntered`
-    /// handler's erase, MenuGame.cpp:509-516). The `deleteContent`
-    /// sibling (a selected-range delete) is ONE event too: one pop (the
-    /// under-feeding side of the mismatch — the safe one).
-    #[test]
-    fn web_ime_feed_backspace_is_exactly_one_unicode_8() {
-        let mut feed = WebImeFeed::new();
-        assert_eq!(feed.input("deleteContentBackward", ""), vec!['\u{8}']);
-        assert_eq!(feed.input("deleteContentBackward", ""), vec!['\u{8}']);
-        assert_eq!(feed.input("deleteContent", ""), vec!['\u{8}']);
-        // A backspace between insertions does not corrupt the next
-        // insertion's feed (the guard state is reset by the deletion).
-        assert_eq!(feed.input("insertText", "a"), vec!['a']);
-        assert_eq!(feed.input("deleteContentBackward", ""), vec!['\u{8}']);
-        assert_eq!(feed.input("insertText", "b"), vec!['b']);
-    }
-
-    /// issue 046 (F32) — the composition case (a phone keyboard, an
-    /// autocomplete or any CJK method): the INTERMEDIATE `input` events
-    /// (the `insertCompositionText` inputType, fired DURING the
-    /// composition) feed NOTHING — the `compositionend`'s `data` is the
-    /// commit, fed EXACTLY ONCE, and a browser that ALSO fires a final
-    /// `input` carrying the same `data` AFTER the `compositionend` (the
-    /// double-commit ordering) is suppressed by the guard (feeding both
-    /// would double every character — the task's "do not let it corrupt
-    /// or double").
-    #[test]
-    fn web_ime_feed_composition_commits_exactly_once() {
-        let mut feed = WebImeFeed::new();
-        feed.composition_start();
-        // The intermediate updates (the `compositionupdate`'s data is NOT
-        // fed — the listener attaches to `compositionstart` /
-        // `compositionend` only; the `input` events that run DURING the
-        // composition are the `insertCompositionText` ones):
-        assert_eq!(
-            feed.input("insertCompositionText", "ni"),
-            Vec::<char>::new()
-        );
-        assert_eq!(feed.input("insertCompositionText", "n"), Vec::<char>::new());
-        // The commit — the `compositionend`'s `data`:
-        assert_eq!(feed.composition_end("nihao"), vec!['n', 'i', 'h', 'a', 'o']);
-        // The double-commit guard: the SAME data a final `input` event
-        // carries after the `end` (the browser that fires both) is the
-        // same commit — suppressed:
-        assert_eq!(
-            feed.input("insertText", "nihao"),
-            Vec::<char>::new(),
-            "the double-commit must not feed the characters a second time"
-        );
-        // …while the SAME text typed AFTER the guard is consumed is a NEW
-        // insertion (the guard is single-shot):
-        assert_eq!(
-            feed.input("insertText", "nihao"),
-            vec!['n', 'i', 'h', 'a', 'o']
-        );
-    }
-
-    /// issue 046 (F32) — the CANCELLED composition (the Esc): the
-    /// empty-`data` `compositionend` feeds nothing and resets the state —
-    /// the following plain insertion is unaffected.
-    #[test]
-    fn web_ime_feed_cancelled_composition_feeds_nothing() {
-        let mut feed = WebImeFeed::new();
-        feed.composition_start();
-        assert_eq!(
-            feed.input("insertCompositionText", "xyz"),
-            Vec::<char>::new()
-        );
-        assert_eq!(
-            feed.composition_end(""),
-            Vec::<char>::new(),
-            "a cancelled composition (the empty data) feeds nothing"
-        );
-        assert_eq!(feed.input("insertText", "a"), vec!['a']);
-    }
-
-    /// issue 046 (F32) — the `data`-less insertions (the browser variant
-    /// that fires an `input` event with no `data`) feed nothing (no
-    /// guessing: the value-diff fallback would risk doubling what the
-    /// `data`-carrying events already delivered).
-    #[test]
-    fn web_ime_feed_empty_data_feeds_nothing() {
-        let mut feed = WebImeFeed::new();
-        assert_eq!(feed.input("insertText", ""), Vec::<char>::new());
-        assert_eq!(feed.input("", ""), Vec::<char>::new());
-    }
-
-    /// issue 046 (F32) — the `policy` shorthand for the tests (the
+    /// issue 32 — the `policy` shorthand for the tests (the
     /// `WebKeydownState`'s five fields in the listener's order — the
     /// clippy 7-argument bound's bundle): `code`, `key`, `ctrl`, `alt`,
-    /// `meta`, `repeat`, `is_composing`, `ime_active`.
-    #[allow(clippy::too_many_arguments)] // the test shorthand's 8 fields (the production fn's bundle)
+    /// `meta`, `repeat`, `is_composing`.
     fn policy(
         code: &str,
         key: &str,
@@ -4890,28 +4411,24 @@ mod tests {
         meta: bool,
         repeat: bool,
         is_composing: bool,
-        ime_active: bool,
     ) -> (bool, Option<char>) {
-        super::web_keydown_ime_policy(
+        super::web_keydown_policy(
             code,
             key,
             &super::WebKeydownState::new(ctrl, alt, meta, repeat, is_composing),
-            ime_active,
         )
     }
 
-    /// issue 046 (F32) — the DOUBLE-TYPING gate's desktop arm unchanged
-    /// (`ime_active = false` — every non-text-entry state, where `#ime`
-    /// is blurred): the printable char pushes its `TextEntered` AND
-    /// `preventDefault`s (the issue-32 behaviour, byte-identical — the
-    /// page must not also scroll / zoom; the character must reach the
-    /// game exactly once through THIS path, the keydown's, the C++
+    /// issue 32 — the keydown's text + prevent policy: the printable
+    /// char pushes its `TextEntered` AND `preventDefault`s (the page
+    /// must not also scroll / zoom; the character must reach the game
+    /// exactly once through THIS path, the keydown's, the C++
     /// `runEvents`'s alongside-`TextEntered` the winit fold's twin
-    /// restores, window.rs:1777-1790's paired-event suppression intact).
+    /// restores, the paired-event suppression intact).
     #[test]
-    fn web_keydown_policy_desktop_path_unchanged_when_ime_blurred() {
+    fn web_keydown_policy_pins_the_issue_32_text_and_prevent_halves() {
         // The printable char: text + prevent (the `KeyA` / "a" pair).
-        let (prevent, text) = policy("KeyA", "a", false, false, false, false, false, false);
+        let (prevent, text) = policy("KeyA", "a", false, false, false, false, false);
         assert!(
             prevent,
             "the desktop page-consumed key still preventDefaults"
@@ -4921,91 +4438,35 @@ mod tests {
             Some('a'),
             "the desktop text path still pushes the char"
         );
-        // The Backspace's unicode-8 restore (the 29b3 half, unchanged).
-        let (_, text) = policy(
-            "Backspace",
-            "Backspace",
-            false,
-            false,
-            false,
-            false,
-            false,
-            false,
-        );
+        // The Backspace's unicode-8 restore (the 29b3 half).
+        let (_, text) = policy("Backspace", "Backspace", false, false, false, false, false);
         assert_eq!(
             text,
             Some('\u{8}'),
             "the desktop Backspace still restores the pop"
         );
-        // The repeat (the held-key double-type guard, unchanged).
-        let (_, text) = policy("KeyA", "a", false, false, false, true, false, false);
+        // The repeat (the held-key double-type guard).
+        let (_, text) = policy("KeyA", "a", false, false, false, true, false);
         assert_eq!(text, None, "a repeated key still pushes no text");
-        // The modifier combos (unchanged).
-        let (_, text) = policy("KeyA", "a", true, false, false, false, false, false);
+        // The modifier combos.
+        let (_, text) = policy("KeyA", "a", true, false, false, false, false);
         assert_eq!(text, None);
-        // The Enter (a WORD, not a char — no text; the game's `okAction`
-        // bind's `KeyPressed(ENTER)` is the listener's mapping half,
-        // outside this policy, unchanged).
-        let (_, text) = policy("Enter", "Enter", false, false, false, false, false, false);
+        // The Enter (a WORD, not a char — no text; the `KeyPressed(ENTER)`
+        // the listener's mapping half pushes is outside this policy).
+        let (_, text) = policy("Enter", "Enter", false, false, false, false, false);
         assert_eq!(text, None);
-        // The browser-reserved keys still do NOT preventDefault (the
-        // F5 / F11 / F12 policy, unchanged).
-        let (prevent, _) = policy("F5", "F5", false, false, false, false, false, false);
+        // The browser-reserved keys do NOT preventDefault (the
+        // F5 / F11 / F12 policy).
+        let (prevent, _) = policy("F5", "F5", false, false, false, false, false);
         assert!(!prevent);
+        // The composition keys (the `is_composing` — the browser's
+        // native IME's `Process` / `Composing` `key` values): no text,
+        // no prevent (the composition must run to its commit).
+        let (prevent, text) = policy("Dead", "Process", false, false, false, false, true);
+        assert!(!prevent);
+        assert_eq!(text, None);
     }
 
-    /// issue 046 (F32) — the DOUBLE-TYPING gate's IME arm (`ime_active =
-    /// true` — the menu's text-entry state, `#ime` focused): the keydown
-    /// must push NO `TextEntered` (printable AND the Backspace's
-    /// unicode-8 restore — the browser's own insertion / deletion fires
-    /// the `input` events the feed rides on; both halves feeding would
-    /// double-type every character) AND must NOT `preventDefault` (a
-    /// swallowed keydown inserts nothing into the focused input and fires
-    /// no `input` event — no text at all). One keypress, exactly one
-    /// character (through the `input` path — this policy's job is to keep
-    /// the keydown path OUT of it).
-    #[test]
-    fn web_keydown_policy_ime_active_suppresses_text_and_prevent() {
-        // The printable char: no text, no prevent.
-        let (prevent, text) = policy("KeyA", "a", false, false, false, false, false, true);
-        assert!(
-            !prevent,
-            "a prevented keydown would insert nothing into the focused input"
-        );
-        assert_eq!(
-            text, None,
-            "the keydown's char would double-type the input event's"
-        );
-        // The Backspace (the soft keyboard's deletion key — the `input`
-        // event's `deleteContentBackward` is the pop's sole source).
-        let (prevent, text) = policy(
-            "Backspace",
-            "Backspace",
-            false,
-            false,
-            false,
-            false,
-            false,
-            true,
-        );
-        assert!(!prevent);
-        assert_eq!(
-            text, None,
-            "the keydown's unicode-8 would double-pop the input event's"
-        );
-        // The Enter (the soft keyboard's commit key — the `okAction`
-        // bind's `KeyPressed(ENTER)` the mapping half still pushes, OUTSIDE
-        // this policy): no text (it never had any), no prevent.
-        let (prevent, text) = policy("Enter", "Enter", false, false, false, false, false, true);
-        assert!(!prevent);
-        assert_eq!(text, None);
-        // The composition keys (the `is_composing` — the `Process` /
-        // `Composing` `key` values): no text, no prevent (the composition
-        // runs to its commit — the `compositionend`'s feed).
-        let (prevent, text) = policy("Dead", "Process", false, false, false, false, true, true);
-        assert!(!prevent);
-        assert_eq!(text, None);
-    }
     // 29w — the C++ `mustRecreate` → `recreateWindow` split, headless
     // (the display half is the Xvfb recreation probe — the `GlParts::
     // recreate`'s live-context rebuild; these pin the trigger/consume

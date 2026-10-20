@@ -1123,7 +1123,13 @@ re-reading the whole history.
 
 ### 09 — tuning/docs (pending)
 
-- Final tunables:
+- Final tunables (post taste passes 3–4 — see the `## 09 taste passes
+  3–4` section at the bottom): master 1.0; kick 0.9 / snare 0.6 / bass
+  0.8 / lead 0.5 (drums/bass forward); staccato 70% gate, odd-16th swing
+  +15% of a step, rolling bassline (16th pickups at 11/13), kick DnB
+  syncopation (1 / 7 / 10); journey `speedMult` 0.33, ramp 0.055/stage
+  (plateau 1.55), BPM 150→174; shrapnel: 12 wedges, ~90/180 ms chain,
+  55% core-bounce keep.
 - 09 tuning notes: Heartbeat half-time pattern / root-fourth shift; the host listen (desktop/Android/web) is still pending; the 05a vendor `.orig` dead file was removed.
 - Playtest notes:
 - Per-target deviations:
@@ -1193,3 +1199,44 @@ re-reading the whole history.
 - The probe's baseline `help=auto` assertion assumes no pre-gesture
   input; the helping hand's attract steering is why the game plays
   itself until the first touch.
+
+## 09 taste passes 3–4 (e7588188 + bb300047, LANDED 2026-10-20; gate 579/0 → 581/0)
+
+Operator playtest of the deployed build: desktop music faint + overly
+reverby, web silent (SFX audible), cursor still fast, and the walls
+should EXPLODE. The exact deltas live in the taste report's "Taste pass
+3" / "Taste pass 4" sections (`.agents/tasks/plan-002/issue-009-taste-report.md`);
+this entry records only what later work must not undo.
+
+- **Mix (final)**: master 0.55 → 0.9 (pass 3) → **1.0** (pass 4);
+  drums/bass/lead forward: kick 0.9, snare 0.6, bass 0.8, lead 0.5;
+  reverb mixes cut (drums 0.05, bass 0.08, lead 0.20, pad/bell 0.28,
+  sub 0.15) — the reverb smear was what read as faint + mushy. The live
+  mix is owned by `th-synth` `director.rs`.
+- **Groove (pass 4)**: the staccato gate (a note rings only 70% of its
+  step — the tail never bleeds into the next), the swing (odd 16ths
+  attack 15% of a step late), the rolling bassline (16th pickups at
+  steps 11/13), and the kick's DnB syncopation (steps 1 / 7 / 10).
+- **Web unlock (pass 3)**: the shell calls `resumeAudio()` on EVERY
+  gesture until the status says `audio=live` — the one-shot flag locked
+  a failed first gesture on the silent fallback forever (SFX worked
+  because emscripten's own listeners unlock the `th-audio` device).
+- **Cursor (pass 3)**: journey `speedMult` 0.40 → 0.33, the ramp 0.055/
+  stage (plateau 1.55) — `th-app` `journey.rs` + the journey level's
+  `l_setSpeedMult`.
+- **Shrapnel (pass 3 + 4)**: a soft hit SHATTERS the wall — 12 spinning
+  wedge pieces at the impact point (the wall vertex nearest the player),
+  cosmetic rng, ~0.8 s fade (48 FT units), drawn into the wall vertex
+  batch (one draw call, the wall's own color); the blast chains into the
+  TWO nearest neighbour walls ~90 ms / ~180 ms later (mid-angle + delay
+  queue — the victim is re-looked-up at fire time so the wall `retain`
+  cannot invalidate it; chains do not re-chain; ONE bump per physical
+  hit — the chain walls die for free, no extra slow-motion/duck). Pass 4
+  adds the physics half: the pieces carry momentum (light drag), tumble
+  (spin flips on impact), and bounce elastically off the breathing core
+  edge (radial reflection, keep 55% of the speed, step back outside).
+  `th-game/src/shrapnel.rs` + `th-game/tests/shrapnel.rs` (5 integration
+  tests + 5 unit tests).
+- Do not re-tune the mix/groove/shrapnel values without an operator
+  listen pass — the host listen is still pending (no device on the
+  build host); the values above are the operator's.

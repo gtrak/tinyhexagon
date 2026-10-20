@@ -1,0 +1,9 @@
+== cargo fmt --all -- --check
+GATE_EXIT=0
+== cargo build --workspace
+GATE_EXIT=0
+== cargo clippy --workspace --all-targets -- -D warnings
+GATE_EXIT=0
+== cargo test --workspace
+GATE_EXIT=0
+log: target/gate.log

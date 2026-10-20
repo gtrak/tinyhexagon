@@ -651,9 +651,11 @@ impl AudioDevice {
     }
 
     /// A one-line diagnostic: which world (device present / headless) + the
-    /// unlock (context) state + the last source state / error. The web's
-    /// acceptance observable (the `tools/web-probe.mjs` "audio diagnostics"
-    /// section surfaces this line).
+    /// unlock (context) state + the last source state / error. (The web's
+    /// live-vs-fallback observable is the status line's `audio` field —
+    /// the `th-app` `tiny` `web_status`'s `audio=live` / `audio=fallback`,
+    /// asserted by `tools/web-tiny-probe.mjs`; this line is the
+    /// Rust-side detail.)
     #[must_use]
     pub fn describe(&self) -> String {
         self.backend
