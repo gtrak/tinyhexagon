@@ -20,10 +20,90 @@ pub const STAGE_DURATION_S: f32 = 30.0;
 /// The plateau stage (stages are 0..=20; 20 transitions).
 pub const MAX_STAGE: u32 = 20;
 
-/// The single level id (the 09-taste continuous journey). The pack keeps
-/// the old `meadow`/`river`/`stars` levels as reference content, but the
-/// run never swaps levels mid-flight.
+/// The single level id (the 09-taste continuous journey). The arena's
+/// **style and side count** now come from the upstream levels, in order
+/// (the 09-taste-2 pass): the 9 `cube` levels by menu priority, then the
+/// first selectable `hypercube` level. The journey level only owns the
+/// walls; the app swaps `StyleData`/sides without `new_game`.
 pub const LEVEL: &str = "journey";
+
+/// The upstream packs whose styles/shapes the journey borrows.
+pub const CUBE_PACK: &str = "ohvrvanilla_vittorio_romeo_cube_1";
+pub const HYPERCUBE_PACK: &str = "ohvrvanilla_vittorio_romeo_hypercube_1";
+
+/// One upstream level borrowed for two stages: its pack + style id, and
+/// the side count its `onInit` authors (`l_setSides`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Block {
+    pub pack: &'static str,
+    pub style: &'static str,
+    pub sides: u32,
+}
+
+/// The 10 blocks, in the upstream menu order: the cube levels
+/// `pointless → flatteringshape → seconddimension → apeirogon →
+/// commando → euclideanpc → pi → labyrinth → goldenratio`, then the
+/// hypercube's first selectable (`acceleradiant`). `pi` is the 24-sided
+/// circle-like arena; `labyrinth` is the 3-sided one.
+pub const BLOCKS: [Block; 10] = [
+    Block {
+        pack: CUBE_PACK,
+        style: "pointless",
+        sides: 6,
+    },
+    Block {
+        pack: CUBE_PACK,
+        style: "flatteringshape",
+        sides: 6,
+    },
+    Block {
+        pack: CUBE_PACK,
+        style: "seconddimension",
+        sides: 6,
+    },
+    Block {
+        pack: CUBE_PACK,
+        style: "apeirogon",
+        sides: 6,
+    },
+    Block {
+        pack: CUBE_PACK,
+        style: "commando",
+        sides: 4,
+    },
+    Block {
+        pack: CUBE_PACK,
+        style: "euclideanpc",
+        sides: 8,
+    },
+    Block {
+        pack: CUBE_PACK,
+        style: "pi",
+        sides: 24,
+    },
+    Block {
+        pack: CUBE_PACK,
+        style: "labyrinth",
+        sides: 3,
+    },
+    Block {
+        pack: CUBE_PACK,
+        style: "goldenratio",
+        sides: 6,
+    },
+    Block {
+        pack: HYPERCUBE_PACK,
+        style: "acceleradiant",
+        sides: 6,
+    },
+];
+
+/// The block a stage belongs to (two stages per upstream level; the
+/// plateau holds the last block).
+#[must_use]
+pub fn block_for_stage(stage: u32) -> &'static Block {
+    &BLOCKS[((stage / 2).min((BLOCKS.len() - 1) as u32)) as usize]
+}
 
 /// `difficulty = 0.45 + 0.085 * min(t, 20)` (the arc 0.45..=2.15; the
 /// engine's `set_difficulty_mult` clamps 0.1..=4.0, so every value lands).
@@ -32,12 +112,11 @@ pub fn difficulty_for_stage(stage: u32) -> f32 {
     0.45 + 0.085 * stage.min(MAX_STAGE) as f32
 }
 
-/// `bpm = 70 + 2.5 * min(stage, 20)` (cap 120 — the 09-taste faster
-/// plateau; `th_synth`'s `director::stage_params` owns the live mix, this
-/// is the journey's mirror for the table's tests / the report).
+/// `bpm = 150 + 1.2 * min(stage, 20)` (cap 174 — the chiptune drum-and-bass
+/// plateau; `th_synth`'s `director::stage_params` owns the live mix).
 #[must_use]
 pub fn bpm_for_stage(stage: u32) -> f32 {
-    70.0 + 2.5 * stage.min(MAX_STAGE) as f32
+    150.0 + 1.2 * stage.min(MAX_STAGE) as f32
 }
 
 /// The level id at `stage`: always the single journey level.
@@ -46,25 +125,10 @@ pub fn level_id_for_stage(_stage: u32, pack: &str) -> String {
     format!("{pack}_{LEVEL}")
 }
 
-/// The base hue = `100° + 28° * t` (mod 360), capped at the plateau: a
-/// full rainbow cycle roughly every 13 stages. The app feeds it to
-/// `apply_music_beat`; the style's dynamic colours do the rest.
-#[must_use]
-pub fn base_hue_for_stage(stage: u32) -> f32 {
-    let s = stage.min(MAX_STAGE) as f32;
-    (100.0 + 28.0 * s).rem_euclid(360.0)
-}
-
-/// The arena's side count per stage (index 0..=20). Two-stage blocks, a
-/// tour through 3..8 sides, and a return to the hexagon at the plateau.
-const SIDES_BY_STAGE: [u32; 21] = [
-    6, 6, 4, 4, 3, 3, 5, 5, 6, 6, 7, 7, 4, 4, 8, 8, 5, 5, 6, 6, 6,
-];
-
-/// The shape the stage plays (3..=8 sides).
+/// The arena's side count at `stage` (borrowed from the upstream block).
 #[must_use]
 pub fn sides_for_stage(stage: u32) -> u32 {
-    SIDES_BY_STAGE[stage.min(MAX_STAGE) as usize]
+    block_for_stage(stage).sides
 }
 
 /// The journey clock (the plan 07 contract struct).
@@ -110,13 +174,6 @@ impl Journey {
     #[must_use]
     pub fn level_id(&self, pack: &str) -> String {
         level_id_for_stage(self.stage, pack)
-    }
-
-    /// The frame's base hue (the `apply_music_beat` argument), continuous
-    /// across stage boundaries.
-    #[must_use]
-    pub fn base_hue(&self) -> f32 {
-        (100.0 + 28.0 * self.t()).rem_euclid(360.0)
     }
 
     /// The stage's arena side count.
@@ -168,20 +225,18 @@ mod tests {
         }
         assert!((difficulty_for_stage(0) - 0.45).abs() < 1e-6);
         assert!((difficulty_for_stage(MAX_STAGE) - 2.15).abs() < 1e-6);
-        assert!((bpm_for_stage(0) - 70.0).abs() < 1e-6);
-        assert!((bpm_for_stage(MAX_STAGE) - 120.0).abs() < 1e-6);
+        assert!((bpm_for_stage(0) - 150.0).abs() < 1e-6);
+        assert!((bpm_for_stage(MAX_STAGE) - 174.0).abs() < 1e-6);
         for beyond in (MAX_STAGE + 1)..=64 {
             assert_eq!(
                 difficulty_for_stage(beyond),
                 difficulty_for_stage(MAX_STAGE)
             );
             assert_eq!(bpm_for_stage(beyond), bpm_for_stage(MAX_STAGE));
-            assert_eq!(base_hue_for_stage(beyond), base_hue_for_stage(MAX_STAGE));
             assert_eq!(sides_for_stage(beyond), sides_for_stage(MAX_STAGE));
         }
-        // The 09-taste arc is much wider than the old 0.55..1.15 / 70..100.
         assert!(difficulty_for_stage(MAX_STAGE) / difficulty_for_stage(0) > 4.0);
-        assert!(bpm_for_stage(MAX_STAGE) - bpm_for_stage(0) >= 50.0);
+        assert!(bpm_for_stage(MAX_STAGE) - bpm_for_stage(0) >= 24.0);
     }
 
     /// The single continuous journey level: every stage plays `journey`.
@@ -198,8 +253,7 @@ mod tests {
     }
 
     /// The continuous ramp: the journey's `difficulty` rises *within* a
-    /// stage too (the per-frame `set_difficulty_mult`), and the hue drifts
-    /// continuously.
+    /// stage too (the per-frame `set_difficulty_mult`).
     #[test]
     fn the_ramp_is_continuous_within_a_stage() {
         let start = Journey::new();
@@ -208,24 +262,12 @@ mod tests {
         assert_eq!(mid.stage, 0);
         assert!(mid.difficulty() > start.difficulty());
         assert!((mid.difficulty() - (0.45 + 0.085 * 0.5)).abs() < 1e-6);
-        // The stage-2 mark + 5 s: t = 2 + 5/30.
         let late = Journey {
             stage: 2,
             elapsed: 5.0,
         };
         assert!((late.t() - 2.0 - 5.0 / 30.0).abs() < 1e-5);
         assert!((late.difficulty() - (0.45 + 0.085 * (2.0 + 5.0 / 30.0))).abs() < 1e-5);
-        // The hue is continuous and wraps instead of clamping.
-        assert!((start.base_hue() - 100.0).abs() < 1e-6);
-        let expected_hue: f32 =
-            (100.0_f32 + 28.0_f32 * (2.0_f32 + 5.0_f32 / 30.0_f32)).rem_euclid(360.0_f32);
-        assert!((late.base_hue() - expected_hue).abs() < 1e-5);
-        let wrap = Journey {
-            stage: 10,
-            elapsed: 0.0,
-        };
-        assert!((wrap.base_hue() - 20.0).abs() < 1e-6);
-        // The plateau never exceeds t = 20.
         let plateau = Journey {
             stage: MAX_STAGE,
             elapsed: 29.0,
@@ -234,33 +276,38 @@ mod tests {
         assert!((plateau.difficulty() - 2.15).abs() < 1e-6);
     }
 
-    /// The base hue: `(100 + 28 * stage) mod 360`.
+    /// The arena style/shape table: the upstream cube levels in menu order,
+    /// then the hypercube's first selectable — with their authored sides.
     #[test]
-    fn the_base_hue_walks_a_rainbow() {
-        assert!((base_hue_for_stage(0) - 100.0).abs() < 1e-6);
-        assert!((base_hue_for_stage(5) - 240.0).abs() < 1e-6);
-        assert!((base_hue_for_stage(10) - 20.0).abs() < 1e-6);
-        assert!((base_hue_for_stage(20) - 300.0).abs() < 1e-6);
-    }
-
-    /// The shape schedule: 6 → 4 → 3 → 5 → 6 → 7 → 4 → 8 → 5 → 6, with a
-    /// two-stage dwell and the hexagon at both ends.
-    #[test]
-    fn the_shape_schedule_tours_three_to_eight_sides() {
+    fn the_shape_schedule_borrows_the_upstream_levels_in_order() {
+        assert_eq!(BLOCKS.len(), 10);
+        assert_eq!(block_for_stage(0).style, "pointless");
+        assert_eq!(block_for_stage(2).style, "flatteringshape");
+        assert_eq!(block_for_stage(4).style, "seconddimension");
+        assert_eq!(block_for_stage(6).style, "apeirogon");
+        assert_eq!(block_for_stage(8).style, "commando");
+        assert_eq!(block_for_stage(10).style, "euclideanpc");
+        assert_eq!(block_for_stage(12).style, "pi");
+        assert_eq!(block_for_stage(14).style, "labyrinth");
+        assert_eq!(block_for_stage(16).style, "goldenratio");
+        assert_eq!(block_for_stage(18).style, "acceleradiant");
+        assert_eq!(block_for_stage(MAX_STAGE).style, "acceleradiant");
+        assert_eq!(block_for_stage(12).pack, CUBE_PACK);
+        assert_eq!(block_for_stage(18).pack, HYPERCUBE_PACK);
+        // The authored side counts: 6,6,6,6,4,8,24,3,6,6.
+        assert_eq!(
+            BLOCKS.iter().map(|b| b.sides).collect::<Vec<_>>(),
+            vec![6, 6, 6, 6, 4, 8, 24, 3, 6, 6]
+        );
         assert_eq!(sides_for_stage(0), 6);
         assert_eq!(sides_for_stage(1), 6);
-        assert_eq!(sides_for_stage(2), 4);
-        assert_eq!(sides_for_stage(4), 3);
-        assert_eq!(sides_for_stage(6), 5);
-        assert_eq!(sides_for_stage(8), 6);
-        assert_eq!(sides_for_stage(10), 7);
-        assert_eq!(sides_for_stage(12), 4);
-        assert_eq!(sides_for_stage(14), 8);
-        assert_eq!(sides_for_stage(16), 5);
-        assert_eq!(sides_for_stage(18), 6);
-        assert_eq!(sides_for_stage(MAX_STAGE), 6);
+        assert_eq!(sides_for_stage(8), 4);
+        assert_eq!(sides_for_stage(10), 8);
+        assert_eq!(sides_for_stage(12), 24);
+        assert_eq!(sides_for_stage(14), 3);
+        assert_eq!(sides_for_stage(20), 6);
         for stage in 0..=MAX_STAGE {
-            assert!((3..=8).contains(&sides_for_stage(stage)), "stage {stage}");
+            assert!((3..=32).contains(&sides_for_stage(stage)), "stage {stage}");
         }
         // The shape changes every two stages (the dwell), not every stage.
         for stage in (2..=MAX_STAGE).step_by(2) {

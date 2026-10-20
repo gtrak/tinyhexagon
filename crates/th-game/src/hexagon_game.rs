@@ -1045,6 +1045,21 @@ impl<S: SharedStore> HexagonGame<S> {
         );
     }
 
+    /// plan 002 issue 09-taste-2 — the music-synced beat pulse WITHOUT the
+    /// style-hue override. The upstream `StyleData` owns the palette (the
+    /// 09-taste dynamic hue looked "wonky"); only `status.beat_pulse`
+    /// changes, and the delay is re-armed exactly like
+    /// [`Self::apply_music_beat`] so the engine's own retrigger cannot
+    /// clobber the synth energy on the next frame.
+    pub fn apply_music_pulse(&self, energy: f32) {
+        let mut g = self.st();
+        g.status.beat_pulse = energy;
+        g.status.beat_pulse_delay = f32::max(
+            g.status.beat_pulse_delay,
+            g.level_status.beat_pulse_delay_max,
+        );
+    }
+
     /// C++ `sideChange(mSideNumber)` (verbatim).
     pub fn side_change(&self, m_side_number: u32) {
         {

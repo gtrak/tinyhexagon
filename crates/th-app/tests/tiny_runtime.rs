@@ -77,7 +77,8 @@ fn the_sixty_second_run_advances_the_stage_and_never_dies() {
         "the soft collisions never set has_died"
     );
     assert!(rt.game().get_status().started, "the run is live");
-    // 09-taste: the same journey level the whole run (no level swap).
+    // 09-taste-2: the same journey level the whole run (no level swap);
+    // the arena style/shape now comes from the upstream block table.
     let level = rt.game().get_level_data();
     assert_eq!(level.pack_id, PACK, "the tiny pack");
     assert_eq!(level.id, "journey", "the single continuous journey level");
@@ -88,8 +89,16 @@ fn the_sixty_second_run_advances_the_stage_and_never_dies() {
         (rt.game().difficulty_mult() - expected).abs() < 1e-3,
         "the continuous stage-2 multiplier"
     );
-    assert_eq!(rt.journey.sides(), 4, "stage 2 is a square");
-    assert_eq!(rt.game().get_sides(), 4, "the arena changed shape");
+    assert_eq!(
+        rt.journey.sides(),
+        6,
+        "stage 2 is the upstream flatteringshape (hexagon)"
+    );
+    assert_eq!(
+        rt.game().get_sides(),
+        6,
+        "the arena shape follows the block"
+    );
 
     // The frame carries the scene: the wall + the player batches (plus
     // the background and the flash polygon).
@@ -104,8 +113,8 @@ fn the_sixty_second_run_advances_the_stage_and_never_dies() {
         })
         .collect();
     assert!(
-        counts.contains(&12),
-        "the background (4 sides × 3 at stage 2): {counts:?}"
+        counts.contains(&18),
+        "the background (6 sides × 3 at stage 2): {counts:?}"
     );
     assert!(
         counts.iter().any(|c| *c > 0 && *c % 4 == 0),
@@ -431,10 +440,9 @@ fn the_ten_minute_run_reaches_stage_20_and_plateaus() {
     assert!(journey.elapsed < th_app::journey::STAGE_DURATION_S);
 
     // The plateau: another 60 s, no transition, the table holds.
-    let (diff, bpm, hue) = (
+    let (diff, bpm) = (
         th_app::journey::difficulty_for_stage(20),
         th_app::journey::bpm_for_stage(20),
-        th_app::journey::base_hue_for_stage(20),
     );
     for _ in 0..(60 * 64) {
         assert!(journey.advance(DT).is_none(), "the plateau holds");
@@ -442,10 +450,9 @@ fn the_ten_minute_run_reaches_stage_20_and_plateaus() {
     assert_eq!(journey.stage, 20);
     assert_eq!(th_app::journey::difficulty_for_stage(20), diff);
     assert_eq!(th_app::journey::bpm_for_stage(20), bpm);
-    assert_eq!(th_app::journey::base_hue_for_stage(20), hue);
     assert!(
         (th_app::journey::difficulty_for_stage(20) - 2.15).abs() < 1e-6
-            && (th_app::journey::bpm_for_stage(20) - 120.0).abs() < 1e-6,
+            && (th_app::journey::bpm_for_stage(20) - 174.0).abs() < 1e-6,
         "the plateau's capped values"
     );
 }

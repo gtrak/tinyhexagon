@@ -30,7 +30,9 @@
 //! `apply_music_beat` every frame (the 04b P2 — the beat hue is never
 //! cleared, so the app must call it every frame).
 
+use std::cell::RefCell;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::{Arc, RwLock};
 
 use th_audio::Audio as TinyAudio;
@@ -48,7 +50,7 @@ use th_synth::MusicDirector;
 use crate::bridge::{draw as bridge_draw, AppDraw};
 use crate::compose::compose_with_config;
 use crate::draw_target::{AssetsPackShaderProvider, GlDrawTarget};
-use crate::journey::Journey;
+use crate::journey::{block_for_stage, Journey};
 use crate::touch::{icon_at, icon_position, Icon, TouchState, ICON_SIZE};
 
 /// The tiny pack (06): `tinyhexagon_tinyhexagon_tiny_1` — the run's level is
@@ -144,10 +146,15 @@ pub struct FrameActions {
 /// is).
 pub struct TinyRuntime {
     composed: crate::compose::Composed,
+    /// The loaded `_RELEASE` assets (the upstream `StyleData` swap on each
+    /// block needs `get_style_data`; 09-taste-2).
+    assets: Arc<th_assets::Assets>,
     /// The SFX surface (`None` = the engine's null audio — the headless
     /// tests).
     audio: Option<Arc<TinyAudio>>,
-    pub music: MusicDirector,
+    pub music: Rc<RefCell<MusicDirector>>,
+    /// The last frame's synth envelope (the web status `energy=` probe).
+    last_beat_energy: f32,
     /// The journey clock (stage 0..=20, seconds into the stage).
     pub journey: Journey,
     touch: TouchState,
@@ -188,10 +195,14 @@ impl TinyRuntime {
         audio: Option<Arc<TinyAudio>>,
         music: MusicDirector,
     ) -> Self {
+        let music = Rc::new(RefCell::new(music));
+        #[cfg(target_os = "emscripten")]
+        web::install(&music);
         let engine_audio: Option<Arc<dyn Audio>> = audio.as_ref().map(|a| {
             let engine_audio: Arc<dyn Audio> = a.clone();
             engine_audio
         });
+        let assets_for_style = Arc::clone(&assets);
         let composed = compose_with_config(
             assets,
             root.clone(),
@@ -235,8 +246,9 @@ impl TinyRuntime {
             None
         };
 
-        Self {
+        let mut rt = Self {
             composed,
+            assets: assets_for_style,
             audio,
             music,
             journey,
@@ -248,8 +260,25 @@ impl TinyRuntime {
             help_idle: 0.0,
             last_esc: false,
             last_mouse_left: false,
+            last_beat_energy: 0.0,
             accumulator: 0.0,
+        };
+        rt.apply_block(0);
+        rt
+    }
+
+    /// 09-taste-2 — borrow the upstream level block's `StyleData` and side
+    /// count without `new_game` (the walls/player keep running). The
+    /// style's own hue/pulse animation is kept; the app no longer
+    /// overrides the hue (that was the "wonky colors").
+    fn apply_block(&mut self, stage: u32) {
+        let block = block_for_stage(stage);
+        if let Some(style) = self.assets.get_style_data(block.pack, block.style) {
+            let mut g = self.composed.game.state_handle().lock();
+            g.style_data = style;
+            g.style_data.compute_colors();
         }
+        self.composed.game.set_sides(block.sides);
     }
 
     /// The engine (the tests pin its state / the bin arms the screenshot).
@@ -399,7 +428,7 @@ impl TinyRuntime {
             // slow-motion re-arms. The engine's flash (120) is the bump's
             // visual (04a).
             self.sfx(SFX_BUMP);
-            self.music.bump();
+            self.music.borrow_mut().bump();
             self.bump_remaining = BUMP_DURATION_S;
         }
 
@@ -411,18 +440,14 @@ impl TinyRuntime {
 
         // -- 7. The beat palette (EVERY frame — the 04b P2: `beat_hue` is
         //      never cleared, so the app keeps feeding it) ----------------
-        let beat = self.music.tick(dt);
+        let beat = self.music.borrow_mut().tick(dt);
+        self.last_beat_energy = beat.energy;
         // 09-taste: a synthesized pulse on top of the live envelope, so the
         // colours and the central polygon pulse even on the web's fallback
         // clock (the 08a boot) and during quiet passages. The style clamps
         // to its own pulse_max.
         let visual_energy = (beat.energy * 0.7 + (1.0 - beat.beat_phase).powf(2.5) * 0.45).min(1.4);
-        self.composed.game.apply_music_beat(
-            beat.beat_phase,
-            beat.bar_phase,
-            visual_energy,
-            self.journey.base_hue(),
-        );
+        self.composed.game.apply_music_pulse(visual_energy);
 
         FrameActions {
             close,
@@ -460,9 +485,9 @@ impl TinyRuntime {
             self.journey.difficulty(),
         );
         self.composed.game.start();
-        // The manual restart restores the CURRENT stage's shape (the level
-        // script's `onInit` authored 6; the 09-taste schedule may be 4/3/…).
-        self.composed.game.set_sides(self.journey.sides());
+        // The manual restart restores the CURRENT block's upstream style +
+        // shape (the level script's `onInit` authored 6).
+        self.apply_block(self.journey.stage);
         self.journey.reset_elapsed();
         self.bump_remaining = 0.0;
         self.sfx(SFX_RESET);
@@ -478,9 +503,9 @@ impl TinyRuntime {
     /// [`Self::frame`], not a step here.
     fn stage_up(&mut self, stage: u32) {
         if stage.is_multiple_of(2) {
-            self.composed.game.set_sides(self.journey.sides());
+            self.apply_block(stage);
         }
-        self.music.set_stage(stage);
+        self.music.borrow_mut().set_stage(stage);
         // The stage-up burst: the engine's flash (no reusable wall-burst
         // particle spawner exists — 04a's soft-burst outcome).
         {
@@ -623,11 +648,6 @@ pub fn run(
         // OpenAL) unlocks on the SAME first gesture through its own
         // listeners (emscripten's `autoResumeAudioContext` + the
         // module's probe listener) — there is no `th-audio` call to make.
-        #[cfg(target_os = "emscripten")]
-        if web::take_unlock_request() {
-            runtime.music.start_on_gesture();
-        }
-
         // -- 1. The frame's input (the window's drained state) -----------
         let input = *w.get_input_state();
         let positions = w.finger_down_positions();
@@ -690,8 +710,9 @@ pub fn run(
             runtime.journey.stage,
             runtime.game().get_status().started,
             runtime.game().get_player_angle(),
-            runtime.music.is_live(),
+            runtime.music.borrow().is_live(),
             runtime.help_disabled(),
+            runtime.last_beat_energy,
         );
     });
 }
@@ -734,7 +755,35 @@ pub fn run_windowed(
 
 #[cfg(target_os = "emscripten")]
 mod web {
+    use std::cell::RefCell;
+    use std::rc::Rc;
     use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+
+    use th_synth::MusicDirector;
+
+    // The synth director lives on the main thread (`MusicDirector` is
+    // `!Send`/`!Sync`); the page's gesture handler must be able to start it
+    // INSIDE the activation, not on the next rAF (the 09-taste-2 wasm fix:
+    // an `AudioContext` created in the frame after the gesture can stay
+    // suspended → `audio=live` but silence).
+    thread_local! {
+        static DIRECTOR: RefCell<Option<Rc<RefCell<MusicDirector>>>> =
+            const { RefCell::new(None) };
+    }
+
+    pub(super) fn install(music: &Rc<RefCell<MusicDirector>>) {
+        DIRECTOR.with(|d| *d.borrow_mut() = Some(Rc::clone(music)));
+    }
+
+    /// Start the live synth engine now (called from the page's gesture, so
+    /// cpal builds/resumes its `AudioContext` inside the user activation).
+    pub(super) fn resume_audio() {
+        DIRECTOR.with(|d| {
+            if let Some(music) = d.borrow().as_ref() {
+                music.borrow_mut().start_on_gesture();
+            }
+        });
+    }
 
     /// The preloaded `_RELEASE` tree's MEMFS mount (the root
     /// `.cargo/config.toml`'s `--preload-file=_RELEASE@/RELEASE` +
@@ -757,14 +806,9 @@ mod web {
     static STAGE: AtomicU32 = AtomicU32::new(0);
     static STARTED: AtomicBool = AtomicBool::new(false);
     static AUDIO_LIVE: AtomicBool = AtomicBool::new(false);
+    static ENERGY: AtomicU32 = AtomicU32::new(0);
     static HELP_OFF: AtomicBool = AtomicBool::new(false);
     static ANGLE: AtomicU32 = AtomicU32::new(0.0_f32.to_bits());
-
-    /// The first-gesture audio unlock's request flag (the `resumeAudio()`
-    /// export's write; the frame loop's consume — the flag-not-handle
-    /// rationale in the module docs: the `MusicDirector` is
-    /// `!Send`/`!Sync`, so it cannot sit in a `static`).
-    static UNLOCK_REQUESTED: AtomicBool = AtomicBool::new(false);
 
     pub(super) fn mark_boot_failed(reason: String) {
         let _ = BOOT_ERROR.set(reason);
@@ -780,21 +824,15 @@ mod web {
         angle: f32,
         audio_live: bool,
         help_off: bool,
+        energy: f32,
     ) {
         TICKS.fetch_add(1, Ordering::Relaxed);
         STAGE.store(stage, Ordering::Relaxed);
         STARTED.store(started, Ordering::Relaxed);
         AUDIO_LIVE.store(audio_live, Ordering::Relaxed);
+        ENERGY.store(energy.to_bits(), Ordering::Relaxed);
         HELP_OFF.store(help_off, Ordering::Relaxed);
         ANGLE.store(angle.to_bits(), Ordering::Relaxed);
-    }
-
-    pub(super) fn request_unlock() {
-        UNLOCK_REQUESTED.store(true, Ordering::Relaxed);
-    }
-
-    pub(super) fn take_unlock_request() -> bool {
-        UNLOCK_REQUESTED.swap(false, Ordering::Relaxed)
     }
 
     pub(super) fn status_line() -> String {
@@ -805,12 +843,13 @@ mod web {
             return "tinyhexagon web: booted=false".to_string();
         }
         format!(
-            "tinyhexagon web: booted=true;ticks={};stage={};started={};angle={:.4};audio={};help={}",
+            "tinyhexagon web: booted=true;ticks={};stage={};started={};angle={:.4};audio={};energy={:.4};help={}",
             TICKS.load(Ordering::Relaxed),
             STAGE.load(Ordering::Relaxed),
             STARTED.load(Ordering::Relaxed),
             f32::from_bits(ANGLE.load(Ordering::Relaxed)),
             if AUDIO_LIVE.load(Ordering::Relaxed) { "live" } else { "fallback" },
+            f32::from_bits(ENERGY.load(Ordering::Relaxed)),
             if HELP_OFF.load(Ordering::Relaxed) { "off" } else { "auto" },
         )
     }
@@ -938,7 +977,7 @@ pub fn web_request_audio_unlock() {
         .map(|w| w.navigator())
         .is_some_and(|n| n.user_activation().is_active());
     if activated {
-        web::request_unlock();
+        web::resume_audio();
     }
 }
 
