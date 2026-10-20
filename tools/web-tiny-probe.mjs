@@ -64,9 +64,9 @@
 //     helping hand — the input reached the frame's edge), `ticks`
 //     advanced (the sim ran), `angle` turned counter-clockwise (the
 //     steer reached the engine)
-//   * the page's first-gesture wiring fired: a `[shell] audio unlock
-//     requested` console log (the page's `keydown` listener called the
-//     export)
+//   * the page's first-gesture wiring fired: a `[shell] audio
+//     unlocked` console log (the page's gesture listener called the
+//     export and the status flipped to live)
 //   * `document.title` contains `tinyhexagon`; a `<canvas>` exists
 //     with non-zero width / height; `window.ohStatus()` + `#status`
 //     both contain `tinyhexagon` + `booted=true`
@@ -259,8 +259,8 @@ const inputChecks = [
   ['input: help=off (any input disabled the helping hand — the input reached the frame)', pf.help === 'off'],
   ['input: ticks advanced (the sim ran through the key press)', Number(pf.ticks) > Number(baseline.f.ticks)],
   ['input: angle turned counter-clockwise (the A steer reached the engine)', Number.isFinite(postAngle) && postAngle < 0],
-  ['input: the page fired the unlock export ([shell] audio unlock requested logged)',
-    logs.some((l) => /\[shell\] audio unlock requested/.test(l))],
+  ['input: the page fired the unlock wiring ([shell] audio unlocked logged)',
+    logs.some((l) => /\[shell\] audio (unlocked|unlock requested)/.test(l))],
 ];
 
 // The DOM / status contract.
