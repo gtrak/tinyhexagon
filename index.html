@@ -98,6 +98,32 @@
          CLI/recipe is fixed (the pinned-CLI note in the 08a report). -->
     <script>
       window.lAudioContext = window.AudioContext || window.webkitAudioContext;
+      // 09 diagnostics: record the TRUE content peak of every buffer the
+      // cpal emscripten host starts (the setTimeout loop creates a
+      // BufferSource per buffer and plays it at call time). This separates
+      // "the graph renders silent buffers" from "the buffers are loud but
+      // don't reach the speakers" — the status/probe reads
+      // window.__audioStats. Purely observational (no behavior change).
+      window.__audioStats = { buffers: 0, maxPeak: 0.0 };
+      (() => {
+        if (!window.AudioBufferSourceNode) return;
+        const origStart = window.AudioBufferSourceNode.prototype.start;
+        window.AudioBufferSourceNode.prototype.start = function (...args) {
+          try {
+            if (this.buffer) {
+              window.__audioStats.buffers++;
+              for (let ch = 0; ch < this.buffer.numberOfChannels; ch++) {
+                const d = this.buffer.getChannelData(ch);
+                for (let i = 0; i < d.length; i += 8) {
+                  const a = Math.abs(d[i]);
+                  if (a > window.__audioStats.maxPeak) window.__audioStats.maxPeak = a;
+                }
+              }
+            }
+          } catch (err) { /* diagnostics only */ }
+          return origStart.apply(this, args);
+        };
+      })();
     </script>
     <script type="module">
       // MODULARIZE + EXPORT_ES6 (the 26c.1 recipe): the default export
