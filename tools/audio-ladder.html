@@ -1,0 +1,86 @@
+<!doctype html>
+<!-- tools/audio-ladder.html — the AUDIO ISOLATION LADDER (no build, no
+     server: open this file directly, or serve it). Three mechanisms, one
+     440 Hz tone each; click a button, hear a 1.5 s beep or not.
+     Each button reports the context state + sample rate in the status
+     line below.
+
+     1. Oscillator — the browser's own simplest path (the control).
+     2. Buffer, cpal's EXACT mechanism — createBuffer(2, 2048, 44100)
+        (cpal hardcodes 44100), channel data copied per-channel,
+        BufferSourceNode connected to destination, node.start() AT CALL
+        TIME, node NOT held (dropped when the handler returns — exactly
+        what vendor/cpal-0.15.3/src/host/emscripten/mod.rs did).
+     3. Buffer, the FIXED mechanism — same buffer, but the node is HELD
+        alive and start_with_when(audio clock + epsilon) — what the
+        patched host now does.
+
+     If 1 beeps but 2 does not: the browser GCs the dropped source node
+     (the bug; 3 must beep). If 1 beeps but 2 AND 3 do not: the
+     createBuffer/BufferSource path itself fails in your browser (a
+     resampler/rate issue). If NONE beep: the context/speaker path
+     (and cpal cannot work there at all).
+  -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>audio ladder</title>
+    <style>
+      body { font-family: monospace; margin: 2rem; background: #111; color: #ddd; }
+      button { display: block; margin: 0.7rem 0; padding: 0.8rem 1.4rem; font-size: 1.1rem; }
+      #out { margin-top: 1.2rem; white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <h3>audio ladder</h3>
+    <button id="b1">1. oscillator (control)</button>
+    <button id="b2">2. buffer, cpal's exact way (dropped node, immediate start)</button>
+    <button id="b3">3. buffer, fixed way (held node, audio-clock start)</button>
+    <div id="out"></div>
+    <script>
+      const out = (t) => { document.getElementById("out").textContent += t + "\n"; };
+      const rate = 44100; // cpal's hardcoded rate — deliberately NOT the context's
+      const frames = 2048; // cpal's DEFAULT_BUFFER_SIZE
+      const ctxHolder = {};
+      const freshCtx = () => (ctxHolder.c = new (window.AudioContext || window.webkitAudioContext)());
+
+      const toneBuffer = (ctx) => {
+        const buf = ctx.createBuffer(2, frames, rate);
+        for (let ch = 0; ch < 2; ch++) {
+          const d = buf.getChannelData(ch);
+          for (let i = 0; i < frames; i++) d[i] = 0.4 * Math.sin(2 * Math.PI * 440 * (i / rate));
+        }
+        return buf;
+      };
+
+      const held = [];
+
+      document.getElementById("b1").onclick = async () => {
+        const ctx = freshCtx(); await ctx.resume().catch((e) => out("resume err: " + e));
+        const o = ctx.createOscillator(); o.frequency.value = 440; o.connect(ctx.destination);
+        o.start(); o.stop(ctx.currentTime + 1.5);
+        out(`1: state=${ctx.state} rate=${ctx.sampleRate} (osc)`);
+      };
+
+      document.getElementById("b2").onclick = async () => {
+        const ctx = freshCtx(); await ctx.resume().catch((e) => out("resume err: " + e));
+        const src = ctx.createBufferSource();
+        src.buffer = toneBuffer(ctx);
+        src.connect(ctx.destination);
+        src.start(); // AT CALL TIME; `src` dropped when this handler returns (cpal's way)
+        out(`2: state=${ctx.state} rate=${ctx.sampleRate} (cpal's exact way: dropped node, immediate start)`);
+      };
+
+      document.getElementById("b3").onclick = async () => {
+        const ctx = freshCtx(); await ctx.resume().catch((e) => out("resume err: " + e));
+        const src = ctx.createBufferSource();
+        src.buffer = toneBuffer(ctx);
+        src.connect(ctx.destination);
+        held.push(src); // held: the GC cannot reap it
+        const when = ctx.currentTime + 0.05;
+        src.start(when); // scheduled on the AUDIO clock
+        out(`3: state=${ctx.state} rate=${ctx.sampleRate} when=${when.toFixed(3)} (fixed way: held node, audio-clock start)`);
+      };
+    </script>
+  </body>
+</html>

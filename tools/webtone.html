@@ -1,0 +1,34 @@
+<!doctype html>
+<!-- tools/webtone.html — the cpal-only rung's page: serve
+     target/package/webtone/ (webtone.js/.wasm staged beside this file),
+     click, and a 440 Hz sine plays straight through the vendored cpal
+     emscripten host (no rust-synth, no game). The console shows the
+     host's every step. -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>webtone</title>
+    <style>
+      body { font-family: monospace; margin: 2rem; background: #111; color: #ddd; }
+      button { padding: 0.8rem 1.4rem; font-size: 1.1rem; }
+      #out { margin-top: 1.2rem; white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <h3>webtone (cpal only)</h3>
+    <button id="go">start the 440 Hz sine (cpal's emscripten host)</button>
+    <div id="out"></div>
+    <script>
+      const out = (t) => { document.getElementById("out").textContent += t + "\n"; };
+      let mod = null;
+      document.getElementById("go").onclick = async () => {
+        if (!mod) {
+          const m = await import("./webtone.js");
+          mod = await m.default();
+          out("module booted");
+        }
+        out(mod.startTone());
+      };
+    </script>
+  </body>
+</html>

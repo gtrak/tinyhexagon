@@ -1,0 +1,93 @@
+//! The audio ladder's cpal-only wasm rung (issue 09 isolation): a 440 Hz
+//! sine through the vendored cpal emscripten host's output path —
+//! `default_host` → `default_output_device` → `build_output_stream` (the
+//! setTimeout + AudioBufferSourceNode loop) → `play`. NO rust-synth, NO
+//! game, NO director: if this is silent on a device, the cpal emscripten
+//! host itself is broken there (and the fix is in the host, not the
+//! synth/game stack).
+//!
+//! The page (tools/webtone.html) starts it from a real gesture via the
+//! exported `startTone()` (the autoplay policy) and reports the host's
+//! every step to the browser console.
+
+#[cfg(target_os = "emscripten")]
+use wasm_bindgen::prelude::*;
+
+#[cfg(target_os = "emscripten")]
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = console, js_name = log)]
+    fn console_log(s: &str);
+}
+
+/// Build + play a 440 Hz sine (F32 stereo, cpal's hardcoded 44100 config)
+/// through the emscripten host's own output path. Called from the page's
+/// gesture (the autoplay policy).
+#[cfg(target_os = "emscripten")]
+#[wasm_bindgen(js_name = startTone)]
+pub fn start_tone() -> String {
+    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+    use cpal::{SampleRate, StreamConfig};
+
+    let host = cpal::default_host();
+    let Some(device) = host.default_output_device() else {
+        let m = "webtone: no default output device".to_string();
+        console_log(&m);
+        return m;
+    };
+    let config: StreamConfig = StreamConfig {
+        channels: 2,
+        sample_rate: SampleRate(44_100),
+        buffer_size: cpal::BufferSize::Default,
+    };
+    console_log(&format!("webtone: building stream ({config:?})"));
+
+    let mut phase: f32 = 0.0;
+    let built = device.build_output_stream(
+        &config,
+        move |data: &mut [f32], _| {
+            for frame in data.chunks_mut(2) {
+                for s in frame.iter_mut() {
+                    *s = 0.4 * phase.sin();
+                }
+                phase += 2.0 * std::f32::consts::PI * 440.0 / 44_100.0;
+                if phase > 2.0 * std::f32::consts::PI {
+                    phase -= 2.0 * std::f32::consts::PI;
+                }
+            }
+        },
+        |err| console_log(&format!("webtone: stream error: {err}")),
+        None,
+    );
+    console_log("webtone: stream built; play()");
+    match built {
+        Ok(s) => match s.play() {
+            Ok(()) => {
+                console_log("webtone: play() ok — the sine should be audible");
+                // Keep the stream alive (a dropped stream stops it).
+                std::mem::forget(s);
+                "webtone: playing".to_string()
+            }
+            Err(e) => {
+                let m = format!("webtone: play() failed: {e}");
+                console_log(&m);
+                m
+            }
+        },
+        Err(e) => {
+            let m = format!("webtone: build failed: {e}");
+            console_log(&m);
+            m
+        }
+    }
+}
+
+/// The emscripten module's entry: an EMPTY main (the exports are the
+/// surface; the page calls `startTone()` from its gesture).
+#[cfg(target_os = "emscripten")]
+fn main() {}
+
+#[cfg(not(target_os = "emscripten"))]
+pub fn main() {
+    println!("the webtone rung builds for wasm32-unknown-emscripten only");
+}

@@ -1,0 +1,18 @@
+[package]
+name = "th-webtone"
+description = "The audio ladder's cpal-only wasm rung (issue 09 isolation): ONE 440 Hz sine straight through the vendored cpal emscripten host — no rust-synth, no game, no engine. If this is silent on a device, the cpal emscripten host itself is broken there."
+version.workspace = true
+edition.workspace = true
+
+# The ladder rung builds ONLY for emscripten (the host gate never builds
+# it — it stays out of default-members and the emscripten CI recipe):
+[[bin]]
+name = "webtone"
+path = "src/main.rs"
+
+[dependencies]
+cpal = "0.15.3"
+
+[target.'cfg(target_os = "emscripten")'.dependencies]
+wasm-bindgen = "0.2.129"
+web-sys = { version = "0.3.106", features = ["console", "Window"] }

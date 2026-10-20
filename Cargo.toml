@@ -14,6 +14,7 @@ members = [
     "crates/th-app",
     "crates/th-android",
     "crates/th-web",
+    "crates/th-webtone",
 ]
 # The default member: `cargo run` / bare `cargo build` at the repo root
 # target the `tinyhexagon` stub binary (the th-app bin — plan 002 issue 03;
