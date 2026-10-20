@@ -115,6 +115,22 @@ impl AudioEngine {
 }
 
 impl EngineHandle {
+    /// 09 instrumentation — the emscripten WebAudio context's live state
+    /// (the tinyhexagon status probe's `ctx=` field); `None`-equivalent
+    /// (an empty string) on other hosts. The setTimeout-driven graph
+    /// renders even while the context is suspended — only this proves
+    /// the browser is actually playing.
+    pub fn audio_context_state(&self) -> String {
+        #[cfg(target_os = "emscripten")]
+        {
+            return self._stream.audio_context_state();
+        }
+        #[cfg(not(target_os = "emscripten"))]
+        {
+            String::new()
+        }
+    }
+
     /// Rebuild the master DSP graph from the current track list. Call
     /// this after mutating any `track.kind`. Cheap enough for live use —
     /// the audio callback sees the new graph on its next buffer.

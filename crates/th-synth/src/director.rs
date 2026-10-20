@@ -311,6 +311,16 @@ impl MusicDirector {
         self.live.is_some()
     }
 
+    /// 09 instrumentation — the live engine's WebAudio context state
+    /// ("" on the fallback clock / non-emscripten hosts).
+    #[must_use]
+    pub fn audio_context_state(&self) -> String {
+        match &self.live {
+            Some(e) => e.audio_context_state(),
+            None => String::new(),
+        }
+    }
+
     /// The deterministic no-device director (the fallback clock only) —
     /// the tests' entry: parallel test threads opening live audio devices
     /// concurrently crash the Windows WASAPI host (the flaky

@@ -221,6 +221,16 @@ macro_rules! impl_platform_host {
                 &self.0
             }
 
+            /// 09 instrumentation — the emscripten WebAudio context's live
+            /// state ("running"/"suspended"/"closed"); empty on other hosts.
+            #[cfg(target_os = "emscripten")]
+            pub fn audio_context_state(&self) -> String {
+                match &self.0 {
+                    StreamInner::Emscripten(s) => s.audio_context_state().to_string(),
+                    _ => String::new(),
+                }
+            }
+
             /// Returns a mutable reference to the underlying platform specific implementation of
             /// this `Stream`.
             pub fn as_inner_mut(&mut self) -> &mut StreamInner {

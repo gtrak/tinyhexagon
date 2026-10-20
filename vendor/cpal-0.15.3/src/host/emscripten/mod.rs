@@ -34,6 +34,23 @@ pub struct Stream {
     audio_ctxt: AudioContext,
 }
 
+impl Stream {
+    /// 09 instrumentation — the WebAudio context's live state
+    /// ("running"/"suspended"/"closed"): the tinyhexagon status probe's
+    /// `ctx=` field. The setTimeout-driven graph keeps rendering (the
+    /// peaks/phase clock advance) even while the context is SUSPENDED —
+    /// only this field proves the browser is actually PLAYING.
+    pub fn audio_context_state(&self) -> &'static str {
+        use web_sys::AudioContextState;
+        match self.audio_ctxt.state() {
+            AudioContextState::Running => "running",
+            AudioContextState::Suspended => "suspended",
+            AudioContextState::Closed => "closed",
+            _ => "unknown",
+        }
+    }
+}
+
 // Index within the `streams` array of the events loop.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct StreamId(usize);

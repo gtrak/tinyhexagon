@@ -713,6 +713,7 @@ pub fn run(
             runtime.music.borrow().is_live(),
             runtime.help_disabled(),
             runtime.last_beat_energy,
+            runtime.music.borrow().audio_context_state(),
         );
     });
 }
@@ -970,6 +971,9 @@ mod web {
     static STARTED: AtomicBool = AtomicBool::new(false);
     static AUDIO_LIVE: AtomicBool = AtomicBool::new(false);
     static ENERGY: AtomicU32 = AtomicU32::new(0);
+    // The WebAudio context state ("running"/"suspended"/"" — the string
+    // can't sit in an atomic; a small OnceLock-like swap via a Mutex).
+    static CTX: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
     static HELP_OFF: AtomicBool = AtomicBool::new(false);
     static ANGLE: AtomicU32 = AtomicU32::new(0.0_f32.to_bits());
 
@@ -988,12 +992,16 @@ mod web {
         audio_live: bool,
         help_off: bool,
         energy: f32,
+        ctx: String,
     ) {
         TICKS.fetch_add(1, Ordering::Relaxed);
         STAGE.store(stage, Ordering::Relaxed);
         STARTED.store(started, Ordering::Relaxed);
         AUDIO_LIVE.store(audio_live, Ordering::Relaxed);
         ENERGY.store(energy.to_bits(), Ordering::Relaxed);
+        if let Ok(mut c) = CTX.lock() {
+            *c = Some(ctx);
+        }
         HELP_OFF.store(help_off, Ordering::Relaxed);
         ANGLE.store(angle.to_bits(), Ordering::Relaxed);
     }
@@ -1006,12 +1014,13 @@ mod web {
             return "tinyhexagon web: booted=false".to_string();
         }
         format!(
-            "tinyhexagon web: booted=true;ticks={};stage={};started={};angle={:.4};audio={};energy={:.4};help={}",
+            "tinyhexagon web: booted=true;ticks={};stage={};started={};angle={:.4};audio={};ctx={};energy={:.4};help={}",
             TICKS.load(Ordering::Relaxed),
             STAGE.load(Ordering::Relaxed),
             STARTED.load(Ordering::Relaxed),
             f32::from_bits(ANGLE.load(Ordering::Relaxed)),
             if AUDIO_LIVE.load(Ordering::Relaxed) { "live" } else { "fallback" },
+            CTX.lock().ok().and_then(|c| c.clone()).unwrap_or_default(),
             f32::from_bits(ENERGY.load(Ordering::Relaxed)),
             if HELP_OFF.load(Ordering::Relaxed) { "off" } else { "auto" },
         )
