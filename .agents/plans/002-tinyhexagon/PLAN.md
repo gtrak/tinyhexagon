@@ -1,6 +1,6 @@
 # 002 — tinyhexagon
 
-Status: APPROVED (issues 000–001, 02a–03, 04a–04b, 03c–03d, 05a–05b, 06, 07, 08a, 08b and 09-taste-1/2 landed; upstream HWM dcd9fdeb synced 2026-10-19; 08c + 09 final next)
+Status: APPROVED (issues 000–001, 02a–03, 04a–04b, 03c–03d, 05a–05b, 06, 07, 00–08c all LANDED; 09 taste passes 1–2 + the operator fix pass landed; upstream HWM dcd9fdeb synced 2026-10-19; 09 final (tuning/docs/playtests) next)
 Owner: operator; orchestrator: this session
 Plan file: `.agents/plans/002-tinyhexagon/PLAN.md`
 Issues: `00-*.md` … `09-*.md` in this folder
@@ -148,8 +148,8 @@ web `th-web` emscripten bin. All use the same `th-render`/`bridge` path.
 | 05b | `th-synth` Android/wasm cross-target spike | 05a | LANDED |
 | 06 | Tiny content pack (`_RELEASE/Packs/tiny`) | 03 | LANDED |
 | 07 | `th-app` tiny runtime/loop + renderer integration (desktop) | 04a, 04b, 05a, 06 | LANDED |
-| 08 | Android/web entries + packaging/CI/release names | 07, 05b | 08a/08b LANDED; 08c IN PROGRESS |
-| 09 | Tuning, docs, gate, playtests | 08 | IN PROGRESS (09-taste-1/2 landed; wasm audio verified) |
+| 08 | Android/web entries + packaging/CI/release names | 07, 05b | LANDED (08a `29f4fbf1`, 08b `2deca9c4`, 08c `ab5d9872`) |
+| 09 | Tuning, docs, gate, playtests | 08 | IN PROGRESS (taste 1+2, wasm audio verified, drag/touch-action + #fs removal + slower cursor `bd983b62`; final tuning/docs/playtests left) |
 
 Dependency graph:
 

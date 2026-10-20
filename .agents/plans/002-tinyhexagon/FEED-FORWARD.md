@@ -1168,3 +1168,28 @@ re-reading the whole history.
   the first 10 s with a child; the base pattern library is global (the
   reference levels are denser too); the live web deploy/audio check; 08b/
   08c remain separate.
+
+## 09 operator fix pass (bd983b62)
+
+- **Touch died on an accidental drag (web)**: the canvas had no
+  `touch-action` CSS — pointerdown's preventDefault does not stop the
+  browser's pan/zoom, so a small vertical drag fired pointercancel
+  (folded to TouchEnded) and the hold died. Fixed in the shell:
+  canvas `touch-action: none`, page `overscroll-behavior: none`,
+  viewport `user-scalable=no`. Verified with a CDP touchStart + 1.8 s
+  vertical drift: the hold survives, the angle keeps rotating
+  (.agents/evidence/09/web-touch-drag.log).
+- **The `#fs` DOM overlay button removed** (two fullscreen controls
+  confused the kid): the in-canvas top-right icon is the control; the
+  `web_fs_button_get_or_create` seam is inert (every #fs consumer
+  no-ops). If a later cleanup wants it gone entirely, delete the
+  function + the slot plumbing together.
+- **Slower cursor**: journey `speedMult` 0.55→0.40, the difficulty
+  ramp softened 0.085→0.06/stage (plateau 2.15→1.65).
+- **Live-page lesson**: the 09-taste-2 audio fix reached gh-pages only
+  after its CI + pages deploy (~25 min); the operator's "still silent"
+  was the stale pre-fix deploy. Live-page verification probe:
+  `audio=live;energy=0.0343` on https://gtrak.github.io/tinyhexagon/.
+- The probe's baseline `help=auto` assertion assumes no pre-gesture
+  input; the helping hand's attract steering is why the game plays
+  itself until the first touch.
