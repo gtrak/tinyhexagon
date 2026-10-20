@@ -311,7 +311,13 @@ impl MusicDirector {
         self.live.is_some()
     }
 
-    fn new_fallback() -> Self {
+    /// The deterministic no-device director (the fallback clock only) —
+    /// the tests' entry: parallel test threads opening live audio devices
+    /// concurrently crash the Windows WASAPI host (the flaky
+    /// STATUS_ACCESS_VIOLATION in the CI windows gate); the fallback
+    /// director never touches a device on any platform.
+    #[must_use]
+    pub fn new_fallback() -> Self {
         let stage = 0u32;
         let p = stage_params(stage);
         Self {

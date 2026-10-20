@@ -36,7 +36,9 @@ fn kid_runtime(assets: Arc<th_assets::Assets>, window: bool) -> TinyRuntime {
         window,
         kid_config(th_config::Config::default()),
         None,
-        MusicDirector::start(),
+        // The fallback director: no live device in tests (the WASAPI
+        // concurrent-open crash — see MusicDirector::new_fallback).
+        MusicDirector::new_fallback(),
     )
 }
 
@@ -379,7 +381,9 @@ fn the_run_writes_no_config_profiles_or_replays() {
         true,
         kid_config(th_config::Config::default()),
         None,
-        MusicDirector::start(),
+        // The fallback director: no live device in tests (the WASAPI
+        // concurrent-open crash — see MusicDirector::new_fallback).
+        MusicDirector::new_fallback(),
     );
     for _ in 0..(10 * 64) {
         rt.frame(DT, &idle_events());
