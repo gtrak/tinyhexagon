@@ -380,9 +380,31 @@ where
 
         let typed_array: Float32Array = temporary_buffer.as_slice().into();
 
+        // 09 instrumentation (tinyhexagon) — read the VIEW's own values
+        // (it is a view over the wasm linear memory): sane values here +
+        // a silent buffer at start() = the getChannelData write half is
+        // broken; zeros here = the view/glue is broken (the same glue
+        // family that dropped lAudioContext's const).
+        {
+            use std::cell::Cell;
+            thread_local! { static DBG: Cell<u32> = const { Cell::new(0) }; }
+            let n = DBG.get() + 1;
+            DBG.set(n);
+            if n % 10 == 1 {
+                console_log(&format!(
+                    "[cpal] copy: view.len={} view[0]={:.4} view[100]={:.4} view[1000]={:.4} temp[0]={:.4} temp[1000]={:.4}",
+                    typed_array.length(),
+                    typed_array.get_index(0),
+                    typed_array.get_index(100),
+                    typed_array.get_index(1000),
+                    temporary_buffer.first().copied().unwrap_or(f32::NAN),
+                    temporary_buffer.get(1000).copied().unwrap_or(f32::NAN),
+                ));
+            }
+        }
+
         debug_assert_eq!(temporary_buffer.len() % config.channels as usize, 0);
 
-        let src_buffer = Float32Array::new(typed_array.buffer().as_ref());
         let context = audio_ctxt;
         let buffer = context
             .create_buffer(
@@ -391,14 +413,30 @@ where
                 sample_rate as f32,
             )
             .expect("Buffer could not be created");
-        for channel in 0..config.channels {
-            let mut buffer_content = buffer
-                .get_channel_data(channel as u32)
-                .expect("Should be impossible");
-            for (i, buffer_content_item) in buffer_content.iter_mut().enumerate() {
-                *buffer_content_item =
-                    src_buffer.get_index(i as u32 * config.channels as u32 + channel as u32);
-            }
+        // 09 fix (tinyhexagon) — THE WEB SILENCE: web-sys's
+        // `get_channel_data` returns a `Vec<f32>` — a COPY — so the old
+        // de-interleave loop wrote the samples into the copy and dropped
+        // it: the AudioBuffer stayed at its zero-initialized content
+        // (silence on every browser, with a perfectly healthy graph,
+        // clock and loop). `copy_to_channel` writes THROUGH the live
+        // AudioBuffer: de-interleave into per-channel Vecs first, then
+        // copy each channel in.
+        let channels = config.channels as usize;
+        let frames = buffer_size_frames as usize;
+        let mut chans: Vec<Vec<f32>> = (0..channels).map(|_| Vec::with_capacity(frames)).collect();
+        for (i, sample) in temporary_buffer.iter().enumerate() {
+            chans[i % channels].push(*sample);
+        }
+        for (channel, data) in chans.iter().enumerate() {
+            buffer
+                .copy_to_channel(data, channel as i32)
+                .map_err(|e| {
+                    console_log(&format!(
+                        "[cpal] copy_to_channel(ch {channel}) failed: {:?}",
+                        e
+                    ))
+                })
+                .ok();
         }
 
         let node = context

@@ -31,7 +31,9 @@ pub fn start_tone() -> String {
 
     console_log(&format!(
         "webtone: ua={}",
-        web_sys::window().map(|w| w.navigator().user_agent().unwrap_or_default()).unwrap_or_default()
+        web_sys::window()
+            .map(|w| w.navigator().user_agent().unwrap_or_default())
+            .unwrap_or_default()
     ));
     // Surface the constructor's REAL exception (the host's availability
     // probe discards it): create one directly and log the DOMException.
