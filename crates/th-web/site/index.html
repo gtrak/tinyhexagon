@@ -116,6 +116,12 @@
         const s = mod.status();
         document.getElementById("status").textContent = s;
         console.log("status " + s);
+        // The unlock CONFIRMATION: the first poll that sees `audio=live`
+        // (within 1 s of the gesture) logs the flip once.
+        if (!audioLive && s.includes("audio=live")) {
+          audioLive = true;
+          console.log("[shell] audio unlocked (status poll)");
+        }
       }, 1000);
       // plan 002 issue 08a — the FIRST-GESTURE audio unlock, hardened
       // in the 09 pass: EVERY pointerdown / keydown calls the exported
@@ -129,12 +135,15 @@
       // silent).
       let audioLive = false;
       const onGesture = (source) => {
+        if (audioLive) return;
         try {
+          // The unlock ATTEMPT (every gesture until live — the export is
+          // idempotent): the flip itself is confirmed by the status poll
+          // below, because the status's `audio=` static is written by the
+          // NEXT rAF frame — reading it here (synchronously) sees the
+          // pre-gesture value and would never log.
           mod.resumeAudio();
-          if (!audioLive && mod.status().includes("audio=live")) {
-            audioLive = true;
-            console.log("[shell] audio unlocked (" + source + ")");
-          }
+          console.log("[shell] audio unlock requested (" + source + ")");
         } catch (err) {
           console.error("[shell] resumeAudio failed: " + err);
         }
