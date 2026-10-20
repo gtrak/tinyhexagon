@@ -299,7 +299,14 @@ impl MusicDirector {
 
     #[cfg(target_os = "emscripten")]
     pub fn start_on_gesture(&mut self) {
-        self.try_start_live();
+        if !self.try_start_live() {
+            // A failed start leaves the fallback; nothing more to do —
+            // the next gesture retries.
+            return;
+        }
+        // A previously-started engine whose context is still suspended
+        // (a resume rejected earlier) gets a fresh resume per gesture.
+        self.replay_context();
     }
 
     pub fn resume(&mut self) {
@@ -318,6 +325,16 @@ impl MusicDirector {
         match &self.live {
             Some(e) => e.audio_context_state(),
             None => String::new(),
+        }
+    }
+
+    /// 09 fix — re-resume the live context from a user gesture (the
+    /// rejection case: a context built once outside an activation stays
+    /// suspended; each new gesture gets a resume() attempt). No-op on
+    /// the fallback clock / other hosts.
+    pub fn replay_context(&mut self) {
+        if let Some(e) = &self.live {
+            e.replay_context();
         }
     }
 

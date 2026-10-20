@@ -231,6 +231,15 @@ macro_rules! impl_platform_host {
                 }
             }
 
+            /// 09 fix — re-resume a suspended WebAudio context from a new
+            /// user gesture (the page's per-gesture replay).
+            #[cfg(target_os = "emscripten")]
+            pub fn replay(&self) {
+                if let StreamInner::Emscripten(s) = &self.0 {
+                    s.replay();
+                }
+            }
+
             /// Returns a mutable reference to the underlying platform specific implementation of
             /// this `Stream`.
             pub fn as_inner_mut(&mut self) -> &mut StreamInner {

@@ -131,6 +131,21 @@ impl EngineHandle {
         }
     }
 
+    /// 09 fix (tinyhexagon) — re-resume a suspended WebAudio context from
+    /// a NEW user gesture (a no-op on other hosts / while running). The
+    /// page's gesture handler calls this every gesture while the status
+    /// says the music isn't playing.
+    pub fn replay_context(&self) {
+        #[cfg(target_os = "emscripten")]
+        {
+            self._stream.replay();
+        }
+        #[cfg(not(target_os = "emscripten"))]
+        {
+            let _ = self;
+        }
+    }
+
     /// Rebuild the master DSP graph from the current track list. Call
     /// this after mutating any `track.kind`. Cheap enough for live use —
     /// the audio callback sees the new graph on its next buffer.

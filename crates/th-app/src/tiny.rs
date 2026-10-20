@@ -942,12 +942,17 @@ mod web {
     /// Start the live synth engine now (called from the page's gesture, so
     /// cpal builds/resumes its `AudioContext` inside the user activation).
     pub(super) fn resume_audio() {
+        ATTEMPTS.fetch_add(1, Ordering::Relaxed);
         DIRECTOR.with(|d| {
             if let Some(music) = d.borrow().as_ref() {
                 music.borrow_mut().start_on_gesture();
             }
         });
     }
+
+    /// The unlock attempts so far (the status's `attempts=` — a gesture
+    /// that never increments this never reached the export).
+    static ATTEMPTS: AtomicU32 = AtomicU32::new(0);
 
     /// The preloaded `_RELEASE` tree's MEMFS mount (the root
     /// `.cargo/config.toml`'s `--preload-file=_RELEASE@/RELEASE` +
@@ -1014,13 +1019,14 @@ mod web {
             return "tinyhexagon web: booted=false".to_string();
         }
         format!(
-            "tinyhexagon web: booted=true;ticks={};stage={};started={};angle={:.4};audio={};ctx={};energy={:.4};help={}",
+            "tinyhexagon web: booted=true;ticks={};stage={};started={};angle={:.4};audio={};ctx={};attempts={};energy={:.4};help={}",
             TICKS.load(Ordering::Relaxed),
             STAGE.load(Ordering::Relaxed),
             STARTED.load(Ordering::Relaxed),
             f32::from_bits(ANGLE.load(Ordering::Relaxed)),
             if AUDIO_LIVE.load(Ordering::Relaxed) { "live" } else { "fallback" },
             CTX.lock().ok().and_then(|c| c.clone()).unwrap_or_default(),
+            ATTEMPTS.load(Ordering::Relaxed),
             f32::from_bits(ENERGY.load(Ordering::Relaxed)),
             if HELP_OFF.load(Ordering::Relaxed) { "off" } else { "auto" },
         )
@@ -1131,26 +1137,14 @@ pub fn web_status() -> String {
 /// The autoplay-policy guard (the 08 contract's risk + the 05b hazard):
 /// the live engine's `AudioContext.resume()` must run INSIDE a user
 /// activation, and cpal 0.15.3's emscripten host PANICS on the
-/// rejected resume promise (the `spawn_local`'s `Err` arm). So the
-/// live start is requested only when the browser reports user
-/// activation (`is_active` — the transient or persistent state at the
-/// call instant, inside the gesture handler); otherwise the fallback
-/// clock keeps running until a permitted gesture (the re-fire's path).
-/// Whether a synthetic input grants activation is the BROWSER's: the
-/// 041 measurement saw none (fallback clock there), while the 10-19
-/// Chrome 148 probe run's synthetic `keydown` DID grant it — that run
-/// measured `audio=live`. Either outcome is a clean result; this guard
-/// is the no-activation half's safety.
+/// rejected resume promise — which is NO LONGER a panic (the vendored
+/// cpal logs it and the next gesture re-resumes). So the guard is GONE:
+/// every gesture attempt starts/re-resumes the engine directly (the
+/// status's `attempts=` counts them; a gesture that never reaches this
+/// function is a page/input problem, not an audio one).
 #[cfg(target_os = "emscripten")]
 pub fn web_request_audio_unlock() {
-    let activated = web_sys::window()
-        // web-sys 0.3.106: `Window::navigator()` returns a `Navigator`
-        // (never null) — a `Some` arm, not an `and_then` Option arm.
-        .map(|w| w.navigator())
-        .is_some_and(|n| n.user_activation().is_active());
-    if activated {
-        web::resume_audio();
-    }
+    web::resume_audio();
 }
 
 #[cfg(test)]

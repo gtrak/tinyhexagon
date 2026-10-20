@@ -15,6 +15,15 @@ use crate::{
 
 // The emscripten backend currently works by instantiating an `AudioContext` object per `Stream`.
 // Creating a stream creates a new `AudioContext`. Destroying a stream destroys it. Creation of a
+
+/// 09 (tinyhexagon) — the console's `log` binding (a manual extern: the
+/// `console` web-sys feature is not enabled in cpal's dep spec, and the
+/// rejection path must be VISIBLE — the old panic killed the game).
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = console, js_name = log)]
+    fn console_log(s: &str);
+}
 // `Host` instance initializes the `stdweb` context.
 
 /// The default emscripten host type.
@@ -48,6 +57,31 @@ impl Stream {
             AudioContextState::Closed => "closed",
             _ => "unknown",
         }
+    }
+
+    /// 09 fix (tinyhexagon) — re-resume a suspended context from a NEW
+    /// user gesture (the page calls this on every gesture while the
+    /// music isn't running). Idempotent while running (a running
+    /// context's resume() resolves immediately); a rejected resume logs
+    /// instead of panicking.
+    pub fn replay(&self) {
+        if self.audio_ctxt.state() == web_sys::AudioContextState::Running {
+            return;
+        }
+        let future = JsFuture::from(
+            self.audio_ctxt
+                .resume()
+                .expect("Could not resume the stream"),
+        );
+        spawn_local(async {
+            match future.await {
+                Ok(value) => assert!(value.is_undefined()),
+                Err(value) => console_log(&format!(
+                    "[cpal] AudioContext.resume() rejected again: {:?}",
+                    value
+                )),
+            }
+        });
     }
 }
 
@@ -253,10 +287,17 @@ impl StreamTrait for Stream {
                 .resume()
                 .expect("Could not resume the stream"),
         );
+        // 09 fix (tinyhexagon) — the resume rejection is NOT fatal: the
+        // C++-era panic here killed the whole game on a browser that
+        // rejects a resume outside a user activation. Log it; the page's
+        // next gesture re-resumes (`Stream::replay`).
         spawn_local(async {
             match future.await {
                 Ok(value) => assert!(value.is_undefined()),
-                Err(value) => panic!("AudioContext.resume() promise was rejected: {:?}", value),
+                Err(value) => console_log(&format!(
+                    "[cpal] AudioContext.resume() rejected (no activation?); retrying on the next gesture: {:?}",
+                    value
+                )),
             }
         });
         Ok(())
