@@ -105,6 +105,22 @@ impl CPlayer {
         self.pos
     }
 
+    /// plan 002 issue 09 (shards-3) — the player's tangential (ring)
+    /// velocity in px/FT: this frame's angle increment (the
+    /// `current_speed` × direction, in radians) × the orbit radius,
+    /// scaled to the FT clock (`+` = the CCW sweep direction). `0.0`
+    /// while the player stands still (or for a zero/negative `ft` —
+    /// the frame-scaled `current_speed` would divide by zero). The
+    /// shrapnel's spawn aim uses it to bias the tangential-carrier
+    /// direction at a soft hit.
+    #[must_use]
+    pub fn tangential_speed(&self, movement_dir: i32, ft: f32) -> f32 {
+        if ft <= 0.0 {
+            return 0.0;
+        }
+        to_rad(self.current_speed * movement_dir as f32) * self.radius / ft
+    }
+
     /// `getPlayerAngle()` — `_angle`.
     #[must_use]
     pub fn get_player_angle(&self) -> f32 {

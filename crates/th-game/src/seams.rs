@@ -357,6 +357,16 @@ impl PcgCosmeticRng {
             rng: ReentrantMutex::new(Pcg32Fast::from_seed(seed)),
         }
     }
+
+    /// A SEEDED stream: the propagation tests pin their rng draws
+    /// (plan 002 issue 09 shards-3) — same distributions as
+    /// [`Self::new`], deterministic seed.
+    #[must_use]
+    pub fn with_seed(seed: u64) -> Self {
+        Self {
+            rng: ReentrantMutex::new(Pcg32Fast::from_seed(seed)),
+        }
+    }
 }
 
 impl Default for PcgCosmeticRng {

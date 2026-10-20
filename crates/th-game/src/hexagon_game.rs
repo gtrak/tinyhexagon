@@ -49,7 +49,7 @@ use crate::camera::Camera;
 use crate::lua_state::{ReentrantMutex, ReentrantMutexGuard, SharedState, SharedStore};
 use crate::renderer::Renderer;
 use crate::seams::{Audio, CosmeticRng, Joystick, ScriptHost};
-use crate::shrapnel::{PendingChain, Shrapnel};
+use crate::shrapnel::Shrapnel;
 use crate::wall::{compute_wall_gaps, WallGap};
 use crate::{
     CPlayer, CWall, FastVertexVectorTris, HexagonGameStatus, LevelStatus, SpeedData, StateChange,
@@ -219,13 +219,14 @@ pub struct EngineState {
     pub(crate) swap_particles_spawn_info: Option<SwapParticleSpawnInfo>,
 
     // plan 002 issue 09 (rework) — the kid's collision shrapnel: the
-    // flying glass shards + the queued chain victims + the shatter
-    // sequence (each shatter event gets a unique burst id so the pieces
-    // of one wall never collide with each other — `shrapnel.rs` owns
-    // the contract).
+    // flying glass shards + the blast counter (each blast — the player's
+    // physical hit and every shard-impact shatter it causes — gets a
+    // unique `next_burst` id the shards inherit as their `burst` lineage;
+    // `shrapnel.rs` owns the contract). The propagation is physical
+    // (the impact pass in `update.rs` — plan 002 issue 09 shards-3), so
+    // there is no queued chain state anymore.
     pub(crate) shrapnel: Vec<Shrapnel>,
-    pub(crate) shrapnel_chains: Vec<PendingChain>,
-    pub(crate) shrapnel_burst_seq: u64,
+    pub(crate) next_burst: u32,
 
     // C++ `sf::Text messageText / (os -> status) / fpsText / timeText`
     // — the string content only (fonts/layout are
@@ -499,8 +500,7 @@ impl<S: SharedStore> HexagonGame<S> {
             swap_particles: Vec::new(),
             swap_particles_spawn_info: None,
             shrapnel: Vec::new(),
-            shrapnel_chains: Vec::new(),
-            shrapnel_burst_seq: 0,
+            next_burst: 0,
             message_text: String::new(),
             status_text: String::new(),
             fps_text: String::new(),
@@ -736,7 +736,7 @@ impl<S: SharedStore> HexagonGame<S> {
         e.swap_particles.clear();
         // 09 shrapnel cleanup.
         e.shrapnel.clear();
-        e.shrapnel_chains.clear();
+        e.next_burst = 0;
 
         // Re-init default flash effect.
         self.init_flash_effect(255, 255, 255);

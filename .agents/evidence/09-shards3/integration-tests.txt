@@ -1,0 +1,19 @@
+test a_soft_hit_shatters_the_wall_into_glass_shards_cut_from_its_quad ... ok
+test shard_physics_ride_momentum_drag_tumble_and_cull ... ok
+test the_shards_reach_the_draw_batches_as_glass_fans ... ok
+test the_full_0_1_2_propagation_crumbles_at_gen_2 ... ok
+test a_new_game_clears_the_shrapnel_and_the_bursts ... ok
+test a_shard_impact_shatters_a_neighbouring_wall_with_no_extra_bump ... ok
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+== soft_collisions (the test the impact pass changed) ==
+test set_difficulty_mult_clamps_out_of_range ... ok
+test non_soft_collision_kills_the_player_not_the_wall ... ok
+test set_difficulty_mult_writes_the_shared_mult ... ok
+test bump_serial_advances_once_per_killed_wall ... ok
+test soft_run_driven_into_a_wall_bumps_never_dies ... ok
+test soft_collision_kills_the_wall_not_the_player ... ok
+test non_soft_custom_wall_collision_kills_the_player ... ok
+test soft_custom_wall_collision_kills_the_wall_not_the_player ... ok
+test non_soft_run_driven_into_the_same_wall_dies_on_the_same_tick ... ok
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s

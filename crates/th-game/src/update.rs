@@ -23,10 +23,7 @@ use crate::hexagon_game::{
     SwapParticleSpawnInfo, TrailParticle,
 };
 use crate::lua_state::SharedStore;
-use crate::shrapnel::{
-    angle_distance, bounce_pairs, make_room, split_wall_quad, wall_mid_angle, PendingChain,
-    Shrapnel, CHAIN_HOP_FT, CHAIN_WALLS,
-};
+use crate::shrapnel::{bounce_pairs, make_room, split_wall_quad, Shrapnel, MAX_PROPAGATION};
 use crate::timeline::Outcome;
 use crate::{StateChange, Timeline2Runner};
 use th_config::{Jdir, Jid, TIME_STEP};
@@ -129,12 +126,14 @@ impl<S: SharedStore> HexagonGame<S> {
                 let mut e = self.est();
                 e.effect_timeline_manager.update(m_ft);
             }
-            // plan 002 issue 09 — the shrapnel pieces + the chain queue
-            // (outside the window gate: the bursts spawn on soft kills in
-            // headless runs too, so the update keeps the vector bounded
-            // there as well).
+            // plan 002 issue 09 — the shrapnel pieces: the motion/cull
+            // pass + the physical impact pass (shard–wall collisions
+            // drive the propagation — plan 002 issue 09 shards-3
+            // replaced the queued chain hops with this). Outside the
+            // window gate: the bursts spawn on soft kills in headless
+            // runs too, so the update keeps the vector bounded there as
+            // well.
             self.update_shrapnel(m_ft);
-            self.update_shrapnel_chains(m_ft);
 
             // C++ `if(!mustReplayInput()) updateInput(); else
             // <replay playback>` — the replay-playback half was retired by
@@ -545,20 +544,52 @@ impl<S: SharedStore> HexagonGame<S> {
             // here.
             if soft {
                 // plan 002 issue 04a — soft: the wall dies instead of the
-                // player (flash + one bump per PHYSICAL hit — the shrapnel
-                // chain's extra walls die "for free", one bump total).
+                // player (flash + one bump per PHYSICAL hit).
+                // plan 002 issue 09 (shards-3) — a shard impact may have
+                // shattered this wall EARLIER in this same tick (the
+                // impact pass runs before this one): a dead wall is not a
+                // second physical hit — no re-shatter, no second bump, and
+                // the player passes the broken glass unharmed.
+                if self.st().walls[i].is_dead() {
+                    continue;
+                }
                 // plan 002 issue 09 (rework) — the shatter: the hit wall's
-                // quad bursts into glass shards and up to two neighbours
-                // shatter a short hop later (the blast visibly spreading).
-                let mid = self.shatter_wall(i, &p_pos);
+                // quad bursts into glass shards at the impact point; the
+                // propagation to the neighbours is PHYSICAL (the impact
+                // pass: a shard that sweeps into a live wall shatters it —
+                // no queued hops, no extra bumps).
+                let (impact, tangential, burst) = {
+                    let g = self.st();
+                    let w = &g.walls[i];
+                    // The impact point: the wall vertex nearest the
+                    // player.
+                    let corners = w.get_vertex_positions();
+                    let mut impact = corners[0];
+                    let mut best = get_mag(&(corners[0] - p_pos));
+                    for v in &corners[1..] {
+                        let d = get_mag(&(*v - p_pos));
+                        if d < best {
+                            best = d;
+                            impact = *v;
+                        }
+                    }
+                    let e = self.est();
+                    // The player's tangential (ring) speed at the
+                    // impact — the burst's carrier direction bias.
+                    let tangential = e.player.tangential_speed(self.get_input_movement(), m_ft);
+                    let burst = e.next_burst;
+                    (impact, tangential, burst)
+                };
+                {
+                    let mut e = self.est();
+                    e.next_burst = e.next_burst.wrapping_add(1);
+                }
+                self.shatter_wall_at(i, &impact, tangential, burst, 0);
                 {
                     let mut g = self.st();
                     g.status.flash_effect = f32::max(g.status.flash_effect, 120.0_f32);
                 }
                 self.est().bump_serial += 1;
-                if let Some(mid) = mid {
-                    self.queue_shrapnel_chain(mid);
-                }
                 collided = true;
                 continue;
             }
@@ -665,32 +696,31 @@ impl<S: SharedStore> HexagonGame<S> {
 
     // ------------------------------------------------------------------
     // plan 002 issue 09 (rework) — the collision shrapnel: the glass
-    // shatter + the chain. `shrapnel.rs` owns the shard/queue contract.
+    // shatter + the physical propagation (the impact pass). `shrapnel.rs`
+    // owns the shard contract.
     // ------------------------------------------------------------------
 
-    /// Shatter wall `index`: kill it (the existing `retain` drops it),
-    /// cut its quad into glass shards that burst from the impact point
-    /// (the wall vertex nearest the player), and return the wall's
-    /// mid-angle for the chain queue (`None` = degenerate span; the wall
-    /// still died).
-    fn shatter_wall(&self, index: usize, p_pos: &Vec2) -> Option<f32> {
-        let (corners, impact, outward, mid, wall_color) = {
+    /// Shatter wall `index` at the blast origin `impact`: kill it (the
+    /// existing `retain` drops it), cut its quad into glass shards —
+    /// ~half a radial spray from `impact`, ~half tangential carriers
+    /// (the ring sweepers that carry the physical propagation, biased
+    /// by `tangential`, the hitter's tangential velocity in px/FT) —
+    /// with the lineage (`burst`, `generation`). The cap evicts the
+    /// oldest shards first.
+    fn shatter_wall_at(
+        &self,
+        index: usize,
+        impact: &Vec2,
+        tangential: f32,
+        burst: u32,
+        generation: u32,
+    ) {
+        let (corners, outward, wall_color) = {
             let g = self.st();
             let w = &g.walls[index];
-            // The impact point: the wall vertex nearest the player.
             let corners = w.get_vertex_positions();
-            let mut impact = corners[0];
-            let mut best = get_mag(&(corners[0] - *p_pos));
-            for v in &corners[1..] {
-                let d = get_mag(&(*v - *p_pos));
-                if d < best {
-                    best = d;
-                    impact = *v;
-                }
-            }
-            let outward = get_rad(&impact);
-            let mid = w.angle_span().map(|(s, e, _)| wall_mid_angle(s, e));
-            (corners, impact, outward, mid, self.get_color_wall())
+            let outward = get_rad(impact);
+            (corners, outward, self.get_color_wall())
         };
 
         {
@@ -699,23 +729,17 @@ impl<S: SharedStore> HexagonGame<S> {
         }
 
         // The glass burst: the wall's ACTUAL quad cut into 6..10
-        // irregular pieces (a jittered fan), each carrying mass-scaled
-        // radial impulse from the impact point + tangential jitter (the
-        // cosmetic rng — non-simulation, same policy as the swap
-        // particles). The cap evicts the oldest shards first; each
-        // shatter event gets a unique burst id (the pieces of one wall
-        // never collide with each other).
-        let burst = {
-            let mut e = self.est();
-            e.shrapnel_burst_seq += 1;
-            e.shrapnel_burst_seq
-        };
+        // irregular pieces (a jittered fan, biased to the impact
+        // point), each carrying the dual-mode spawn aim (the cosmetic
+        // rng — non-simulation, same policy as the swap particles).
         let shards = split_wall_quad(
             corners,
-            impact,
+            *impact,
             outward,
             wall_color,
             burst,
+            generation,
+            tangential,
             &*self.0.cosmetic_rng,
         );
         {
@@ -723,43 +747,14 @@ impl<S: SharedStore> HexagonGame<S> {
             make_room(&mut e.shrapnel, shards.len());
             e.shrapnel.extend(shards);
         }
-        mid
-    }
-
-    /// Queue up to [`CHAIN_WALLS`] neighbours of the hit wall — the two
-    /// live walls whose mid-angle is nearest the hit's — each with its
-    /// hop delay. The victim lookup happens at FIRE time (the wall
-    /// vector's `retain` may have removed candidates by then).
-    fn queue_shrapnel_chain(&self, hit_mid: f32) {
-        let victims: Vec<f32> = {
-            let g = self.st();
-            let mut mids: Vec<f32> = g
-                .walls
-                .iter()
-                .filter(|w| !w.is_dead())
-                .filter_map(|w| w.angle_span())
-                .map(|(s, e, _)| wall_mid_angle(s, e))
-                .collect();
-            mids.sort_by(|a, b| {
-                angle_distance(*a, hit_mid)
-                    .partial_cmp(&angle_distance(*b, hit_mid))
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-            mids.truncate(CHAIN_WALLS);
-            mids
-        };
-        let mut e = self.est();
-        for (i, mid) in victims.iter().enumerate() {
-            e.shrapnel_chains.push(PendingChain {
-                mid_angle: *mid,
-                delay: CHAIN_HOP_FT * (i as f32 + 1.0),
-            });
-        }
     }
 
     /// Advance the shards: ride + drag + tumble + life, the core bounce
-    /// (the core edge tracks the breathing radius), and the light
-    /// pairwise shard-shard bounce; cull the dead.
+    /// (the core edge tracks the breathing radius), the light pairwise
+    /// shard-shard bounce; cull the dead — then the PHYSICAL PROPAGATION
+    /// pass (the shards' collisions with the live walls decide how the
+    /// blast spreads: plan 002 issue 09 shards-3 replaced the queued
+    /// chain hops with this).
     fn update_shrapnel(&self, ft: f32) {
         let core_radius = self.get_radius() * 1.05_f32;
         let mut e = self.est();
@@ -769,51 +764,105 @@ impl<S: SharedStore> HexagonGame<S> {
         // The light pairwise shard-shard bounce (cheap at the 64 cap).
         bounce_pairs(&mut e.shrapnel);
         e.shrapnel.retain(|s| s.is_alive());
+
+        // The impact pass (after the motion/cull: it reads the
+        // post-step positions against the current wall quads).
+        self.update_shrapnel_impacts();
     }
 
-    /// Fire the due chain victims: the nearest live wall to the recorded
-    /// mid-angle shatters (no further chaining — bounded). Re-looked-up
-    /// by angle, so the wall vector's mutations cannot invalidate it.
-    fn update_shrapnel_chains(&self, ft: f32) {
-        let due: Vec<f32> = {
-            let mut e = self.est();
-            for c in e.shrapnel_chains.iter_mut() {
-                c.delay -= ft;
-            }
-            let due: Vec<f32> = e
-                .shrapnel_chains
-                .iter()
-                .filter(|c| c.delay <= 0.0)
-                .map(|c| c.mid_angle)
-                .collect();
-            e.shrapnel_chains.retain(|c| c.delay > 0.0);
-            due
+    /// plan 002 issue 09 (shards-3) — the physical propagation pass:
+    /// each live shard that overlaps a live wall resolves a collision —
+    /// `generation < MAX_PROPAGATION`: shatter THAT wall AT THE PIECE'S
+    /// POSITION (the new shards inherit the blast's `burst` id, step up
+    /// to `generation + 1`, and the hitter's tangential velocity biases
+    /// the new burst's carrier direction); the hitter is consumed.
+    /// `generation >= MAX_PROPAGATION`: the piece crumbles (dies) and
+    /// the wall survives. Dead walls are NEVER hit — a piece flying
+    /// over a dead wall's former quad is not consumed (only live walls
+    /// collide); a live wall shatters at most once per blast (a
+    /// same-tick second hit finds the wall dead and only crumbles its
+    /// piece); no timers, no extra bumps (the bump is the player's
+    /// physical hit alone — the flash rides per bump). Deterministic:
+    /// the pieces are snapshotted before any mutation, and the hits
+    /// resolve in (piece, wall) vector order.
+    fn update_shrapnel_impacts(&self) {
+        // The pieces, snapshotted: the shatters mutate the shard vector
+        // (spawn + the cap's front eviction) and the wall vector (kill)
+        // as they run; the hit test reads the pre-mutation state.
+        let snap: Vec<Shrapnel> = {
+            let e = self.est();
+            e.shrapnel.clone()
         };
-        if due.is_empty() {
+        if snap.is_empty() {
             return;
         }
-        let p_pos = self.get_player_position();
-        for mid in due {
-            let idx = {
-                let g = self.st();
-                let mut best: Option<(usize, f32)> = None;
-                for (i, w) in g.walls.iter().enumerate() {
-                    if w.is_dead() {
-                        continue;
-                    }
-                    let Some((s, e, _)) = w.angle_span() else {
-                        continue;
-                    };
-                    let d = angle_distance(wall_mid_angle(s, e), mid);
-                    if best.is_none_or(|(_, bd)| d < bd) {
-                        best = Some((i, d));
+        // (piece index, wall index): the FIRST live wall each piece's
+        // centroid overlaps (deterministic wall-vector order).
+        let hits: Vec<(usize, usize)> = {
+            let g = self.st();
+            let mut hits = Vec::new();
+            for (pi, s) in snap.iter().enumerate() {
+                for (wi, w) in g.walls.iter().enumerate() {
+                    if !w.is_dead() && w.is_overlapping(&s.position) {
+                        hits.push((pi, wi));
+                        break;
                     }
                 }
-                best.map(|b| b.0)
-            };
-            if let Some(i) = idx {
-                self.shatter_wall(i, &p_pos);
             }
+            hits
+        };
+        if hits.is_empty() {
+            return;
+        }
+        for (pi, wi) in hits {
+            // Re-find the piece in the CURRENT vector: an earlier
+            // same-tick shatter's make_room may have evicted it (front
+            // eviction). The exact-state match keeps the pass sound
+            // under any mutation order (nothing else mutates a
+            // surviving piece).
+            let piece = {
+                let e = self.est();
+                e.shrapnel.iter().position(|s| *s == snap[pi])
+            };
+            let Some(piece) = piece else {
+                continue; // evicted by a same-tick shatter
+            };
+            let (generation, burst, tangential) = {
+                let e = self.est();
+                let s = e.shrapnel[piece];
+                // The hitter's tangential (ring) velocity at the impact:
+                // the velocity dotted with the ring tangent at the
+                // piece's position (+CCW) — the new burst's carrier
+                // direction bias.
+                let r = get_mag(&s.position).max(1.0e-4);
+                let tangential =
+                    s.velocity.x * (-s.position.y / r) + s.velocity.y * (s.position.x / r);
+                (s.generation, s.burst, tangential)
+            };
+            // Consume the hitter FIRST (its index is only valid before
+            // the shatter's make_room front-eviction).
+            {
+                let mut e = self.est();
+                e.shrapnel.remove(piece);
+            }
+            if generation >= MAX_PROPAGATION {
+                // The last hop: the piece crumbles, the wall survives.
+                continue;
+            }
+            let wall_alive = {
+                let g = self.st();
+                wi < g.walls.len() && !g.walls[wi].is_dead()
+            };
+            if !wall_alive {
+                // A same-tick earlier impact already shattered this
+                // wall: the glass broke, the wall is gone — this piece
+                // crumbles on the impact too (no second shatter, no
+                // second bump).
+                continue;
+            }
+            // Shatter the wall at the piece's position: the new shards
+            // carry the blast's burst id + generation + 1 (the lineage).
+            self.shatter_wall_at(wi, &snap[pi].position, tangential, burst, generation + 1);
         }
     }
 
@@ -1637,12 +1686,6 @@ impl<S: SharedStore> HexagonGame<S> {
     #[must_use]
     pub fn shrapnel(&self) -> Vec<Shrapnel> {
         self.est().shrapnel.clone()
-    }
-
-    /// The pending chain victims (test access).
-    #[must_use]
-    pub fn shrapnel_chains(&self) -> Vec<PendingChain> {
-        self.est().shrapnel_chains.clone()
     }
 
     /// The C++ `messageText` content (test access).

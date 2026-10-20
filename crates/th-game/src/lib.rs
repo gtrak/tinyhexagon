@@ -49,7 +49,7 @@ pub use custom_wall_manager::CCustomWallManager;
 pub use level_status::LevelStatus;
 pub use lua_state::{GameApi, ReentrantMutex, SharedState, SharedStore};
 pub use player::CPlayer;
-pub use shrapnel::{PendingChain, Shrapnel};
+pub use shrapnel::Shrapnel;
 pub use speed_data::SpeedData;
 pub use status::{HexagonGameStatus, StateChange};
 pub use ticker::Ticker;

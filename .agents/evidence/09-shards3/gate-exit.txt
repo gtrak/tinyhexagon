@@ -1,0 +1,9 @@
+final gate (post probe-removal), Tue Oct 20 03:27:42 PM UTC 2026
+== cargo fmt --all -- --check
+GATE_EXIT=0
+== cargo build --workspace
+GATE_EXIT=0
+== cargo clippy --workspace --all-targets -- -D warnings
+GATE_EXIT=0
+== cargo test --workspace
+GATE_EXIT=0

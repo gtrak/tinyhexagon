@@ -176,7 +176,10 @@ fn bump_serial_advances_once_per_killed_wall() {
     assert_eq!(c.game.bump_serial(), 1, "first collision");
 
     // Repeated updates: the killed wall was retained out, so no
-    // double-count.
+    // double-count. (The first hit's blast is still live here — its
+    // pieces only overlap the now-dead wall, which the shard impact
+    // pass never re-consumes (dead walls are never hit) — so no shard
+    // shatter, and no bump, happens.)
     c.game.update(TIME_STEP, 1.0);
     c.game.update(TIME_STEP, 1.0);
     assert_eq!(
@@ -185,14 +188,20 @@ fn bump_serial_advances_once_per_killed_wall() {
         "a killed wall must not double-bump"
     );
 
-    // A fresh collision bumps again.
-    inject_wall(&c, 0, 80.0, 60.0, 0.0);
+    // A fresh collision bumps again — as CUSTOM walls at the same band:
+    // the first hit's blast still occupies the band (its shards melt
+    // over ~3 s), and a fresh CWall injected at the blast site would be
+    // shattered by a SHARD IMPACT (the physical propagation — no bump)
+    // before the player's pass could hit it. Custom walls sit outside
+    // the shard impact pass, so the player's soft kill is the only
+    // killer and the bump bookkeeping stays isolated.
+    inject_custom_quad(&c);
     c.game.update(TIME_STEP, 1.0);
     assert_eq!(c.game.bump_serial(), 2, "second collision");
 
     // Two overlapping walls in one frame: exactly one bump each.
-    inject_wall(&c, 0, 80.0, 60.0, 0.0); // chord 69.3..121.2
-    inject_wall(&c, 0, 90.0, 50.0, 0.0); // chord 77.9..121.2 (both overlap the player)
+    inject_custom_quad(&c);
+    inject_custom_quad(&c);
     c.game.update(TIME_STEP, 1.0);
     assert_eq!(c.game.bump_serial(), 4, "one bump per killed wall");
     assert!(!c.game.get_status().has_died);
