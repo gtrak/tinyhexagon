@@ -1,6 +1,6 @@
 # Issue 08 — Android and web entries + packaging/CI/release names
 
-**Status:** 08a LANDED (web entry; probe 19/19, gate 567). 08b (Android) + 08c (packaging/CI) IN PROGRESS.
+**Status:** 08a LANDED (web entry; probe 19/19, gate 567). 08b LANDED (`2deca9c4`: android_main + content extraction w/ versioned marker, app id `com.gtrak.tinyhexagon`, keystore re-identified, APK verified; gate 570/0). 08c (packaging/CI) IN PROGRESS (fresh worker on clean base; first attempt timed out and was discarded).
 **Depends:** 07
 
 ## Objective
