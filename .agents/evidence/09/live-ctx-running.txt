@@ -1,0 +1,8 @@
+live-page probe (Chrome 148 headless, https://gtrak.github.io/tinyhexagon/, commit 96831be2 build):
+baseline: booted=true;ticks=11;stage=0;started=true;angle=0.0000;audio=fallback;ctx=;energy=0.0000;help=auto
+post:     booted=true;ticks=97;stage=0;started=true;angle=-3.6121;audio=live;ctx=running;energy=0.0691;help=off
+RESULT: PASS
+notes:
+- ctx=running = the WebAudio context is actually PLAYING (the setTimeout-driven
+  graph renders/advances energy even while suspended — energy alone never proved audibility).
+- angle: -3.61 rad over the 1.2 s hold (was -12.29 rad pre-l_setPlayerSpeedMult(0.3)) — 3.4x slower cursor.
