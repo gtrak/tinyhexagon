@@ -99,7 +99,7 @@ const MAX_SAMPLE_RATE: SampleRate = SampleRate(96_000);
 const DEFAULT_SAMPLE_RATE: SampleRate = SampleRate(44_100);
 const MIN_BUFFER_SIZE: u32 = 1;
 const MAX_BUFFER_SIZE: u32 = u32::MAX;
-const DEFAULT_BUFFER_SIZE: usize = 2048;
+const DEFAULT_BUFFER_SIZE: usize = 4096; // ~93 ms @44.1k: the look-ahead absorbs the main-thread render hiccups
 const SUPPORTED_SAMPLE_FORMAT: SampleFormat = SampleFormat::F32;
 
 impl Host {
@@ -406,11 +406,16 @@ where
         debug_assert_eq!(temporary_buffer.len() % config.channels as usize, 0);
 
         let context = audio_ctxt;
+        // 09 fix — label the buffer with the CONTEXT's actual rate (the
+        // old cpal-rate label resampled: a 48000 context played the
+        // 44100-labeled buffer ~8% fast — a per-buffer gap under the
+        // scheduler's cursor = choppy).
+        let context_rate = context.sample_rate() as f64;
         let buffer = context
             .create_buffer(
                 config.channels as u32,
                 buffer_size_frames,
-                sample_rate as f32,
+                context_rate as f32,
             )
             .expect("Buffer could not be created");
         // 09 fix (tinyhexagon) — THE WEB SILENCE: web-sys's
@@ -459,14 +464,19 @@ where
         // NEXT buffer's render, so its jitter cannot overlap or gap the
         // playback. The node is held until eviction (~1.6 s of history)
         // so the GC cannot reap a playing source.
-        let buffer_duration_secs = buffer_size_frames as f64 / sample_rate as f64;
         let now = audio_ctxt.current_time();
+        // 09 fix — gapless: the cursor is authoritative while it is in
+        // the future (the old now+0.02 clamp reset the schedule whenever
+        // it came near the clock — a fresh gap per buffer); reset only
+        // after a REAL stall. The cursor's step is the buffer's duration
+        // AT THE CONTEXT'S RATE (the resample mismatch above).
+        let buffer_duration_secs = buffer_size_frames as f64 / context_rate;
         let when = {
             let scheduled = NEXT_START.get();
-            if scheduled < now + 0.02 {
-                now + 0.02
-            } else {
+            if scheduled >= now {
                 scheduled
+            } else {
+                now + 0.05
             }
         };
         node.start_with_when(when)
@@ -486,7 +496,7 @@ where
         // data that is in each buffer ; this is obviously bad, and also the schedule is too tight
         // and there may be underflows
         set_timeout(
-            1000 * buffer_size_frames as i32 / sample_rate as i32,
+            (1000.0 * buffer_size_frames as f64 / context_rate) as i32,
             stream,
             data_callback,
             &config,
