@@ -1240,3 +1240,40 @@ this entry records only what later work must not undo.
 - Do not re-tune the mix/groove/shrapnel values without an operator
   listen pass — the host listen is still pending (no device on the
   build host); the values above are the operator's.
+
+## 09 — the wasm audio saga (the isolated ladder) + the one-mixer plan
+
+The wasm silence was CPAL's emscripten host, found by a zero-dependency
+isolation ladder (tools/audio-ladder.html: browser primitives; the
+th-webtone rung: a pure sine through cpal only):
+1. `AudioBuffer::get_channel_data` in web-sys returns a **COPY**
+   (`Vec<f32>`) — the host's de-interleave wrote the samples into the
+   copy and dropped it; the AudioBuffer played its zero-initialized
+   content. Fixed with `copy_to_channel` (the live write-through).
+2. The timer chain passed (stream, config, buffer_size) as setTimeout
+   ARGUMENTS — corruptible by the glue; now captured in the closure,
+   zero JS arguments.
+3. The buffers were labeled at cpal's hardcoded 44100 (an ~8% resample
+   skew → a per-buffer gap) and the scheduler's now+0.02 clamp reset
+   near the clock — buffers now carry the CONTEXT's rate and the cursor
+   is authoritative while in the future (4096-frame look-ahead).
+4. Source nodes were dropped right after start() (GC can reap a playing
+   source) — the live sources are held ~1.6 s then evicted.
+Lesson: probe energy/ctx cannot prove AUDIBILITY; only a page-level
+buffer-content hook (`__audioStats`, stays) or ears can. The page's
+status poll now appends buffers=/bufPeak= to the status line.
+
+**NEW ISSUE (next): one mixer everywhere** — the operator wants all
+sound through ONE mixer:
+- web/emscripten: the synth stops using cpal's device; the graph
+  renders in-memory (`AudioEngine::start_in_memory` — a small
+  rust-synth addition: the same graph/params/peaks/phase-clock, no
+  stream) and feeds the SFX's OpenAL context as a streaming source
+  (alBufferData + alSourceQueueBuffers) — ONE context, ONE gesture
+  unlock, the shim's scheduling inside the audio graph.
+- desktop: rodio owns the single device stream; the synth graph becomes
+  a rodio Source mixed alongside the SFX.
+- android: one stream (oboe/rodio) — the same principle.
+- The vendored cpal's emscripten host keeps the fixed BufferSource
+  path as the FALLBACK if the OpenAL delivery regresses; the
+  choppiness/gapless patches stay (documented vendor patches).
