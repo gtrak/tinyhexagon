@@ -171,3 +171,16 @@ and the walls should EXPLODE.
   ONE bump per physical hit (the chain walls die "for free" — no
   extra slow-motion/duck). Engine tests: `th-game/tests/shrapnel.rs`
   (5 tests) + the shrapnel.rs unit tests; gate 579/0.
+
+## Taste pass 4 (louder + groove + physics shrapnel)
+
+- **Loudness**: master 0.9 → 1.0; kick 0.9, snare 0.6, bass 0.8,
+  lead 0.5 (the phone-speaker floor is the real test).
+- **Groove**: staccato gate (a note plays 70% of its step — the tail
+  never rings into the next), swing (odd 16ths attack 15% of a step
+  late), a rolling bassline (16th pickups at 11/13), and the kick's DnB
+  syncopation (1, the "and" at 7, the pickup at 10).
+- **Physics shrapnel**: the pieces now carry momentum (ride + light
+  drag), tumble (spin flips on impact), and BOUNCE elastically off the
+  core's edge (the radial component reflects, keeps 55% of the speed,
+  the piece steps back outside — real reflection, not a scripted fade).

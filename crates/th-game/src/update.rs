@@ -767,11 +767,13 @@ impl<S: SharedStore> HexagonGame<S> {
         }
     }
 
-    /// Advance the pieces: ride + drag + spin + fade; cull the dead.
+    /// Advance the pieces: ride + drag + spin + fade + the core bounce
+    /// (the core edge tracks the breathing radius); cull the dead.
     fn update_shrapnel(&self, ft: f32) {
+        let core_radius = self.get_radius() * 1.05_f32;
         let mut e = self.est();
         for s in e.shrapnel.iter_mut() {
-            s.update(ft);
+            s.update(ft, core_radius);
         }
         e.shrapnel.retain(|s| s.is_alive());
     }

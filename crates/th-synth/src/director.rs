@@ -51,14 +51,14 @@ pub const SLOTS: [Slot; 8] = [
         unlock: 0,
         ratio: 0.5,
         chord: false,
-        gain: 0.78,
+        gain: 0.9,
     }, // kick
     Slot {
         kind: PresetKind::Heartbeat,
         unlock: 0,
         ratio: 1.6,
         chord: false,
-        gain: 0.52,
+        gain: 0.6,
     }, // snare
     Slot {
         kind: PresetKind::Heartbeat,
@@ -72,14 +72,14 @@ pub const SLOTS: [Slot; 8] = [
         unlock: 0,
         ratio: 0.5,
         chord: false,
-        gain: 0.68,
+        gain: 0.8,
     }, // bass
     Slot {
         kind: PresetKind::PluckSaw,
         unlock: 0,
         ratio: 2.0,
         chord: false,
-        gain: 0.40,
+        gain: 0.5,
     }, // lead
     Slot {
         kind: PresetKind::PadZimmer,
@@ -117,7 +117,7 @@ pub const BPM_PER_STAGE: f32 = 1.2;
 pub const BRIGHTNESS_BASE: f32 = 0.45;
 pub const BRIGHTNESS_PER_STAGE: f32 = 0.025;
 /// The master gain.
-pub const MASTER_GAIN: f32 = 0.9;
+pub const MASTER_GAIN: f32 = 1.0;
 /// The collision-duck target.
 pub const DUCK_GAIN: f32 = 0.22;
 /// The duck recovery time.
@@ -130,7 +130,9 @@ const CHORD_MAJOR: [i32; 4] = [0, 9, 5, 7];
 /// Minor progression: i, VI, III, VII.
 const CHORD_MINOR: [i32; 4] = [0, 8, 3, 10];
 
-/// The syncopated bass line (16 steps; `None` = a rest/gated step).
+/// The syncopated bass line (16 steps; `None` = a rest/gated step) —
+/// a ROLLING line (most 8ths plus the 16th pickups at 11/13) so the
+/// groove reads as a walking DnB bass, not sparse blips.
 const BASS_LINE: [Option<i32>; 16] = [
     Some(0),
     None,
@@ -143,12 +145,18 @@ const BASS_LINE: [Option<i32>; 16] = [
     Some(0),
     None,
     Some(10),
-    None,
     Some(12),
-    None,
+    Some(0),
+    Some(10),
     Some(3),
     None,
 ];
+/// The staccato gate: bass/lead notes play only this fraction of a step
+/// (punchy — the note's tail never rings into the next).
+const GATE_OPEN: f32 = 0.7;
+/// The swing: odd 16ths attack this fraction of a step LATE (the
+/// shuffle that makes the grid a groove).
+const SWING: f32 = 0.15;
 /// The lead motif (16 steps; A-minor degrees above the key root).
 const LEAD_LINE: [Option<i32>; 16] = [
     Some(12),
@@ -221,15 +229,16 @@ pub fn chord_offset(stage: u32, bar: u64) -> i32 {
     table[(bar % 4) as usize]
 }
 
-/// The kick pattern (16-step bitmask) — a breakbeat, denser late.
+/// The kick pattern (16-step bitmask) — the DnB syncopation: 1, the
+/// "and" at 7 (off the snare's backbeat), the pickup at 10; ghosts late.
 #[must_use]
 pub fn kick_bits(stage: u32) -> u32 {
-    let mut bits = (1 << 0) | (1 << 8) | (1 << 10);
+    let mut bits = (1 << 0) | (1 << 7) | (1 << 10);
     if stage >= 10 {
         bits |= 1 << 3;
     }
     if stage >= 16 {
-        bits |= 1 << 6;
+        bits |= 1 << 13;
     }
     bits
 }
@@ -458,10 +467,16 @@ impl MusicDirector {
         }
     }
 
-    /// Drive the 16-step sequencer from the mono clock `t` (seconds).
+    /// Drive the 16-step sequencer from the mono clock `t` (seconds):
+    /// the step/bar writes on change, then the GATE every tick — the
+    /// staccato window (a note plays only `GATE_OPEN` of its step) with
+    /// the odd 16ths swung late (`SWING` of a step), which is what turns
+    /// the grid into a groove.
     fn sequence(&mut self, t: f32) {
         let step_len = 60.0 / self.bpm / 4.0;
-        let step = (t.max(0.0) / step_len) as u64;
+        let step_f = t.max(0.0) / step_len;
+        let step = step_f as u64;
+        let in_step = step_f - step as f32;
         let bar = step / STEPS_PER_BAR;
         if self.last_bar != Some(bar) {
             self.apply_bar(bar);
@@ -471,6 +486,26 @@ impl MusicDirector {
             self.apply_step(step % STEPS_PER_BAR, bar);
             self.last_step = Some(step);
         }
+
+        let idx = (step % STEPS_PER_BAR) as usize;
+        let window = if step % 2 == 1 {
+            // the swung 16th: the attack lands late; the window shifts
+            // with it (and may run to the next step's edge)
+            SWING..(SWING + GATE_OPEN).min(1.0)
+        } else {
+            0.0..GATE_OPEN
+        };
+        let on = window.contains(&in_step);
+        self.gate_voice(3, BASS_LINE[idx].is_some() && on);
+        self.gate_voice(4, LEAD_LINE[idx].is_some() && on);
+    }
+
+    /// Write one sequenced voice's mute (`on` = audible).
+    fn gate_voice(&mut self, slot: usize, on: bool) {
+        self.tracks[slot]
+            .params
+            .mute
+            .set_value(if on { 0.0 } else { 1.0 });
     }
 
     /// Write the bar's chord onto the harmonic slots (pad/bell/sub).
@@ -644,7 +679,7 @@ mod tests {
         assert_eq!(hat_bits(6).count_ones(), 8);
         assert!(hat_bits(16).count_ones() > 8);
         // The kick gains ghosts, the snare a late ghost.
-        assert_eq!(kick_bits(0), (1 << 0) | (1 << 8) | (1 << 10));
+        assert_eq!(kick_bits(0), (1 << 0) | (1 << 7) | (1 << 10));
         assert!(kick_bits(16).count_ones() > kick_bits(0).count_ones());
         assert!(snare_bits(12).count_ones() > snare_bits(11).count_ones());
         let mut d = MusicDirector::new_fallback();
@@ -663,20 +698,40 @@ mod tests {
         let lead0 = d.tracks[4].params.freq.value();
         assert_eq!(d.tracks[3].params.mute.value(), 0.0);
         assert_eq!(d.tracks[4].params.mute.value(), 0.0);
-        // Step 1 is a bass rest and a lead rest.
+        // Step 1 is a bass rest AND a lead rest (and the swung window
+        // opens late — no note either way).
         d.tick(60.0 / 150.0 / 4.0);
         assert_eq!(d.tracks[3].params.mute.value(), 1.0);
         assert_eq!(d.tracks[4].params.mute.value(), 1.0);
-        // Step 3 is a bass octave.
-        d.tick(60.0 / 150.0 / 4.0);
-        d.tick(60.0 / 150.0 / 4.0);
-        assert_eq!(d.tracks[3].params.mute.value(), 0.0);
+        // Step 3 is a bass octave (an odd, swung step: audible only
+        // once its window opens at SWING).
+        d.tick(60.0 / 150.0 / 4.0); // step 2
+        d.tick(60.0 / 150.0 / 4.0); // step 3
+        let swung_mute = d.tracks[3].params.mute.value();
+        assert_eq!(swung_mute, 1.0, "a swung note rests until its window");
+        d.tick(60.0 / 150.0 / 4.0 * (SWING + 0.05));
+        assert_eq!(d.tracks[3].params.mute.value(), 0.0, "the window opens");
         assert!(
             (d.tracks[3].params.freq.value() / bass0 - 2.0).abs() < 1e-3,
             "bass octave"
         );
         // The lead returns on step 2 with a higher note.
         assert!(d.tracks[4].params.freq.value() > lead0);
+    }
+
+    #[test]
+    fn the_gate_releases_between_notes() {
+        // The staccato: within one even step the note mutes at GATE_OPEN.
+        let step_len = 60.0 / BPM_BASE / 4.0;
+        let mut d = MusicDirector::new_fallback();
+        d.tick(0.01); // step 0: note on
+        assert_eq!(d.tracks[3].params.mute.value(), 0.0);
+        d.tick(step_len * GATE_OPEN);
+        assert_eq!(
+            d.tracks[3].params.mute.value(),
+            1.0,
+            "the note's tail is cut at GATE_OPEN"
+        );
     }
 
     #[test]

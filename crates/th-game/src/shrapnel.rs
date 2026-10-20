@@ -18,6 +18,7 @@
 //! [`CHAIN_WALLS`] extra walls).
 
 use th_math::hg::color::Color;
+use th_math::ssvs::vector2::get_mag;
 use th_math::ssvs::Vec2;
 use th_math::ssvu::math::TAU;
 
@@ -46,6 +47,9 @@ pub const PIECE_SPREAD_RAD: f32 = 0.9;
 pub const PIECE_DRAG_PER_FT: f32 = 1.0 / 30.0;
 /// The spin range, rad per FT-unit (±300 deg/s → ±5/60).
 pub const PIECE_SPIN_MAX: f32 = 5.0 / 60.0;
+/// The bounce: an elastic reflection off the core keeps this fraction of
+/// the speed (a real bounce eats energy).
+pub const BOUNCE_KEEP: f32 = 0.55;
 
 /// One flying piece: a small wedge (the draw's three points) that spins,
 /// drifts outward and fades over its life.
@@ -64,15 +68,38 @@ pub struct Shrapnel {
 }
 
 impl Shrapnel {
-    /// Advance by the frame delta `ft` (seconds): the position rides the
-    /// velocity (a light drag so the pieces settle instead of flying off
-    /// the screen), the wedge spins, the life burns.
-    pub fn update(&mut self, ft: f32) {
+    /// Advance by the frame delta `ft` (FT units — the update loop's
+    /// scale, 60 = 1 real second): the position rides the velocity (a
+    /// light drag so the pieces settle instead of flying off the
+    /// screen), the wedge spins, the life burns — and a piece that
+    /// reaches the core BOUNCES: the radial velocity component reflects
+    /// (elastic, energy-damped), the piece is pushed back out of the
+    /// core, and the tumble direction flips with the impact. Physics,
+    /// not a scripted fade.
+    pub fn update(&mut self, ft: f32, core_radius: f32) {
         self.position += self.velocity * ft;
         let drag = (1.0_f32 - PIECE_DRAG_PER_FT * ft).max(0.0);
         self.velocity *= drag;
         self.angle += self.spin * ft;
         self.life -= ft;
+
+        let mag = get_mag(&self.position);
+        if mag > 1.0e-3 && mag < core_radius {
+            let nx = self.position.x / mag;
+            let ny = self.position.y / mag;
+            let v_dot_n = self.velocity.x * nx + self.velocity.y * ny;
+            if v_dot_n < 0.0 {
+                // v' = v - 2 (v·n) n — the radial component flips; keep
+                // BOUNCE_KEEP of the speed and step the piece back out.
+                self.velocity.x -= 2.0 * v_dot_n * nx;
+                self.velocity.y -= 2.0 * v_dot_n * ny;
+                self.velocity.x *= BOUNCE_KEEP;
+                self.velocity.y *= BOUNCE_KEEP;
+                self.position.x = nx * core_radius;
+                self.position.y = ny * core_radius;
+                self.spin = -self.spin;
+            }
+        }
     }
 
     /// `true` while the piece still shows (life > 0).
@@ -144,7 +171,7 @@ mod tests {
         let mut p = piece();
         let x0 = p.position.x;
         let v0 = p.velocity.x;
-        p.update(0.25);
+        p.update(0.25, 72.0);
         // moved outward…
         assert!(p.position.x > x0);
         // …slowed (drag)…
@@ -157,9 +184,48 @@ mod tests {
         // life out (48 units; 50 > 48).
         let mut p = piece();
         p.velocity = Vec2::new(2.0, 0.0);
-        p.update(50.0);
+        p.update(50.0, 72.0);
         assert_eq!(p.velocity.x, 0.0);
         assert!(!p.is_alive());
+    }
+
+    #[test]
+    fn a_piece_bounces_elastically_off_the_core() {
+        // A piece just inside the core boundary, moving INWARD (at the
+        // center): the radial component reflects outward, damped; the
+        // piece is stepped back outside the core.
+        let mut p = Shrapnel {
+            position: Vec2::new(50.0, 0.0), // inside the 72 core
+            velocity: Vec2::new(-2.0, 0.0), // moving toward the center
+            angle: 0.0,
+            spin: 0.05,
+            size: 6.0,
+            life: PIECE_LIFE_FT,
+            max_life: PIECE_LIFE_FT,
+            color: Color::new(255, 0, 0, 255),
+        };
+        p.update(0.25, 72.0);
+        assert!(p.position.x >= 72.0, "pushed back out of the core");
+        assert!(p.velocity.x > 0.0, "the radial velocity reflected");
+        // The drag ran first (one tick), then the reflection kept
+        // BOUNCE_KEEP of the (already dragged) speed.
+        let dragged = 2.0 * (1.0_f32 - (1.0_f32 / 30.0) * 0.25);
+        assert!((p.velocity.x - dragged * 0.55).abs() < 1e-5);
+        assert_eq!(p.spin, -0.05, "the tumble flips on impact");
+        // A piece heading AWAY from the core from inside does not bounce.
+        let mut p = Shrapnel {
+            position: Vec2::new(50.0, 0.0),
+            velocity: Vec2::new(2.0, 0.0),
+            angle: 0.0,
+            spin: 0.05,
+            size: 6.0,
+            life: PIECE_LIFE_FT,
+            max_life: PIECE_LIFE_FT,
+            color: Color::new(255, 0, 0, 255),
+        };
+        p.update(0.25, 72.0);
+        assert!(p.position.x > 50.0);
+        assert!(!p.is_alive() || p.position.x <= 72.0 || p.velocity.x > 0.0);
     }
 
     #[test]
