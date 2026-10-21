@@ -1008,6 +1008,11 @@ mod web {
     /// (`AL_PLAYING`); `ctx=` = the device's recorded Web Audio context
     /// state (the shim's own probe context's read — "running" after the
     /// gesture granted activation).
+    /// The device's one-line diagnostic (the status's `adiag=` — the
+    /// world + unlock + last source state / error; the one-mixer's
+    /// decisive machine-side observability).
+    static ADIAG: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
     pub(super) fn audio_status(runtime: &TinyRuntime) -> (bool, String) {
         // The one-mixer semantics (09): `audio=live` = the synth ENGINE is
         // live (generating frames — what the field always meant). The
@@ -1016,6 +1021,13 @@ mod web {
         // AL_PLAYING reliably (the probe measured a playing stream
         // labeled fallback), and the engine-liveness is the observable
         // the probe/gate asserts anyway.
+        *ADIAG.lock().expect("adiag poisoned") = Some(
+            runtime
+                .audio
+                .as_ref()
+                .map(|a| a.describe())
+                .unwrap_or_else(|| "NO AUDIO".to_string()),
+        );
         let live = runtime.music.borrow().is_live();
         let ctx = runtime
             .audio
@@ -1098,7 +1110,7 @@ mod web {
             return "tinyhexagon web: booted=false".to_string();
         }
         format!(
-            "tinyhexagon web: booted=true;ticks={};stage={};started={};angle={:.4};audio={};ctx={};attempts={};energy={:.4};help={}",
+            "tinyhexagon web: booted=true;ticks={};stage={};started={};angle={:.4};audio={};ctx={};attempts={};energy={:.4};help={};adiag={}",
             TICKS.load(Ordering::Relaxed),
             STAGE.load(Ordering::Relaxed),
             STARTED.load(Ordering::Relaxed),
@@ -1108,6 +1120,7 @@ mod web {
             ATTEMPTS.load(Ordering::Relaxed),
             f32::from_bits(ENERGY.load(Ordering::Relaxed)),
             if HELP_OFF.load(Ordering::Relaxed) { "off" } else { "auto" },
+            ADIAG.lock().ok().and_then(|c| c.clone()).unwrap_or_default(),
         )
     }
 }

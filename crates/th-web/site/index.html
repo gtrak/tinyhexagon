@@ -106,7 +106,7 @@
       // "the buffers are loud but don't reach the speakers" — the
       // status/probe reads window.__audioStats. Purely observational
       // (no behavior change).
-      window.__audioStats = { buffers: 0, maxPeak: 0.0 };
+      window.__audioStats = { buffers: 0, maxPeak: 0.0, actx: "-", at: 0.0, adv: 0 };
       (() => {
         if (!window.AudioBufferSourceNode) return;
         const origStart = window.AudioBufferSourceNode.prototype.start;
@@ -122,6 +122,14 @@
                 }
               }
             }
+            // The REAL context's state + clock (the status's `ctx=` field
+            // reads the device's throwaway probe context — this is the
+            // one the buffers actually play in): the 09-silence test's
+            // decisive observable. `adv` (did the clock advance since
+            // the last poll) is computed by the status poll below.
+            const c = this.context;
+            window.__audioStats.actx = c.state;
+            window.__audioStats.at = c.currentTime;
           } catch (err) { /* diagnostics only */ }
           return origStart.apply(this, args);
         };
@@ -149,7 +157,13 @@
         // near-zero bufPeak means the graph renders silence there).
         try {
           const a = window.__audioStats;
-          if (a) s += `;buffers=${a.buffers};bufPeak=${a.maxPeak.toFixed(4)}`;
+          if (a) {
+            // `adv`: the real context's clock ADVANCED since the last
+            // poll (1 = the audio thread is actually rendering).
+            a.adv = a.at > (a.prevAt ?? -1) ? 1 : 0;
+            a.prevAt = a.at;
+            s += `;buffers=${a.buffers};bufPeak=${a.maxPeak.toFixed(4)};actx=${a.actx};adv=${a.adv};at=${a.at.toFixed(2)}`;
+          }
         } catch { /* diagnostics only */ }
         document.getElementById("status").textContent = s;
         console.log("status " + s);

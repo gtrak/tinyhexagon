@@ -446,6 +446,14 @@ impl Audio {
         lock(&self.inner).device.music_source()
     }
 
+    /// A one-line device diagnostic (the status's `adiag=` — the world
+    /// + unlock + last source state / error; the one-mixer's decisive
+    /// machine-side observability).
+    #[must_use]
+    pub fn describe(&self) -> String {
+        lock(&self.inner).device.describe()
+    }
+
     /// The output context's live state (the web's Web Audio "running" /
     /// "suspended" — the status probe's `ctx=` field; "" on the desktop /
     /// headless).
