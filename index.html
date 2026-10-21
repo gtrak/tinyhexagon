@@ -98,12 +98,14 @@
          CLI/recipe is fixed (the pinned-CLI note in the 08a report). -->
     <script>
       window.lAudioContext = window.AudioContext || window.webkitAudioContext;
-      // 09 diagnostics: record the TRUE content peak of every buffer the
-      // cpal emscripten host starts (the setTimeout loop creates a
-      // BufferSource per buffer and plays it at call time). This separates
-      // "the graph renders silent buffers" from "the buffers are loud but
-      // don't reach the speakers" — the status/probe reads
-      // window.__audioStats. Purely observational (no behavior change).
+      // 09 diagnostics (the one-mixer plan, issue 09): record the TRUE
+      // content peak of every buffer the Web Audio graph starts — the
+      // OpenAL scheduler's BufferSourceNodes (the SFX one-shots AND the
+      // music streaming source's buffers, both on the ONE OpenAL
+      // context). This separates "the graph renders silent buffers" from
+      // "the buffers are loud but don't reach the speakers" — the
+      // status/probe reads window.__audioStats. Purely observational
+      // (no behavior change).
       window.__audioStats = { buffers: 0, maxPeak: 0.0 };
       (() => {
         if (!window.AudioBufferSourceNode) return;
