@@ -77,6 +77,10 @@ pub struct Audio {
 }
 
 /// The C++ `AudioImpl`'s mutable members (Audio.cpp:29-38).
+/// The loose one-shots' pool cap (the clinks): a 1 s clink needs its
+/// player kept ~1 s; 32 slots is ~10 s of coverage at the clink rate.
+const LOOSE_PLAYER_POOL: usize = 32;
+
 struct Inner {
     /// The rodio output device (the `sf::Sound`/`sf::Music` backend). Kept
     /// alive for the whole `Audio` lifetime (dropping it stops the stream).
@@ -85,6 +89,13 @@ struct Inner {
     /// portable [`AudioPlayer`] — a rodio `Player` on desktop/Android, an
     /// OpenAL source on the web).
     sounds: HashMap<String, AudioPlayer>,
+    /// The loose one-shots (the generative clinks): a player whose
+    /// handle nobody stores would be DROPPED at the end of the play
+    /// call — and the OpenAL player's Drop stops the source — so the
+    /// clinks died ~1 ms after starting (the operator's "zero clinks").
+    /// The pool keeps the last [`LOOSE_PLAYER_POOL`] players alive; a
+    /// recycled slot's sound is long finished.
+    loose_players: Vec<AudioPlayer>,
     /// C++ `std::optional<sf::Music> _music`.
     music: Option<MusicCtx>,
     /// C++ `_lastLoadedMusicPath` (Audio.cpp:38) — the logical music path
@@ -139,6 +150,7 @@ impl Audio {
             inner: Mutex::new(Inner {
                 device,
                 sounds: HashMap::new(),
+                loose_players: Vec::new(),
                 music: None,
                 last_loaded_music_path: String::new(),
                 music_volume: 100.0,
