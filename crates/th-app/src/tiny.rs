@@ -1030,10 +1030,24 @@ mod web {
         DIRECTOR.with(|d| *d.borrow_mut() = Some(Rc::clone(music)));
     }
 
+    /// The `?nomusic` A/B switch (the operator's taste test): the page's
+    /// query string turns the GENERATIVE MUSIC off for a run — the SFX
+    /// and the clinks still play (the one mixer's other sources), the
+    /// director stays on the fallback clock, and the status line reads
+    /// `audio=fallback` for the whole run.
+    fn music_disabled_by_query() -> bool {
+        web_sys::window()
+            .and_then(|w| w.location().search().ok())
+            .is_some_and(|q| q.contains("nomusic"))
+    }
+
     /// Start the live synth engine now (called from the page's gesture, so
     /// cpal builds/resumes its `AudioContext` inside the user activation).
     pub(super) fn resume_audio() {
         ATTEMPTS.fetch_add(1, Ordering::Relaxed);
+        if music_disabled_by_query() {
+            return; // the A/B: the music never arms
+        }
         DIRECTOR.with(|d| {
             if let Some(music) = d.borrow().as_ref() {
                 music.borrow_mut().start_on_gesture();

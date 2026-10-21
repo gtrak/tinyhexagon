@@ -88,9 +88,9 @@ const MUSIC_BUFFER_FRAMES: usize = 1024;
 /// The queue depth the feed keeps topped up (~128 ms — ahead of the
 /// shim's 100 ms scheduling lookahead, so the 25 ms scheduler tick never
 /// underruns a topped-up queue).
-const MUSIC_TARGET_QUEUED: usize = 3; // ~64 ms of look-ahead: the visual pulse's lead is the render-vs-playback offset — halving the depth halves the lead (the operator's "lowering buffers")
+const MUSIC_TARGET_QUEUED: usize = 6; // ~128 ms of look-ahead: the DEPTH-3 experiment (the operator's latency test) chopped in the user's Chrome — the main-thread hiccup tolerance is the depth, so this is the floor; the visual-lead fix is the clock compensation, not the depth
 /// The per-feed burst cap (the rAF catch-up after a hidden tab).
-const MUSIC_MAX_BURST: usize = 2;
+const MUSIC_MAX_BURST: usize = 4;
 /// The buffer pool (target + the in-flight margin; `feed` never queues
 /// past the pool, so a free id is always available while topping up).
 const MUSIC_POOL: usize = 8;
