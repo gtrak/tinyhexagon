@@ -454,6 +454,29 @@ impl Audio {
         lock(&self.inner).device.describe()
     }
 
+    /// Play RAW PCM as a (mono) one-shot — the app's generative glass
+    /// clinks: `samples` interleaved f32, SFML-style `volume` 0..=100
+    /// (scaled by the user's SFX volume), and an optional WORLD position
+    /// (the web's OpenAL panner; the desktop ignores it).
+    pub fn play_raw(
+        &self,
+        samples: Vec<f32>,
+        sample_rate: u32,
+        channels: u16,
+        volume: f32,
+        position: Option<(f32, f32, f32)>,
+    ) {
+        if samples.is_empty() {
+            return;
+        }
+        let inner = lock(&self.inner);
+        let effective = volume * (inner.sound_volume / 100.0);
+        let pos = position.unwrap_or((0.0, 0.0, 0.0));
+        let _ = inner
+            .device
+            .play_one_shot_at(sample_rate, channels, samples, effective, 1.0, pos);
+    }
+
     /// The output context's live state (the web's Web Audio "running" /
     /// "suspended" — the status probe's `ctx=` field; "" on the desktop /
     /// headless).

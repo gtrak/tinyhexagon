@@ -38,6 +38,7 @@
 //! and `.agents/skills/lib-cpal.md` (cpal 0.15.3 hosts + autoplay).
 
 pub mod beat;
+pub mod clink;
 pub mod director;
 
 pub use beat::BeatView;

@@ -606,6 +606,21 @@ trait DeviceBackend: Send + Sync {
         volume: f32,
         pitch: f32,
     ) -> Option<AudioPlayer>;
+    /// Play a POSITIONAL one-shot (the generative glass clinks): the
+    /// world-space position, listener-relative coords. The default
+    /// ignores the position (the desktop/rodio backend is 2D).
+    fn play_one_shot_at(
+        &self,
+        sample_rate: u32,
+        channels: u16,
+        samples: Vec<f32>,
+        volume: f32,
+        pitch: f32,
+        position: (f32, f32, f32),
+    ) -> Option<AudioPlayer> {
+        let _ = position;
+        self.play_one_shot(sample_rate, channels, samples, volume, pitch)
+    }
     /// Play a looped `sf::Music` (interleaved `f32`, repeats forever) from
     /// `offset_secs`. `volume` is SFML-style `0..=100`; `pitch` the rate.
     fn play_music(
@@ -725,6 +740,22 @@ impl AudioDevice {
         self.backend
             .as_ref()
             .and_then(|b| b.play_one_shot(sample_rate, channels, samples, volume, pitch))
+    }
+
+    /// Play a POSITIONAL one-shot (see the trait's doc) — the glass
+    /// clinks' route. `None` when no device is attached (headless).
+    pub fn play_one_shot_at(
+        &self,
+        sample_rate: u32,
+        channels: u16,
+        samples: Vec<f32>,
+        volume: f32,
+        pitch: f32,
+        position: (f32, f32, f32),
+    ) -> Option<AudioPlayer> {
+        self.backend.as_ref().and_then(|b| {
+            b.play_one_shot_at(sample_rate, channels, samples, volume, pitch, position)
+        })
     }
 
     /// Play a looped `sf::Music` (interleaved `f32`, repeats forever) from

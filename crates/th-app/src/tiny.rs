@@ -155,6 +155,9 @@ pub struct TinyRuntime {
     pub music: Rc<RefCell<MusicDirector>>,
     /// The last frame's synth envelope (the web status `energy=` probe).
     last_beat_energy: f32,
+    /// The generative clinks' event seed source (a per-event counter —
+    /// deterministic per run, varied per event).
+    clink_seed: u64,
     /// The journey clock (stage 0..=20, seconds into the stage).
     pub journey: Journey,
     touch: TouchState,
@@ -261,6 +264,7 @@ impl TinyRuntime {
             last_esc: false,
             last_mouse_left: false,
             last_beat_energy: 0.0,
+            clink_seed: 0x9E37_79B9_7F4A_7C15,
             accumulator: 0.0,
         };
         rt.apply_block(0);
@@ -300,6 +304,59 @@ impl TinyRuntime {
     #[must_use]
     pub fn help_disabled(&self) -> bool {
         self.help_off
+    }
+
+    /// The generative glass clinks (the operator's second taste pass):
+    /// drain the engine's shard events and render one clink per event —
+    /// a CRACK at the shatter (loud, low, noisy), a TINK at every core
+    /// bounce (pitched by the piece's size, loud by the bounce speed) —
+    /// played through the ONE mixer, WORLD-POSITIONED on the web (the
+    /// shim's mono auto-panner; the desktop ignores the position). The
+    /// per-frame cap keeps a big blast a scatter, not a wash.
+    pub fn play_shard_clinks(&mut self) {
+        let Some(audio) = self.audio.as_ref() else {
+            return;
+        };
+        const RATE: u32 = 48_000; // the clinks render at the mixer's rate
+        const MAX_PER_FRAME: usize = 5;
+        const STAGGER_SECS: f32 = 0.028; // the pieces separate in time
+        let events = self.composed.game.drain_shard_events();
+        let mut seed = self.clink_seed;
+        for (i, ev) in events.iter().take(MAX_PER_FRAME).enumerate() {
+            let (pos, speed01, size01, crack) = match *ev {
+                th_game::shrapnel::ShardEvent::Crack { position, speed01 } => {
+                    (position, speed01, 1.0, true)
+                }
+                th_game::shrapnel::ShardEvent::Tink {
+                    position,
+                    speed01,
+                    size01,
+                } => (position, speed01, size01, false),
+            };
+            seed = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut pcm = th_synth::clink::glass_clink(RATE, speed01, size01, seed);
+            // The crack is the wall's OWN voice: louder, deeper-set.
+            let volume = if crack { 65.0 } else { 45.0 + 40.0 * speed01 };
+            if crack {
+                // Deepen the crack: render the clink then lower the tail's
+                // ring by mixing in a fast-decaying low rumble is overkill —
+                // simply pitch it by playing a size01=1 (lowest ring) and
+                // boost the volume (done above).
+            }
+            let _ = crack;
+            // The stagger: leading silence (mono samples).
+            let lead = (STAGGER_SECS * i as f32 * RATE as f32) as usize;
+            if lead > 0 {
+                let mut with_lead = vec![0.0_f32; lead];
+                with_lead.extend_from_slice(&pcm);
+                pcm = with_lead;
+            }
+            // The world → listener mapping: the arena's plane seen from
+            // above — x is right/left, y maps to depth (−z forward).
+            let al = (pos.x / 1000.0, 0.0, -pos.y / 1000.0);
+            audio.play_raw(pcm, RATE, 1, volume, Some(al));
+        }
+        self.clink_seed = seed;
     }
 
     /// The C++ `window->getFPS()` half (the bridge's `onRenderStage`
@@ -693,6 +750,7 @@ pub fn run(
                     shot_armed = true;
                 }
             }
+            runtime.play_shard_clinks();
             runtime.draw(&mut target, w.get_width(), w.get_height());
             target.present(); // the C++ `renderWindow.display()` (GameWindow.hpp:143)
             if shot_armed && !runtime.game().must_take_screenshot() {

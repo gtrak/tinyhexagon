@@ -23,7 +23,10 @@ use crate::hexagon_game::{
     SwapParticleSpawnInfo, TrailParticle,
 };
 use crate::lua_state::SharedStore;
-use crate::shrapnel::{bounce_pairs, make_room, split_wall_quad, Shrapnel, MAX_PROPAGATION};
+use crate::shrapnel::{
+    bounce_pairs, make_room, split_wall_quad, ShardEvent, Shrapnel, MAX_PENDING_EVENTS,
+    MAX_PROPAGATION, SHARD_SPEED_MAX,
+};
 use crate::timeline::Outcome;
 use crate::{StateChange, Timeline2Runner};
 use th_config::{Jdir, Jid, TIME_STEP};
@@ -558,7 +561,7 @@ impl<S: SharedStore> HexagonGame<S> {
                 // propagation to the neighbours is PHYSICAL (the impact
                 // pass: a shard that sweeps into a live wall shatters it —
                 // no queued hops, no extra bumps).
-                let (impact, burst) = {
+                let (impact, speed01, burst) = {
                     let g = self.st();
                     let w = &g.walls[i];
                     // The impact point: the wall vertex nearest the
@@ -575,13 +578,13 @@ impl<S: SharedStore> HexagonGame<S> {
                     }
                     let e = self.est();
                     let burst = e.next_burst;
-                    (impact, burst)
+                    (impact, 1.0_f32, burst)
                 };
                 {
                     let mut e = self.est();
                     e.next_burst = e.next_burst.wrapping_add(1);
                 }
-                self.shatter_wall_at(i, &impact, burst, 0);
+                self.shatter_wall_at(i, &impact, speed01, burst, 0);
                 {
                     let mut g = self.st();
                     g.status.flash_effect = f32::max(g.status.flash_effect, 120.0_f32);
@@ -702,7 +705,14 @@ impl<S: SharedStore> HexagonGame<S> {
     /// the mass-scaled impulse spray knocked inward (see
     /// [`SHARD_INWARD_KNOCK`]) — with the lineage (`burst`,
     /// `generation`). The cap evicts the oldest shards first.
-    fn shatter_wall_at(&self, index: usize, impact: &Vec2, burst: u32, generation: u32) {
+    fn shatter_wall_at(
+        &self,
+        index: usize,
+        impact: &Vec2,
+        speed01: f32,
+        burst: u32,
+        generation: u32,
+    ) {
         let (corners, outward, wall_color) = {
             let g = self.st();
             let w = &g.walls[index];
@@ -730,8 +740,16 @@ impl<S: SharedStore> HexagonGame<S> {
             generation,
             &*self.0.cosmetic_rng,
         );
+        // The glass CRACKS here (the app's generative clink pass renders
+        // the sound; the engine only records the physical fact).
         {
             let mut e = self.est();
+            if e.shard_events.len() < MAX_PENDING_EVENTS {
+                e.shard_events.push(ShardEvent::Crack {
+                    position: *impact,
+                    speed01,
+                });
+            }
             make_room(&mut e.shrapnel, shards.len());
             e.shrapnel.extend(shards);
         }
@@ -745,13 +763,30 @@ impl<S: SharedStore> HexagonGame<S> {
     /// chain hops with this).
     fn update_shrapnel(&self, ft: f32) {
         let core_radius = self.get_radius() * 1.05_f32;
-        let mut e = self.est();
-        for s in e.shrapnel.iter_mut() {
-            s.update(ft, core_radius);
+        {
+            let mut e = self.est();
+            let mut bounces: Vec<ShardEvent> = Vec::new();
+            for s in e.shrapnel.iter_mut() {
+                let bounced = s.update(ft, core_radius);
+                if bounced && bounces.len() < MAX_PENDING_EVENTS {
+                    // The glass TINKS where it actually bounced (the
+                    // app's clink pass renders it — pitched by the
+                    // piece's size, loud by the bounce speed, at the
+                    // bounce position).
+                    let speed01 = (get_mag(&s.velocity) / 9.0).clamp(0.0, 1.0);
+                    let size01 = ((s.mass - 0.2) / 3.8).clamp(0.0, 1.0);
+                    bounces.push(ShardEvent::Tink {
+                        position: s.position,
+                        speed01,
+                        size01,
+                    });
+                }
+            }
+            e.shard_events.append(&mut bounces);
+            // The light pairwise shard-shard bounce (cheap at the 64 cap).
+            bounce_pairs(&mut e.shrapnel);
+            e.shrapnel.retain(|s| s.is_alive());
         }
-        // The light pairwise shard-shard bounce (cheap at the 64 cap).
-        bounce_pairs(&mut e.shrapnel);
-        e.shrapnel.retain(|s| s.is_alive());
 
         // The impact pass (after the motion/cull: it reads the
         // post-step positions against the current wall quads).
@@ -814,10 +849,11 @@ impl<S: SharedStore> HexagonGame<S> {
             let Some(piece) = piece else {
                 continue; // evicted by a same-tick shatter
             };
-            let (generation, burst) = {
+            let (generation, burst, speed01) = {
                 let e = self.est();
                 let s = e.shrapnel[piece];
-                (s.generation, s.burst)
+                let speed01 = (get_mag(&s.velocity) / SHARD_SPEED_MAX).clamp(0.0, 1.0);
+                (s.generation, s.burst, speed01)
             };
             // Consume the hitter FIRST (its index is only valid before
             // the shatter's make_room front-eviction).
@@ -842,7 +878,7 @@ impl<S: SharedStore> HexagonGame<S> {
             }
             // Shatter the wall at the piece's position: the new shards
             // carry the blast's burst id + generation + 1 (the lineage).
-            self.shatter_wall_at(wi, &snap[pi].position, burst, generation + 1);
+            self.shatter_wall_at(wi, &snap[pi].position, speed01, burst, generation + 1);
         }
     }
 

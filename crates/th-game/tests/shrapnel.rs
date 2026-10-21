@@ -428,6 +428,41 @@ fn a_gen_2_piece_crumbles_instead_of_shattering() {
 }
 
 #[test]
+fn the_glass_events_record_the_crack_and_the_bounces() {
+    let assets = load_release();
+    let c = fixture_seeded(&assets, SEED);
+    inject_wall(&c, 0, 80.0, 60.0, 0.0);
+    c.game.update(TIME_STEP, 1.0); // the hit: the wall shatters
+    let events = c.game.drain_shard_events();
+    assert!(
+        matches!(
+            events.first(),
+            Some(th_game::shrapnel::ShardEvent::Crack { position, .. })
+                if position.x.is_finite()
+        ),
+        "the shatter records a Crack at the impact"
+    );
+    // The bounce Tinks: run the blast out; some piece must bounce off
+    // the core (the seeded physics, probed) — collect across the window.
+    let mut saw_tink = false;
+    for _ in 0..480 {
+        c.game.update(TIME_STEP, 1.0);
+        for ev in c.game.drain_shard_events() {
+            if matches!(ev, th_game::shrapnel::ShardEvent::Tink { .. }) {
+                saw_tink = true;
+            }
+        }
+        if saw_tink {
+            break;
+        }
+    }
+    assert!(saw_tink, "a bounced piece records a Tink");
+    // The cap: the pending vector never exceeds it (indirectly: the
+    // drain always returns <= the cap even mid-blast).
+    assert!(events.len() <= 24);
+}
+
+#[test]
 fn a_new_game_clears_the_shrapnel_and_the_bursts() {
     let assets = load_release();
     let c = fixture_seeded(&assets, SEED);

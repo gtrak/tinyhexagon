@@ -144,6 +144,7 @@ extern "C" {
     fn alDeleteSources(n: i32, sources: *const u32);
     fn alSourcei(source: u32, param: u32, value: i32);
     fn alSourcef(source: u32, param: u32, value: f32);
+    fn alSource3f(source: u32, param: u32, v1: f32, v2: f32, v3: f32);
     fn alSourcePlay(source: u32);
     fn alSourceStop(source: u32);
     // The REAL OpenAL signatures: (source, n, buffers) — a wrong
@@ -311,6 +312,7 @@ impl OpenalBackend {
         volume: f32,
         pitch: f32,
         looping: bool,
+        position: Option<(f32, f32, f32)>,
     ) -> Option<AudioPlayer> {
         let channels = std::num::NonZero::new(channels)?;
         let sample_rate = std::num::NonZero::new(sample_rate)?;
@@ -419,7 +421,7 @@ impl DeviceBackend for OpenalBackend {
         volume: f32,
         pitch: f32,
     ) -> Option<AudioPlayer> {
-        self.play_inner(sample_rate, channels, samples, volume, pitch, false)
+        self.play_inner(sample_rate, channels, samples, volume, pitch, false, None)
     }
 
     fn play_music(
@@ -434,7 +436,7 @@ impl DeviceBackend for OpenalBackend {
         // Emscripten's OpenAL `al.h` has no settable `AL_OFFSET` /
         // `AL_SEC_OFFSET`, so a looped source starts at 0 (the shipped build
         // has no music content, so this is not observable in practice).
-        self.play_inner(sample_rate, channels, samples, volume, pitch, true)
+        self.play_inner(sample_rate, channels, samples, volume, pitch, true, None)
     }
 
     fn unlock(&self) {

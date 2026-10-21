@@ -159,6 +159,26 @@ pub const GLASS_EDGE_ALPHA: f32 = 0.75;
 /// around that centroid. `mass` (from the piece's area) scales the blast
 /// momentum; `radius` (the piece's circumradius) is the pairwise
 /// collision radius; the two colors drive the glass look at draw time.
+/// One auditable glass event, for the app's generative clink pass (the
+/// sound is the APP's business — the engine only records what physically
+/// happened, where, how fast, how big).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ShardEvent {
+    /// The wall's material CRACKED (the shatter instant — one loud,
+    /// low, noisy event; the pieces' sizes scale the partial spread).
+    Crack { position: Vec2, speed01: f32 },
+    /// A piece BOUNCED off the core (the glass TINKS: pitched by the
+    /// piece's size, loud by the bounce speed, at the bounce position).
+    Tink {
+        position: Vec2,
+        speed01: f32,
+        size01: f32,
+    },
+}
+
+/// The pending events' cap (per engine; the drain drops the excess).
+pub const MAX_PENDING_EVENTS: usize = 24;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Shrapnel {
     pub position: Vec2,
@@ -235,7 +255,10 @@ impl Shrapnel {
     /// (a wall whose inner edge sits below the core edge, a burst's
     /// inner slivers) must fly free, not be trapped and re-reflected
     /// by the old position-only check.
-    pub fn update(&mut self, ft: f32, core_radius: f32) {
+    /// `true` when this step BOUNCED off the core (the caller's glass
+    /// Tink event — the caller reads the post-bounce state).
+    #[must_use]
+    pub fn update(&mut self, ft: f32, core_radius: f32) -> bool {
         // The pre-step radius: the crossing test's "from" side.
         let prev_mag = get_mag(&self.position);
         self.position += self.velocity * ft;
@@ -259,8 +282,10 @@ impl Shrapnel {
                 self.position.x = nx * core_radius;
                 self.position.y = ny * core_radius;
                 self.spin = -self.spin * BOUNCE_KEEP;
+                return true;
             }
         }
+        false
     }
 
     /// `true` while the shard still shows (life > 0).

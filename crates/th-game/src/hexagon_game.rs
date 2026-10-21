@@ -49,7 +49,7 @@ use crate::camera::Camera;
 use crate::lua_state::{ReentrantMutex, ReentrantMutexGuard, SharedState, SharedStore};
 use crate::renderer::Renderer;
 use crate::seams::{Audio, CosmeticRng, Joystick, ScriptHost};
-use crate::shrapnel::Shrapnel;
+use crate::shrapnel::{ShardEvent, Shrapnel};
 use crate::wall::{compute_wall_gaps, WallGap};
 use crate::{
     CPlayer, CWall, FastVertexVectorTris, HexagonGameStatus, LevelStatus, SpeedData, StateChange,
@@ -227,6 +227,10 @@ pub struct EngineState {
     // there is no queued chain state anymore.
     pub(crate) shrapnel: Vec<Shrapnel>,
     pub(crate) next_burst: u32,
+    /// The pending glass events (the app's generative clink pass drains
+    /// them per frame; the shatters push Crack, the core bounces push
+    /// Tink — the cap drops the excess).
+    pub(crate) shard_events: Vec<ShardEvent>,
 
     // C++ `sf::Text messageText / (os -> status) / fpsText / timeText`
     // — the string content only (fonts/layout are
@@ -501,6 +505,7 @@ impl<S: SharedStore> HexagonGame<S> {
             swap_particles_spawn_info: None,
             shrapnel: Vec::new(),
             next_burst: 0,
+            shard_events: Vec::new(),
             message_text: String::new(),
             status_text: String::new(),
             fps_text: String::new(),
@@ -595,6 +600,13 @@ impl<S: SharedStore> HexagonGame<S> {
     /// The attached handle (the same lock the 007 lambdas capture).
     pub fn state_handle(&self) -> &Arc<ReentrantMutex<S>> {
         self.0.state.get().expect("state not attached")
+    }
+
+    /// Drain the pending glass events (the app's clink pass, per frame):
+    /// the vector is taken (left empty); the cap is the engine's.
+    #[must_use]
+    pub fn drain_shard_events(&self) -> Vec<ShardEvent> {
+        std::mem::take(&mut self.est().shard_events)
     }
 
     /// Test seam (plan 002 issue 09): inject a synthetic shard so the

@@ -958,6 +958,7 @@ mod tests {
             swap_particles_spawn_info: None,
             shrapnel: Vec::new(),
             next_burst: 0,
+            shard_events: Vec::new(),
             message_text: String::new(),
             status_text: String::new(),
             fps_text: String::new(),
