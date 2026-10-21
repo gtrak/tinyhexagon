@@ -595,8 +595,8 @@ impl Audio {
         lock(&self.inner).device.music_source()
     }
 
-    /// A one-line device diagnostic (the status's `adiag=` — the world
-    /// + unlock + last source state / error; the one-mixer's decisive
+    /// A one-line device diagnostic (the status's `adiag=` — the world +
+    /// unlock + last source state / error; the one-mixer's decisive
     /// machine-side observability).
     #[must_use]
     pub fn describe(&self) -> String {

@@ -76,7 +76,7 @@ pub fn glass_clink(sample_rate: u32, speed01: f32, size01: f32, seed: u64) -> Ve
             let env = (-t / tau).exp();
             s += amp * env * (std::f32::consts::TAU * f * t).sin();
         }
-        if t < crack_len as f32 / sr {
+        if t < crack_len / sr {
             s += crack_amp * (rnd() as f32 * 2.0 - 1.0) * (1.0 - t * sr / crack_len);
         }
         out.push(s);

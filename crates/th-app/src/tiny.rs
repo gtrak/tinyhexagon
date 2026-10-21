@@ -182,22 +182,6 @@ pub struct TinyRuntime {
     accumulator: f32,
 }
 
-/// The `?clinksplain` differential (the operator's one-clink test): the
-/// clinks route through the byte-identical SFX call (relative source, NO
-/// position) — isolates the positional half of the play path.
-fn clinks_plain_by_query() -> bool {
-    #[cfg(target_os = "emscripten")]
-    {
-        web_sys::window()
-            .and_then(|w| w.location().search().ok())
-            .is_some_and(|q| q.contains("clinksplain"))
-    }
-    #[cfg(not(target_os = "emscripten"))]
-    {
-        false
-    }
-}
-
 impl TinyRuntime {
     /// The kid composition (07): the caller's `Config` (usually
     /// [`kid_config`] over the loaded / default config), soft collisions,
@@ -337,7 +321,6 @@ impl TinyRuntime {
         const MAX_PER_FRAME: usize = 5;
         const STAGGER_SECS: f32 = 0.028; // the pieces separate in time
         let events = self.composed.game.drain_shard_events();
-        let plain = clinks_plain_by_query();
         let mut seed = self.clink_seed;
         for (i, ev) in events.iter().take(MAX_PER_FRAME).enumerate() {
             let (pos, speed01, size01, crack) = match *ev {
@@ -1051,16 +1034,6 @@ mod web {
         web_sys::window()
             .and_then(|w| w.location().search().ok())
             .is_some_and(|q| q.contains("nomusic"))
-    }
-
-    /// The `?clinksplain` differential (the operator's one-clink test):
-    /// route the clinks through the byte-identical SFX call (relative
-    /// source, NO position) — isolates the positional half of the play
-    /// path on the user's Chrome.
-    pub(super) fn clinks_plain_by_query() -> bool {
-        web_sys::window()
-            .and_then(|w| w.location().search().ok())
-            .is_some_and(|q| q.contains("clinksplain"))
     }
 
     /// Start the live synth engine now (called from the page's gesture, so

@@ -137,7 +137,8 @@ fn a_soft_hit_shatters_the_wall_into_glass_shards_cut_from_its_quad() {
         shards.len()
     );
     // The impact point: the wall vertex nearest the player (the engine's
-    // blast origin).
+    // blast origin). It must lie ON the wall — the burst is cut from the
+    // wall's quad at this point, never at the arena centre.
     let impact = quad
         .iter()
         .copied()
@@ -147,6 +148,10 @@ fn a_soft_hit_shatters_the_wall_into_glass_shards_cut_from_its_quad() {
             da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
         })
         .unwrap();
+    assert!(
+        point_in_polygon(&quad, impact.x, impact.y),
+        "the blast origin is a wall vertex, not free space"
+    );
     // Every piece is cut from the wall's ACTUAL quad: all of its
     // vertices sit inside (or on the edges of) the wall's 4-vertex
     // shape (the burst is AT the wall, not the center).

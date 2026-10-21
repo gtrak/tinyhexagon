@@ -794,7 +794,7 @@ mod tests {
     fn update_rides_velocity_drags_tumbles_and_burns_life() {
         let mut s = shard();
         let (p0, v0, spin0) = (s.position, s.velocity, s.spin);
-        s.update(0.25, 72.0);
+        let _ = s.update(0.25, 72.0);
         // Position: explicit Euler with the pre-drag velocity.
         let expected = p0 + v0 * 0.25;
         assert!((s.position.x - expected.x).abs() < 1e-6);
@@ -811,7 +811,7 @@ mod tests {
         // A huge delta stalls drag/spin-decay (never negative) and runs
         // the life out (110 units; 120 > 110).
         let mut s = shard();
-        s.update(120.0, 72.0);
+        let _ = s.update(120.0, 72.0);
         assert!(s.velocity.x >= 0.0);
         assert!(s.spin >= 0.0);
         assert!(!s.is_alive());
@@ -827,7 +827,7 @@ mod tests {
         s.position = Vec2::new(75.0, 0.0); // outside the 72 core edge
         s.velocity = Vec2::new(-20.0, 0.0); // 75 - 5 = 70 < 72: crosses
         s.spin = 0.05;
-        s.update(0.25, 72.0);
+        let _ = s.update(0.25, 72.0);
         assert!(
             (s.position.x - 72.0).abs() < 1e-6,
             "pushed back onto the core edge"
@@ -850,7 +850,7 @@ mod tests {
         let mut s = shard();
         s.position = Vec2::new(50.0, 0.0);
         s.velocity = Vec2::new(-2.0, 0.0);
-        s.update(0.25, 72.0);
+        let _ = s.update(0.25, 72.0);
         assert!(
             (s.position.x - (50.0 - 2.0 * 0.25)).abs() < 1e-6,
             "no clamp to the core edge"
@@ -865,13 +865,13 @@ mod tests {
         let mut s = shard();
         s.position = Vec2::new(70.0, 0.0);
         s.velocity = Vec2::new(20.0, 0.0); // 70 + 5 = 75 > 72
-        s.update(0.25, 72.0);
+        let _ = s.update(0.25, 72.0);
         assert!((s.position.x - 75.0).abs() < 1e-6);
         assert!((s.velocity.x - 20.0 * (1.0 - SHARD_DRAG_PER_FT * 0.25)).abs() < 1e-5);
 
         // Stays outside: no bounce (the default shard at 100, +2).
         let mut s = shard();
-        s.update(0.25, 72.0);
+        let _ = s.update(0.25, 72.0);
         assert!((s.position.x - (100.0 + 2.0 * 0.25)).abs() < 1e-6);
         assert!((s.velocity.x - 2.0 * (1.0 - SHARD_DRAG_PER_FT * 0.25)).abs() < 1e-6);
     }
