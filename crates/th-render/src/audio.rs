@@ -22,6 +22,15 @@
 //! audio device) simply have no backend and the `play` paths no-op while the
 //! object state (volume / pitch / offset / playing) is fully testable.
 //!
+//! The **one-mixer plan** (plan 002 issue 09) adds the streamed-music half:
+//! the in-memory synth graph (no device of its own on the web) renders its
+//! frames into the [`MusicSource`] — on the web a dedicated OpenAL *streaming*
+//! source on the SAME OpenAL context the SFX one-shots play through (ONE
+//! context, ONE gesture unlock, the browser's Web Audio graph mixes the SFX
+//! and the music; the desktop keeps its device stream until the plan's
+//! rodio-`Source` half lands — the [`MusicSource`] there is the no-op
+//! headless handle).
+//!
 //! SFML semantics mirrored: volume is `0..=100` (default `100`), pitch is
 //! `1.0` by default, `setPlayingOffset` is in seconds and is clamped to the
 //! buffer length unless the source loops. The SFML-unit → linear gain mapping
@@ -29,6 +38,7 @@
 //! and web paths agree on the numbers the device actually plays at.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use th_math::ssvu::math::get_clamped;
 
@@ -496,6 +506,76 @@ impl AudioPlayer {
     }
 }
 
+/// The backend half of a [`MusicSource`] (the web's OpenAL streaming
+/// source). `Send + Sync` for the `th-audio` seam bound (the
+/// single-threaded web makes the bound vacuous — the `OpenalBackend`'s
+/// note).
+trait MusicSourceBackend: Send + Sync {
+    /// The number of stereo frames the caller should render next to keep
+    /// the stream topped up (`0` = the queue is full / nothing to feed —
+    /// render exactly this many frames and [`MusicSource::feed`] them).
+    fn desired_frames(&self) -> usize;
+    /// Queue one rendered chunk (interleaved stereo `f32` at
+    /// `sample_rate`) into the stream (the web: `alBufferData` +
+    /// `alSourceQueueBuffers` on the dedicated source, re-starting it when
+    /// it has underrun to a stop).
+    fn feed(&self, sample_rate: u32, frames: &[f32]);
+    /// Whether the stream is currently playing (the web's `AL_PLAYING`; the
+    /// status probe's `audio=live` half — live = the in-memory engine is
+    /// live AND this source is playing).
+    fn is_streaming(&self) -> bool;
+}
+
+/// The streamed-music source (the one-mixer plan's music half — plan 002
+/// issue 09): the in-memory synth graph's rendered frames are queued here
+/// as a continuous stream on the device's output. On the web it is a
+/// dedicated OpenAL streaming source (`AL_FORMAT_STEREO16`) on the SAME
+/// OpenAL context the SFX one-shots play through — ONE context, ONE
+/// gesture unlock, the SFX and the music mixed by the browser's own Web
+/// Audio graph. Headless (no backend) or the non-emscripten backends (the
+/// desktop keeps its cpal/rodio device stream until the plan's rodio
+/// `Source` half lands): a no-op handle (`desired_frames` `0`, `feed`
+/// drops, `is_streaming` `false`).
+#[derive(Clone)]
+pub struct MusicSource {
+    inner: Option<Arc<dyn MusicSourceBackend>>,
+}
+
+impl MusicSource {
+    /// A no-op (headless / not-yet-wired) music source.
+    #[must_use]
+    pub fn headless() -> Self {
+        Self { inner: None }
+    }
+
+    /// The number of stereo frames the caller should render next to keep
+    /// the stream topped up (`0` = the queue is full / nothing to feed).
+    #[must_use]
+    pub fn desired_frames(&self) -> usize {
+        self.inner
+            .as_deref()
+            .map_or(0, MusicSourceBackend::desired_frames)
+    }
+
+    /// Queue one rendered chunk (interleaved stereo `f32` at
+    /// `sample_rate`) into the stream — the frames the caller just
+    /// rendered from the in-memory engine.
+    pub fn feed(&self, sample_rate: u32, frames: &[f32]) {
+        if let Some(b) = self.inner.as_deref() {
+            b.feed(sample_rate, frames);
+        }
+    }
+
+    /// Whether the stream is currently playing (the web's `AL_PLAYING`; the
+    /// status probe's `audio=live` half). `false` headless.
+    #[must_use]
+    pub fn is_streaming(&self) -> bool {
+        self.inner
+            .as_deref()
+            .is_some_and(MusicSourceBackend::is_streaming)
+    }
+}
+
 /// The portable output-device backend the [`AudioDevice`] seam delegates to.
 /// `Send + Sync` so the `th-audio` `Audio` can hold the device behind its
 /// `Mutex` (the `Send + Sync` seam bound).
@@ -529,6 +609,17 @@ trait DeviceBackend: Send + Sync {
     /// desktop/Android (no autoplay policy); on the web the browser requires a
     /// user gesture before a Web Audio context will run.
     fn unlock(&self);
+    /// The music streaming source (the one-mixer plan's music half). The
+    /// web: a dedicated OpenAL source on this device's context (the SFX and
+    /// the music share ONE context); the rodio backend: the headless handle
+    /// (the desktop keeps the cpal device stream until the plan's rodio
+    /// `Source` half lands).
+    fn music_source(&self) -> MusicSource;
+    /// The output context's live state (the web's Web Audio context's
+    /// "running" / "suspended" — the status probe's `ctx=` field, the
+    /// shim's own probe context's read; "" when there is no context to
+    /// read — desktop / headless).
+    fn context_state(&self) -> String;
     /// A one-line diagnostic: which world (device present / absent) + the
     /// unlock (context) state + the last source state / error.
     fn describe(&self) -> String;
@@ -648,6 +739,27 @@ impl AudioDevice {
         if let Some(b) = self.backend.as_ref() {
             b.unlock();
         }
+    }
+
+    /// The music streaming source (the one-mixer plan's music half — issue
+    /// 09): the in-memory synth's rendered frames stream into the device
+    /// through this. On the web the source sits on the SAME OpenAL context
+    /// the one-shots use (ONE context, ONE gesture unlock); the desktop
+    /// handle is headless (the rodio `Source` half is the plan's deferred
+    /// item). `None` when no device is open.
+    #[must_use]
+    pub fn music_source(&self) -> Option<MusicSource> {
+        self.backend.as_ref().map(|b| b.music_source())
+    }
+
+    /// The output context's live state (the web's Web Audio "running" /
+    /// "suspended" — the status probe's `ctx=` field; "" on the desktop /
+    /// headless).
+    #[must_use]
+    pub fn context_state(&self) -> String {
+        self.backend
+            .as_ref()
+            .map_or_else(String::new, |b| b.context_state())
     }
 
     /// A one-line diagnostic: which world (device present / headless) + the

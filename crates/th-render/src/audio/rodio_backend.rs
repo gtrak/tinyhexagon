@@ -10,7 +10,7 @@
 
 use rodio::Source;
 
-use crate::audio::{AudioOpenError, AudioPlayer, DeviceBackend, PlayerBackend};
+use crate::audio::{AudioOpenError, AudioPlayer, DeviceBackend, MusicSource, PlayerBackend};
 
 /// The rodio output device (the `MixerDeviceSink` the `Player`s connect to).
 pub struct RodioBackend {
@@ -111,6 +111,21 @@ impl DeviceBackend for RodioBackend {
 
     fn unlock(&self) {
         // No autoplay policy on desktop/Android — nothing to unlock.
+    }
+
+    fn music_source(&self) -> MusicSource {
+        // The plan's deferred item: the in-memory engine as a rodio
+        // `Source` mixed alongside the SFX on ONE device stream. Until it
+        // lands the desktop/Android music keeps its own cpal device stream
+        // (the rust-synth `start` path) and this is the no-op headless
+        // handle (the `th-app` web frame timer — the only `feed` caller —
+        // never runs on these targets).
+        MusicSource::headless()
+    }
+
+    fn context_state(&self) -> String {
+        // No Web Audio context to read on the desktop / Android.
+        String::new()
     }
 
     fn describe(&self) -> String {

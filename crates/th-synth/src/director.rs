@@ -319,7 +319,9 @@ impl MusicDirector {
     }
 
     /// 09 instrumentation — the live engine's WebAudio context state
-    /// ("" on the fallback clock / non-emscripten hosts).
+    /// ("" on the fallback clock / non-emscripten hosts, and on the
+    /// in-memory engine — its shared OpenAL context is the SFX device's,
+    /// so the status's `ctx=` field reads that device's recorded state).
     #[must_use]
     pub fn audio_context_state(&self) -> String {
         match &self.live {
@@ -505,6 +507,8 @@ impl MusicDirector {
     /// staccato window (a note plays only `GATE_OPEN` of its step) with
     /// the odd 16ths swung late (`SWING` of a step), which is what turns
     /// the grid into a groove.
+    /// the odd 16ths swung late (`SWING` of a step), which is what turns
+    /// the grid into a groove.
     fn sequence(&mut self, t: f32) {
         let step_len = 60.0 / self.bpm / 4.0;
         let step_f = t.max(0.0) / step_len;
@@ -585,6 +589,25 @@ impl MusicDirector {
         self.live = None;
     }
 
+    /// The one-mixer plan's web render half (09): render `out`
+    /// (interleaved stereo `f32`, an even length) from the live
+    /// in-memory engine (the emscripten `start_on_gesture` engine —
+    /// desktop/Android live engines are cpal streams and never render
+    /// through this). The engine's phase clock (the `BeatView`'s time
+    /// source) advances with the rendered frames — the render pass
+    /// drives the clock, same as today's audio callback; the web's
+    /// frame timer queues the frames into the SFX OpenAL context's
+    /// streaming source (ONE context for the SFX and the music). `false`
+    /// on the fallback clock (nothing to render).
+    pub fn render_stereo(&self, out: &mut [f32]) -> bool {
+        if let Some(e) = &self.live {
+            e.render_stereo(out);
+            true
+        } else {
+            false
+        }
+    }
+
     fn try_start_live(&mut self) -> bool {
         if self.live.is_some() {
             return true;
@@ -599,7 +622,19 @@ impl MusicDirector {
                 params: t.params.clone(),
             })
             .collect();
-        match AudioEngine::start(tracks) {
+        // The one-mixer plan (09): on emscripten the live engine is the
+        // IN-MEMORY half (no cpal stream, no private WebAudio context) —
+        // its frames feed the SFX device's OpenAL streaming source
+        // (th-app's web frame timer queues them; the phase clock the
+        // `BeatView` consumes advances in `render_stereo`).
+        // Desktop/Android keep the cpal device stream (the rodio-`Source`
+        // half — the synth as a rodio source on ONE device stream — is the
+        // plan's deferred item).
+        #[cfg(target_os = "emscripten")]
+        let started = AudioEngine::start_in_memory(tracks);
+        #[cfg(not(target_os = "emscripten"))]
+        let started = AudioEngine::start(tracks);
+        match started {
             Ok(handle) => {
                 handle.global.bpm.set_value(self.bpm);
                 handle.global.brightness.set_value(self.brightness);
@@ -628,6 +663,8 @@ impl MusicDirector {
 
 #[cfg(test)]
 mod tests {
+    use rust_synth::audio::engine::IN_MEMORY_SAMPLE_RATE;
+
     use super::*;
     use rust_synth::audio::engine::MAX_TRACKS;
 
@@ -837,5 +874,63 @@ mod tests {
         assert!((0.0..=1.0).contains(&v.beat_phase));
         d.stop();
         d.tick(0.1);
+    }
+
+    /// The one-mixer plan's web half (09): the in-memory engine (no
+    /// device — CI-safe, unlike `AudioEngine::start`'s cpal open) renders
+    /// the director's stage-2 score through `render_stereo`: nonzero
+    /// output, and the peaks / phase clock driven by the render pass
+    /// (the `BeatView`'s time source).
+    #[test]
+    fn in_memory_engine_renders_the_score() {
+        let mut d = MusicDirector::new_fallback();
+        d.set_stage(2); // unlocks the bell — more voices than stage 0
+        let tracks: Vec<Track> = d
+            .tracks
+            .iter()
+            .map(|t| Track {
+                id: t.id,
+                name: t.name.clone(),
+                kind: t.kind,
+                params: t.params.clone(),
+            })
+            .collect();
+        let handle = AudioEngine::start_in_memory(tracks).expect("in-memory start");
+        handle.global.bpm.set_value(d.bpm);
+        handle.global.brightness.set_value(d.brightness);
+        handle
+            .global
+            .scale_mode
+            .set_value(scale_mode_for_stage(d.stage));
+        handle.global.master_gain.set_value(MASTER_GAIN);
+        d.live = Some(handle);
+
+        let mut out = vec![0.0f32; (IN_MEMORY_SAMPLE_RATE as usize) * 2]; // one second
+        assert!(
+            d.render_stereo(&mut out),
+            "the live in-memory engine renders"
+        );
+        let peak = out.iter().fold(0.0f32, |p, &s| p.max(s.abs()));
+        assert!(
+            peak > 0.0,
+            "the stage-2 score must render audible output, peak {peak}"
+        );
+        // The render pass drove the clock: ~1 s of frames → ~1 s of time
+        // (the `BeatView`'s time source, the web frame timer's contract).
+        let clock = d.live.as_ref().expect("live").phase_clock.value();
+        assert!(
+            (clock - 1.0).abs() < 1e-3,
+            "phase clock advanced by the render: {clock}"
+        );
+    }
+
+    #[test]
+    fn render_stereo_is_false_on_the_fallback_clock() {
+        let d = MusicDirector::new_fallback();
+        let mut out = vec![0.0f32; 512];
+        assert!(
+            !d.render_stereo(&mut out),
+            "the fallback clock has no engine to render"
+        );
     }
 }

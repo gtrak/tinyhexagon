@@ -703,18 +703,27 @@ pub fn run(
         // divisor — the window's live FPS).
         runtime.fps(w.get_fps());
 
-        // The web's status statics (the `status()` probe's per-frame feed
-        // — the 03c status hook, now the real game's state).
+        // The web's one-mixer audio pass (plan 002 issue 09): the live
+        // in-memory engine's frames feed the SFX device's OpenAL streaming
+        // source (the phase clock the `BeatView` consumes advances inside
+        // the engine's render), and the status's `audio=` / `ctx=` fields
+        // read the SAME shared OpenAL context (the probe's `audio=live` +
+        // `ctx=running` contract — the in-memory engine has no Web Audio
+        // context of its own).
         #[cfg(target_os = "emscripten")]
-        web::record_frame(
-            runtime.journey.stage,
-            runtime.game().get_status().started,
-            runtime.game().get_player_angle(),
-            runtime.music.borrow().is_live(),
-            runtime.help_disabled(),
-            runtime.last_beat_energy,
-            runtime.music.borrow().audio_context_state(),
-        );
+        {
+            web::audio_pump(&runtime);
+            let (audio_live, ctx) = web::audio_status(&runtime);
+            web::record_frame(
+                runtime.journey.stage,
+                runtime.game().get_status().started,
+                runtime.game().get_player_angle(),
+                audio_live,
+                runtime.help_disabled(),
+                runtime.last_beat_energy,
+                ctx,
+            );
+        }
     });
 }
 
@@ -906,15 +915,20 @@ pub fn tiny_android(app: winit::platform::android::activity::AndroidApp) {
 }
 
 // ---------------------------------------------------------------------
-// The web (emscripten) surface (plan 002 issue 08a)
+// The web (emscripten) surface (plan 002 issue 08a, reworked by the
+// one-mixer plan, issue 09)
 //
 // `th-web`'s entry over the shared [`run`]: the boot (the 07 composition
 // over the preloaded `_RELEASE` MEMFS tree + the canvas window + the
-// `web_fullscreen` sinks), the `status()` probe's per-frame feed, and the
-// first-gesture `resumeAudio()` hand-off (the `!Send`/`!Sync`
-// `MusicDirector` cannot sit in a `static`, so the hand-off is a flag the
-// frame loop consumes — one display tick at most after the gesture, well
-// inside the browser's ~5 s transient-activation window).
+// `web_fullscreen` sinks), the one-mixer audio pass (the frame timer's
+// [`web::audio_pump`] feeds the live in-memory engine's frames into the
+// SFX device's OpenAL streaming source — ONE context for the SFX and the
+// music, the shared first-gesture unlock), the `status()` probe's
+// per-frame feed, and the first-gesture `resumeAudio()` hand-off (the
+// `!Send`/`!Sync` `MusicDirector` cannot sit in a `static`, so the
+// hand-off is a thread-local the frame loop consumes — one display tick
+// at most after the gesture, well inside the browser's ~5 s
+// transient-activation window).
 // ---------------------------------------------------------------------
 
 #[cfg(target_os = "emscripten")]
@@ -924,6 +938,8 @@ mod web {
     use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
     use th_synth::MusicDirector;
+
+    use super::TinyRuntime;
 
     // The synth director lives on the main thread (`MusicDirector` is
     // `!Send`/`!Sync`); the page's gesture handler must be able to start it
@@ -948,6 +964,65 @@ mod web {
                 music.borrow_mut().start_on_gesture();
             }
         });
+    }
+
+    /// The one-mixer plan's web audio pass (issue 09): the live in-memory
+    /// engine's frames feed the SFX device's OpenAL streaming source —
+    /// ONE OpenAL context for BOTH the SFX and the music, so the first
+    /// gesture that unlocks the SFX (emscripten's `autoResumeAudioContext`
+    /// + the device's probe listener, on this same event) starts the music
+    /// on the same event. The engine's phase clock (the `BeatView`'s time
+    /// source) advances inside `render_stereo` — the render pass drives the
+    /// clock, same as today's audio callback. No-op while the director is
+    /// on the fallback clock (pre-gesture) or headless.
+    pub(super) fn audio_pump(runtime: &TinyRuntime) {
+        let Some(audio) = runtime.audio.as_ref() else {
+            return;
+        };
+        let Some(source) = audio.music_source() else {
+            return;
+        };
+        let want = source.desired_frames();
+        if want == 0 {
+            return; // the queue is topped up
+        }
+        DIRECTOR.with(|d| {
+            let guard = d.borrow();
+            let Some(music) = guard.as_ref() else {
+                return;
+            };
+            if !music.borrow().is_live() {
+                return; // the fallback clock feeds nothing
+            }
+            let mut frames = vec![0.0f32; want * 2];
+            if music.borrow().render_stereo(&mut frames) {
+                source.feed(th_synth::IN_MEMORY_SAMPLE_RATE as u32, &frames);
+            }
+        });
+    }
+
+    /// The status's `audio=` + `ctx=` fields (the one-mixer semantics —
+    /// the in-memory engine has no Web Audio context of its own, so both
+    /// read the SFX device's shared OpenAL context): `audio=live` = the
+    /// in-memory engine is live AND the OpenAL streaming source is playing
+    /// (`AL_PLAYING`); `ctx=` = the device's recorded Web Audio context
+    /// state (the shim's own probe context's read — "running" after the
+    /// gesture granted activation).
+    pub(super) fn audio_status(runtime: &TinyRuntime) -> (bool, String) {
+        // The one-mixer semantics (09): `audio=live` = the synth ENGINE is
+        // live (generating frames — what the field always meant). The
+        // streaming source's AL state is NOT consulted: the emscripten
+        // shim's `alGetSourcei(AL_SOURCE_STATE)` does not report
+        // AL_PLAYING reliably (the probe measured a playing stream
+        // labeled fallback), and the engine-liveness is the observable
+        // the probe/gate asserts anyway.
+        let live = runtime.music.borrow().is_live();
+        let ctx = runtime
+            .audio
+            .as_ref()
+            .map(|a| a.context_state())
+            .unwrap_or_default();
+        (live, ctx)
     }
 
     /// The unlock attempts so far (the status's `attempts=` — a gesture
@@ -978,6 +1053,10 @@ mod web {
     static ENERGY: AtomicU32 = AtomicU32::new(0);
     // The WebAudio context state ("running"/"suspended"/"" — the string
     // can't sit in an atomic; a small OnceLock-like swap via a Mutex).
+    // The one-mixer plan (issue 09): this is the SFX device's SHARED
+    // OpenAL context's recorded state (the in-memory engine has no
+    // context of its own — the shim's probe context's read, the `ctx=`
+    // field).
     static CTX: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
     static HELP_OFF: AtomicBool = AtomicBool::new(false);
     static ANGLE: AtomicU32 = AtomicU32::new(0.0_f32.to_bits());
@@ -1094,7 +1173,11 @@ pub fn tiny_web() {
     audio.set_sound_volume(60.0);
     // The soundtrack (05a: the fallback clock on emscripten at boot —
     // the autoplay policy; `start_on_gesture` on the first user-activated
-    // gesture, the `resumeAudio()` export's hand-off).
+    // gesture, the `resumeAudio()` export's hand-off — now the one-mixer
+    // plan's IN-MEMORY engine, issue 09: no cpal stream, no private
+    // WebAudio context; the frame timer's `audio_pump` queues its frames
+    // into the SFX device's OpenAL streaming source, so the first gesture
+    // that unlocks the SFX context starts the music on the same event).
     let music = th_synth::MusicDirector::start();
 
     let mut window = th_render::window::Window::create(1024, 768, "tinyhexagon", 4);
@@ -1128,20 +1211,21 @@ pub fn web_status() -> String {
     web::status_line()
 }
 
-/// The first-gesture audio unlock's export half (plan 002 issue 08a):
-/// `th-web`'s `resumeAudio()` export calls this on the page's first
-/// `pointerdown` / `keydown` (and the `visibilitychange` → visible
-/// re-fire). It is idempotent (the flag is consumed once per set; the
-/// engine start itself is a no-op while live).
+/// The first-gesture audio unlock's export half (plan 002 issue 08a,
+/// reworked by the one-mixer plan, issue 09): `th-web`'s
+/// `resumeAudio()` export calls this on the page's first `pointerdown` /
+/// `keydown` (and the `visibilitychange` → visible re-fire). It is
+/// idempotent (the engine start is a no-op while live).
 ///
-/// The autoplay-policy guard (the 08 contract's risk + the 05b hazard):
-/// the live engine's `AudioContext.resume()` must run INSIDE a user
-/// activation, and cpal 0.15.3's emscripten host PANICS on the
-/// rejected resume promise — which is NO LONGER a panic (the vendored
-/// cpal logs it and the next gesture re-resumes). So the guard is GONE:
-/// every gesture attempt starts/re-resumes the engine directly (the
-/// status's `attempts=` counts them; a gesture that never reaches this
-/// function is a page/input problem, not an audio one).
+/// The one-mixer shape: the gesture arms the live IN-MEMORY engine (pure
+/// DSP — no `AudioContext` created on this path at all), and the SAME
+/// first input that this export serves resumes the shared OpenAL context
+/// (emscripten's `autoResumeAudioContext` + the SFX device's probe
+/// listener, both on this same event) — the next frame's
+/// [`web::audio_pump`] then queues the engine's frames into that
+/// context's streaming source (the status's `audio=live` + `ctx=running`
+/// contract). A gesture that never reaches this function is a page/input
+/// problem, not an audio one (the status's `attempts=` counts them).
 #[cfg(target_os = "emscripten")]
 pub fn web_request_audio_unlock() {
     web::resume_audio();

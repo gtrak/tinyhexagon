@@ -263,7 +263,13 @@ const inputChecks = [
   ['input: the WebAudio context is RUNNING (ctx=running — the setTimeout graph renders even suspended; only this proves playback)', pf.ctx === 'running'],
   ['input: the unlock attempt reached the export (attempts>=1 — a gesture that never increments this is a page/input problem)', Number(pf.attempts) >= 1],
   ['audio: the host buffers carry sound (buffer maxPeak >= 0.05 — the offline bus measures peak ~0.4; near zero = the graph is silent IN the browser)', audioStats.maxPeak >= 0.05],
-  ['audio: the host actually scheduled buffers (buffers >= 20 over the run)', audioStats.buffers >= 20],
+  // The threshold is calibrated to the CURRENT audio architecture. The
+  // one-mixer build (plan 002 issue 09): the music streams through the
+  // OpenAL shim as ~21 ms queue buffers — the shim schedules each as it
+  // fills, so the wrap count grows continuously (~17 by the snapshot).
+  // The stall signature the check exists for was buffers=4 (the kick
+  // SFX only — the queue extern bug): 10 sits safely between.
+  ['audio: the host actually scheduled buffers (buffers >= 10 over the run — the stall was the SFX-only 4)', audioStats.buffers >= 10],
   ['input: help=off (any input disabled the helping hand — the input reached the frame)', pf.help === 'off'],
   ['input: ticks advanced (the sim ran through the key press)', Number(pf.ticks) > Number(baseline.f.ticks)],
   ['input: angle turned counter-clockwise (the A steer reached the engine)', Number.isFinite(postAngle) && postAngle < 0],

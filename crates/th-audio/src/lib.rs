@@ -433,6 +433,26 @@ impl Audio {
     pub fn play_pack_sound_abort(&self, pack_id: &str, id: &str) {
         self.play_sound_inner(&format!("{pack_id}_{id}"));
     }
+
+    /// The music streaming source (the one-mixer plan's web half — issue
+    /// 09): the in-memory synth's rendered frames stream into the device
+    /// through this. On the web the source sits on the SAME OpenAL context
+    /// the one-shots use (ONE context, ONE gesture unlock — the first
+    /// input that unlocks the SFX starts the music on the same event);
+    /// the desktop handle is headless (the rodio `Source` half is the
+    /// plan's deferred item). `None` when no device is open.
+    #[must_use]
+    pub fn music_source(&self) -> Option<th_render::audio::MusicSource> {
+        lock(&self.inner).device.music_source()
+    }
+
+    /// The output context's live state (the web's Web Audio "running" /
+    /// "suspended" — the status probe's `ctx=` field; "" on the desktop /
+    /// headless).
+    #[must_use]
+    pub fn context_state(&self) -> String {
+        lock(&self.inner).device.context_state()
+    }
 }
 
 /// Re-open the live music source at `offset` seconds: decode the OGG (pure

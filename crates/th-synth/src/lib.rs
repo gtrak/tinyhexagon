@@ -11,9 +11,15 @@
 //!   over 0.6 s;
 //! * **no-device fallback** — `start()` never panics without a device;
 //!   `tick` advances a fallback clock so `BeatView` keeps advancing;
-//! * **web boot** — on emscripten the engine starts lazily on the first
-//!   user gesture (`start_on_gesture`, cfg-gated to emscripten);
-//!   desktop/Android start at boot.
+//! * **web boot (the one-mixer plan, 09)** — on emscripten the engine
+//!   starts lazily on the first user gesture (`start_on_gesture`,
+//!   cfg-gated to emscripten) as the IN-MEMORY engine
+//!   (`AudioEngine::start_in_memory` — no cpal stream, no private WebAudio
+//!   context): the frame timer's [`MusicDirector::render_stereo`] pass
+//!   feeds the SFX device's OpenAL context as a streaming source, so the
+//!   SFX and the music share ONE context and ONE gesture unlock. The
+//!   phase clock the `BeatView` consumes is driven by that render pass.
+//!   Desktop/Android start at boot on the cpal device stream.
 //!
 //! Stage changes mutate `Shared` params only — never `rebuild_graph` — so
 //! a stage change is click-free. SFX stay in `th-audio`; this crate never
@@ -36,3 +42,8 @@ pub mod director;
 
 pub use beat::BeatView;
 pub use director::MusicDirector;
+/// The in-memory engine's fixed render rate (the one-mixer plan's web
+/// half — the OpenAL streaming buffers are labeled at this rate; the
+/// re-export keeps the th-app web frame timer from naming the engine
+/// crate directly).
+pub use rust_synth::audio::engine::IN_MEMORY_SAMPLE_RATE;

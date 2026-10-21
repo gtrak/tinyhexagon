@@ -53,15 +53,16 @@ pub fn status() -> String {
     th_app::tiny::web_status()
 }
 
-/// The first-gesture audio unlock (the 08 shell's export): the page's
-/// first `pointerdown` / `keydown` (and the `visibilitychange` → visible
-/// re-fire) calls this once. It is idempotent (the Rust side re-checks
-/// the browser's user activation and the live-engine state). It arms the
-/// live `MusicDirector` engine (`start_on_gesture`) on the next frame;
-/// the `th-audio` SFX device (emscripten's OpenAL) unlocks on the SAME
-/// first gesture through its own listeners (emscripten's
-/// `autoResumeAudioContext` + the module's probe listener) — there is no
-/// `th-audio` call to make.
+/// The first-gesture audio unlock (the 08 shell's export; the one-mixer
+/// plan, issue 09): the page's first `pointerdown` / `keydown` (and the
+/// `visibilitychange` → visible re-fire) calls this. It is idempotent
+/// (the in-memory engine start is a no-op while live). It arms the live
+/// in-memory `MusicDirector` engine IN THE GESTURE (pure DSP — no
+/// `AudioContext` created on this path); the same first input resumes the
+/// shared OpenAL context (emscripten's `autoResumeAudioContext` + the
+/// SFX device's probe listener), and the next frame's audio pass queues
+/// the engine's frames into that context's streaming source — the SFX
+/// and the music share ONE context, so ONE gesture unlocks both.
 #[wasm_bindgen(js_name = "resumeAudio")]
 pub fn resume_audio() {
     th_app::tiny::web_request_audio_unlock();

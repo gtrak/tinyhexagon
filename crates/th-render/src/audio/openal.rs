@@ -31,13 +31,31 @@
 //! `volume / 100.0` (SFML `0..=100` → linear `0..=1`) is applied here exactly
 //! as the rodio backend does (issue 039's device evidence: 100 SFML units →
 //! 1.0), so the desktop and web paths agree on the gain the device plays at.
+//!
+//! # The one-mixer plan (plan 002 issue 09)
+//!
+//! This device's context is the web's ONE audio context: the SFX one-shots
+//! AND the streamed music (the in-memory synth's rendered frames, the
+//! `MusicSource` — a dedicated `AL_STREAMING` source fed with
+//! `alBufferData` + `alSourceQueueBuffers`) play through it. One context,
+//! one gesture unlock (emscripten's `autoResumeAudioContext` fires on the
+//! same first input the SFX's probe listener records), the SFX and the
+//! music mixed by the browser's Web Audio graph. The context is created at
+//! `MUSIC_RATE` (48 kHz — the in-memory engine's render rate, so the music
+//! stream needs no resample; a browser that rejects the rate option falls
+//! back to the default-rate context, where Web Audio resamples the
+//! 48 kHz-labeled buffers).
 
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use wasm_bindgen::JsCast;
 
-use crate::audio::{emit_diag, AudioOpenError, AudioPlayer, DeviceBackend, PlayerBackend};
+use crate::audio::{
+    emit_diag, AudioOpenError, AudioPlayer, DeviceBackend, MusicSource, MusicSourceBackend,
+    PlayerBackend,
+};
 
 // ---------------------------------------------------------------------------
 // OpenAL constants (the emscripten `AL/al.h` values — the source of truth for
@@ -57,6 +75,25 @@ const AL_PLAYING: u32 = 0x1012;
 const AL_STOPPED: u32 = 0x1014;
 const AL_PAUSED: u32 = 0x1013;
 const AL_INITIAL: u32 = 0x1011;
+const AL_BUFFERS_PROCESSED: u32 = 0x1016;
+/// The ALC context attribute: the Web Audio context's sample rate (the
+/// one-mixer plan: the context is created at the in-memory engine's render
+/// rate so the music stream needs no resample).
+const ALC_FREQUENCY: i32 = 0x1007;
+/// The music stream's render rate (48 kHz — the in-memory engine's fixed
+/// rate; the buffer labels + the context's `ALC_FREQUENCY` attribute).
+const MUSIC_RATE: u32 = 48_000;
+/// One music-stream buffer's frames (21.3 ms at 48 kHz).
+const MUSIC_BUFFER_FRAMES: usize = 1024;
+/// The queue depth the feed keeps topped up (~128 ms — ahead of the
+/// shim's 100 ms scheduling lookahead, so the 25 ms scheduler tick never
+/// underruns a topped-up queue).
+const MUSIC_TARGET_QUEUED: usize = 6;
+/// The per-feed burst cap (the rAF catch-up after a hidden tab).
+const MUSIC_MAX_BURST: usize = 4;
+/// The buffer pool (target + the in-flight margin; `feed` never queues
+/// past the pool, so a free id is always available while topping up).
+const MUSIC_POOL: usize = 8;
 
 const AL_NONE: u32 = 0;
 const AL_INVALID_NAME: u32 = 0x4001;
@@ -109,6 +146,13 @@ extern "C" {
     fn alSourcef(source: u32, param: u32, value: f32);
     fn alSourcePlay(source: u32);
     fn alSourceStop(source: u32);
+    // The REAL OpenAL signatures: (source, n, buffers) — a wrong
+    // (n, buffer_ids) declaration misaligns the FFI (the source id lands
+    // in the count slot, the count gets the data pointer, the data slot
+    // gets undefined): the queue silently never fills (the probe's
+    // buffers=4 was the kick SFX — the music never played).
+    fn alSourceQueueBuffers(source: u32, n: i32, buffer_ids: *const u32);
+    fn alSourceUnqueueBuffers(source: u32, n: i32, buffer_ids: *mut u32);
     fn alGetSourcei(source: u32, param: u32, value: *mut i32);
     fn alGetError() -> u32;
 }
@@ -136,6 +180,10 @@ pub struct OpenalBackend {
     /// `ALCcontext*` (as `usize`).
     context: usize,
     state: Arc<Mutex<State>>,
+    /// The music streaming source's state (the one-mixer plan's music half
+    /// — the dedicated `AL_STREAMING` source + its buffer pool, shared
+    /// with the cloned [`MusicSource`] handles).
+    music: Arc<Mutex<MusicState>>,
     /// Set once, on the first user gesture (the unlock).
     unlocked: Arc<AtomicBool>,
     /// The one-shot gesture listeners — kept alive for the device's life
@@ -165,7 +213,20 @@ impl OpenalBackend {
                 detail: "no Web Audio AudioContext (alcOpenDevice returned NULL)".to_string(),
             });
         }
-        let context = unsafe { alcCreateContext(device, core::ptr::null()) };
+        // The one-mixer plan: the context is created at the in-memory
+        // engine's render rate (the `ALC_FREQUENCY` attribute — emscripten
+        // passes it to `new AudioContext({ sampleRate })`), so the music
+        // stream needs no resample. A browser that rejects the rate
+        // (NotSupportedError → NULL) gets the default-rate context: the
+        // 48 kHz-labeled music buffers then resample in Web Audio, and the
+        // SFX path is exactly what it was before.
+        let mut context = unsafe {
+            let attrs: [i32; 3] = [ALC_FREQUENCY, MUSIC_RATE as i32, 0];
+            alcCreateContext(device, attrs.as_ptr())
+        };
+        if context.is_null() {
+            context = unsafe { alcCreateContext(device, core::ptr::null()) };
+        }
         if context.is_null() {
             unsafe {
                 alcCloseDevice(device);
@@ -177,6 +238,37 @@ impl OpenalBackend {
         unsafe {
             alcMakeContextCurrent(context);
         }
+        // The music streaming source (the one-mixer plan's music half):
+        // ONE dedicated `AL_STREAMING` source on this context (the SFX and
+        // the music share the context + its gesture unlock). Created
+        // stopped — the web frame timer queues the in-memory engine's
+        // frames into it and plays it (post-gesture, when the director
+        // goes live).
+        let mut music_source_id: u32 = 0;
+        unsafe {
+            alGenSources(1, &mut music_source_id);
+            alSourcei(music_source_id, AL_SOURCE_RELATIVE, AL_TRUE as i32);
+            alSourcef(music_source_id, AL_GAIN, 1.0);
+        }
+        let mut pool = Vec::with_capacity(MUSIC_POOL);
+        for _ in 0..MUSIC_POOL {
+            let mut id: u32 = 0;
+            unsafe {
+                alGenBuffers(1, &mut id);
+            }
+            if id != 0 {
+                pool.push(id);
+            }
+        }
+        // The free list starts as the whole pool (`pop_back` hands out the
+        // ids, most-recently-allocated first).
+        let free: VecDeque<u32> = pool.iter().copied().collect();
+        let music = Arc::new(Mutex::new(MusicState {
+            source: music_source_id,
+            pool,
+            free,
+            queued: 0,
+        }));
         let state = Arc::new(Mutex::new(State {
             context_state: "suspended".to_string(), // the autoplay-policy default
             last_source_state: None,
@@ -191,6 +283,7 @@ impl OpenalBackend {
             listeners: Vec::new(),
             state: state.clone(),
             unlocked: unlocked.clone(),
+            music: music.clone(),
         };
 
         // The world + initial-context diagnostic (visible on the web via
@@ -353,6 +446,31 @@ impl DeviceBackend for OpenalBackend {
         let _ = self.unlocked;
     }
 
+    fn music_source(&self) -> MusicSource {
+        // The one-mixer plan's music half: the dedicated streaming source
+        // on THIS device's context (the SFX and the music share the one
+        // context + the one gesture unlock). The handle is a cheap Arc
+        // clone — the web frame timer feeds it per rAF.
+        MusicSource {
+            inner: Some(Arc::new(OpenalMusicSource {
+                state: self.music.clone(),
+            })),
+        }
+    }
+
+    fn context_state(&self) -> String {
+        // The status probe's `ctx=` field: the shim's own probe context's
+        // recorded state ("suspended" until the first gesture, then the
+        // throwaway AudioContext's read — the OpenAL context itself is not
+        // reachable through the AL C API, and both contexts resume on the
+        // same first input — emscripten's `autoResumeAudioContext`).
+        self.state
+            .lock()
+            .expect("audio state poisoned")
+            .context_state
+            .clone()
+    }
+
     fn describe(&self) -> String {
         let g = self.state.lock().expect("audio state poisoned");
         let src = g.last_source_state.as_deref().unwrap_or("(no play yet)");
@@ -366,8 +484,20 @@ impl DeviceBackend for OpenalBackend {
 
 impl Drop for OpenalBackend {
     fn drop(&mut self) {
-        // Drop the gesture listeners, then tear down the AL context / device.
+        // Drop the gesture listeners, stop + free the music streaming
+        // source (the buffers with it), then tear down the AL context /
+        // device.
         self.listeners.clear();
+        {
+            let music = self.music.lock().expect("music state poisoned");
+            unsafe {
+                alSourceStop(music.source);
+                alDeleteSources(1, &music.source);
+                if !music.pool.is_empty() {
+                    alDeleteBuffers(music.pool.len() as i32, music.pool.as_ptr());
+                }
+            }
+        }
         let context = self.context as *mut core::ffi::c_void;
         let device = self.device as *mut core::ffi::c_void;
         unsafe {
@@ -379,6 +509,114 @@ impl Drop for OpenalBackend {
                 alcCloseDevice(device);
             }
         }
+    }
+}
+
+/// The music streaming source's state (the one-mixer plan's web half):
+/// the dedicated `AL_STREAMING` source's queue bookkeeping. The queue
+/// holds rendered chunks of the in-memory engine's output; the shim's
+/// 25 ms scheduler tick schedules the queued buffers onto the context's
+/// Web Audio clock up to its 100 ms lookahead, so a topped-up queue
+/// (≥ the lookahead) plays gapless — the main-thread feed only ever
+/// replenishes, never schedules.
+struct MusicState {
+    /// The dedicated source (created stopped at device open; the feed
+    /// plays it once the queue has content).
+    source: u32,
+    /// Every buffer id the pool owns (the free + the queued ones).
+    pool: Vec<u32>,
+    /// The ids ready to be (re)uploaded (hand-out order: `pop_back`).
+    free: VecDeque<u32>,
+    /// Buffers currently in the source's queue (our bookkeeping — the
+    /// shim's zero-buffer sentinel is internal to it).
+    queued: usize,
+}
+
+/// The OpenAL half of a [`MusicSource`] (the dedicated streaming source's
+/// queue bookkeeping, behind the shared `MusicState`).
+struct OpenalMusicSource {
+    state: Arc<Mutex<MusicState>>,
+}
+
+impl MusicSourceBackend for OpenalMusicSource {
+    fn desired_frames(&self) -> usize {
+        let g = self.state.lock().expect("music state poisoned");
+        let deficit = MUSIC_TARGET_QUEUED.saturating_sub(g.queued);
+        deficit.min(MUSIC_MAX_BURST) * MUSIC_BUFFER_FRAMES
+    }
+
+    fn feed(&self, sample_rate: u32, frames: &[f32]) {
+        let mut g = self.state.lock().expect("music state poisoned");
+        // 1. Reclaim the processed buffers (the shim marks a buffer
+        //    processed as its scheduled Web Audio node completes).
+        let mut processed: i32 = 0;
+        unsafe {
+            alGetSourcei(g.source, AL_BUFFERS_PROCESSED, &mut processed);
+        }
+        for _ in 0..processed.max(0) {
+            let mut id: u32 = 0;
+            unsafe {
+                alSourceUnqueueBuffers(g.source, 1, &mut id);
+            }
+            if id != 0 {
+                g.queued = g.queued.saturating_sub(1);
+                g.free.push_back(id);
+            }
+        }
+        // 2. Queue the rendered chunk in buffer-sized pieces (each piece
+        //    is one `AL_FORMAT_STEREO16` buffer at the render rate — the
+        //    context's rate, so no resample).
+        let mut queued_here = 0usize;
+        for chunk in frames.chunks(MUSIC_BUFFER_FRAMES * 2) {
+            let Some(id) = g.free.pop_back() else {
+                break; // the pool is exhausted (cannot happen: pool > target)
+            };
+            // f32 → i16 (the standard 16-bit OpenAL format — the SFX's
+            // `play_inner`'s same conversion).
+            let i16: Vec<i16> = chunk
+                .iter()
+                .map(|s| {
+                    let v = (s.clamp(-1.0, 1.0) * 32767.0).round();
+                    v as i16
+                })
+                .collect();
+            let size_bytes = (i16.len() * std::mem::size_of::<i16>()) as i32;
+            unsafe {
+                alBufferData(
+                    id,
+                    AL_FORMAT_STEREO16,
+                    i16.as_ptr() as *const core::ffi::c_void,
+                    size_bytes,
+                    sample_rate as i32,
+                );
+                alSourceQueueBuffers(g.source, 1, &id);
+            }
+            g.queued += 1;
+            queued_here += 1;
+        }
+        // 3. Keep it playing: a stopped source (an underrun, or the
+        //    pre-first-play state) needs the explicit start once the
+        //    queue has content again.
+        if queued_here > 0 {
+            let mut src_state: i32 = AL_INITIAL as i32;
+            unsafe {
+                alGetSourcei(g.source, AL_SOURCE_STATE, &mut src_state);
+            }
+            if src_state != AL_PLAYING as i32 {
+                unsafe {
+                    alSourcePlay(g.source);
+                }
+            }
+        }
+    }
+
+    fn is_streaming(&self) -> bool {
+        let g = self.state.lock().expect("music state poisoned");
+        let mut src_state: i32 = AL_INITIAL as i32;
+        unsafe {
+            alGetSourcei(g.source, AL_SOURCE_STATE, &mut src_state);
+        }
+        src_state == AL_PLAYING as i32
     }
 }
 

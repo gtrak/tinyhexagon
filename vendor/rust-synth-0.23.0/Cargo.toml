@@ -3,8 +3,7 @@
 # 12b25e0d881381ec7e5db60db239f98a4997894e; the registry extraction
 # artifacts `.cargo-ok` / `.cargo_vcs_info.json` + the author's
 # `Cargo.toml.orig` / `Cargo.lock` dropped). Changes vs the registry
-# source, all feature-wiring only — DSP/presets (`src/audio`, `src/math`)
-# byte-identical:
+# source:
 #   * `[features]`: `default = []`; `tui` (ratatui + crossterm +
 #     tracing-subscriber + `recording`) and `recording` (flacenc +
 #     vorbis_rs + hound) gate the TUI/recording modules; the six
@@ -15,6 +14,20 @@
 #     (import, `EngineHandle.recorder` field, local, `start_stream`
 #     param + call arg, per-frame `push_frame`) are
 #     `#[cfg(feature = "recording")]`-gated.
+#   * `src/audio/engine.rs` (plan 002 issue 09, the one-mixer plan): the
+#     in-memory half — `AudioEngine::start_in_memory` (the same graph
+#     build / GlobalParams / peaks / scope / phase clock as `start`,
+#     `IN_MEMORY_SAMPLE_RATE` 48 kHz, no cpal stream: `EngineHandle`
+#     `_stream` is `Option<Stream>`), `EngineHandle::render_stereo`
+#     (the per-frame render the web's frame timer drives — peaks / scope
+#     / phase clock update exactly the cpal callback's way; the callback
+#     locals became the shared `RenderState` + `render_buffer` body, so
+#     both halves render byte-for-byte the same) and the emscripten
+#     `audio_context_state` / `replay_context` no-op on the `None`
+#     stream (the in-memory engine's Web Audio context is the SFX device's
+#     OpenAL one — the probe reads that context's state). `start` (the
+#     cpal device stream) is unchanged in behavior; DSP/presets
+#     (`src/audio/preset.rs`, `src/math`) still byte-identical.
 #   * both `[[bin]]`s gained `required-features` so the TUI/render
 #     binaries only build with their features.
 # Reason: the wasm32-unknown-emscripten cross-target spike (05b) —
