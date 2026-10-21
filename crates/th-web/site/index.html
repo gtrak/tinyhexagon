@@ -125,7 +125,7 @@
       // "the buffers are loud but don't reach the speakers" — the
       // status/probe reads window.__audioStats. Purely observational
       // (no behavior change).
-      window.__audioStats = { buffers: 0, maxPeak: 0.0, actx: "-", at: 0.0, adv: 0, mono: 0, stereo: 0, lastPeak: 0, clinks: 0 };
+      window.__audioStats = { buffers: 0, maxPeak: 0.0, actx: "-", at: 0.0, adv: 0 };
       (() => {
         if (!window.AudioBufferSourceNode) return;
         const origStart = window.AudioBufferSourceNode.prototype.start;
@@ -133,25 +133,6 @@
           try {
             if (this.buffer) {
               window.__audioStats.buffers++;
-              if (this.buffer.sampleRate === 48000 && this.buffer.numberOfChannels === 2
-                  && this.buffer.length > 4000 && this.buffer.length < 60000) {
-                // The glass clinks' fingerprint (the only 48k stereo
-                // buffers of 4k..60k frames: the SFX are 44.1k, the
-                // music's streaming chunks are 1024 frames).
-                window.__audioStats.clinks++;
-                let m = 0; const d = this.buffer.getChannelData(0);
-                for (let i = 0; i < d.length; i += 4) { const a = Math.abs(d[i]); if (a > m) m = a; }
-                console.log("[clink] scheduled: len=" + this.buffer.length + " peak=" + m.toFixed(4));
-              }
-              if (this.buffer.numberOfChannels === 1) {
-                window.__audioStats.mono++;
-                // Mono = the glass clinks (the only mono sources): log
-                // each one's true buffer peak + length (the audibility
-                // evidence; temporary diagnostics).
-                let m = 0; const d = this.buffer.getChannelData(0);
-                for (let i = 0; i < d.length; i += 4) { const a = Math.abs(d[i]); if (a > m) m = a; }
-                console.log("[clink] mono node: len=" + this.buffer.length + " peak=" + m.toFixed(4));
-              } else window.__audioStats.stereo++;
               window.__audioStats.lastPeak = (() => { let m = 0; for (let i = 0; i < this.buffer.length; i += 16) { const a = Math.abs(this.buffer.getChannelData(0)[i]); if (a > m) m = a; } return m; })();
               for (let ch = 0; ch < this.buffer.numberOfChannels; ch++) {
                 const d = this.buffer.getChannelData(ch);
@@ -203,9 +184,9 @@
           if (a) {
             // `adv`: the real context's clock ADVANCED since the last
             // poll (1 = the audio thread is actually rendering).
-            a.adv = a.at > (a.prevAt ?? -1) ? 1 : 0;
+            a.adv = a.prevAt === undefined ? 0 : a.at > a.prevAt ? 1 : 0;
             a.prevAt = a.at;
-            s += `;buffers=${a.buffers};bufPeak=${a.maxPeak.toFixed(4)};actx=${a.actx};adv=${a.adv};at=${a.at.toFixed(2)};mono=${a.mono};stereo=${a.stereo};clinks=${a.clinks}`;
+            s += `;buffers=${a.buffers};bufPeak=${a.maxPeak.toFixed(4)};actx=${a.actx};adv=${a.adv};at=${a.at.toFixed(2)}`;
           }
         } catch { /* diagnostics only */ }
         document.getElementById("status").textContent = s;
