@@ -442,21 +442,23 @@ fn the_glass_events_record_the_crack_and_the_bounces() {
         ),
         "the shatter records a Crack at the impact"
     );
-    // The bounce Tinks: run the blast out; some piece must bounce off
-    // the core (the seeded physics, probed) — collect across the window.
-    let mut saw_tink = false;
-    for _ in 0..480 {
-        c.game.update(TIME_STEP, 1.0);
-        for ev in c.game.drain_shard_events() {
-            if matches!(ev, th_game::shrapnel::ShardEvent::Tink { .. }) {
-                saw_tink = true;
-            }
-        }
-        if saw_tink {
-            break;
-        }
-    }
-    assert!(saw_tink, "a bounced piece records a Tink");
+    // The bounce Tinks, deterministically: a synthetic piece flying at
+    // the core crosses its edge within one tick (the fixture's own game
+    // rng drives the LEVEL's spawn cadence, so waiting for a REAL piece
+    // to reach the core is not deterministic).
+    let core = c.game.get_radius() * 1.05;
+    c.game
+        .test_inject_shard(Vec2::new(0.0, core + 10.0), Vec2::new(0.0, -50.0), 0);
+    c.game.update(TIME_STEP, 1.0);
+    let events = c.game.drain_shard_events();
+    assert!(
+        matches!(events.iter().find(|e| matches!(e, th_game::shrapnel::ShardEvent::Tink { .. })),
+            Some(th_game::shrapnel::ShardEvent::Tink { position, speed01, .. })
+                if position.y.is_finite() && *speed01 > 0.0
+        ),
+        "a bounced piece records a Tink (events: {:?})",
+        events
+    );
     // The cap: the pending vector never exceeds it (indirectly: the
     // drain always returns <= the cap even mid-blast).
     assert!(events.len() <= 24);

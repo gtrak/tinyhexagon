@@ -336,7 +336,7 @@ impl TinyRuntime {
             seed = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
             let mut pcm = th_synth::clink::glass_clink(RATE, speed01, size01, seed);
             // The crack is the wall's OWN voice: louder, deeper-set.
-            let volume = if crack { 65.0 } else { 45.0 + 40.0 * speed01 };
+            let volume = if crack { 75.0 } else { 50.0 + 40.0 * speed01 };
             if crack {
                 // Deepen the crack: render the clink then lower the tail's
                 // ring by mixing in a fast-decaying low rumble is overkill —
@@ -351,10 +351,27 @@ impl TinyRuntime {
                 with_lead.extend_from_slice(&pcm);
                 pcm = with_lead;
             }
-            // The world → listener mapping: the arena's plane seen from
-            // above — x is right/left, y maps to depth (−z forward).
-            let al = (pos.x / 1000.0, 0.0, -pos.y / 1000.0);
-            audio.play_raw(pcm, RATE, 1, volume, Some(al));
+            // The world → pan mapping, done in the PCM (equal-power
+            // stereo): the shim's mono auto-panner chain was the
+            // un-audible path (the only silent class of node in the
+            // user's Chrome — every stereo source is proven audible), so
+            // the clinks widen themselves instead: x → left/right, the
+            // depth is not pannable without a panner node.
+            let pan = (pos.x / 1000.0).clamp(-1.0, 1.0);
+            let theta = (pan * 0.5 + 0.5) * std::f32::consts::FRAC_PI_2;
+            let (lg, rg) = (theta.cos(), theta.sin());
+            let mut stereo = Vec::with_capacity(pcm.len() * 2);
+            for &s in &pcm {
+                stereo.push(s * lg);
+                stereo.push(s * rg);
+            }
+            audio.play_raw(
+                stereo,
+                RATE,
+                2,
+                volume,
+                Some((pos.x / 1000.0, 0.0, -pos.y / 1000.0)),
+            );
         }
         self.clink_seed = seed;
     }
