@@ -97,7 +97,26 @@
          is bound here, before the module boots. Remove when the
          CLI/recipe is fixed (the pinned-CLI note in the 08a report). -->
     <script>
-      window.lAudioContext = window.AudioContext || window.webkitAudioContext;
+      // 09 diagnostic: capture EVERY AudioContext the page creates (the
+      // OpenAL shim's context included — the module is ES-modularized so
+      // its internal AL state is unreachable; the constructor wrap is
+      // the only page-side window into it). The wrap happens BEFORE the
+      // shim's lAudioContext alias binds, so the shim's contexts are
+      // captured too. Purely observational.
+      window.__ctxs = [];
+      (() => {
+        const Orig = window.AudioContext || window.webkitAudioContext;
+        if (!Orig) return;
+        const Wrapped = function (...a) {
+          const c = new Orig(...a);
+          try { window.__ctxs.push(c); } catch {}
+          return c;
+        };
+        Wrapped.prototype = Orig.prototype;
+        window.AudioContext = Wrapped;
+        window.lAudioContext = Wrapped;
+      })();
+      window.lAudioContext = window.lAudioContext || window.AudioContext || window.webkitAudioContext;
       // 09 diagnostics (the one-mixer plan, issue 09): record the TRUE
       // content peak of every buffer the Web Audio graph starts — the
       // OpenAL scheduler's BufferSourceNodes (the SFX one-shots AND the
@@ -148,6 +167,10 @@
       // the module scope's `mod` is not a global, so the page exposes
       // the `#[wasm_bindgen]` export on `window`).
       window.ohStatus = () => mod.status();
+      // The one-mixer diagnostic: the module instance (the OpenAL shim's
+      // live state — AL.currentCtx — hangs off it; the streaming tests
+      // read the shim's own queues to pin the stall).
+      window.ohMod = mod;
       setInterval(() => {
         let s = mod.status();
         // The on-device buffer stats appended to the status line (the
