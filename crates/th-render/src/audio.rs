@@ -636,6 +636,14 @@ trait DeviceBackend: Send + Sync {
     /// desktop/Android (no autoplay policy); on the web the browser requires a
     /// user gesture before a Web Audio context will run.
     fn unlock(&self);
+    /// The SFX stream's source (the ONE-PATH endgame): the same streaming
+    /// mechanics as the music's — th-audio mixes the one-shots + the
+    /// generated clinks into this source's queue. The default is headless
+    /// (the desktop keeps the rodio one-shot path).
+    fn sfx_source(&self) -> MusicSource {
+        MusicSource { inner: None }
+    }
+
     /// The music streaming source (the one-mixer plan's music half). The
     /// web: a dedicated OpenAL source on this device's context (the SFX and
     /// the music share ONE context); the rodio backend: the headless handle
@@ -782,6 +790,12 @@ impl AudioDevice {
         if let Some(b) = self.backend.as_ref() {
             b.unlock();
         }
+    }
+
+    /// The SFX stream's source (see the trait's doc).
+    #[must_use]
+    pub fn sfx_source(&self) -> Option<MusicSource> {
+        self.backend.as_ref().map(|b| b.sfx_source())
     }
 
     /// The music streaming source (the one-mixer plan's music half — issue

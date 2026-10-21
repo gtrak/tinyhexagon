@@ -181,6 +181,9 @@ pub struct OpenalBackend {
     /// `ALCcontext*` (as `usize`).
     context: usize,
     state: Arc<Mutex<State>>,
+    /// The SFX stream's state (the ONE-PATH endgame — the same MusicState
+    /// machinery as the music's stream, its own source + pool).
+    sfx: Arc<Mutex<MusicState>>,
     /// The music streaming source's state (the one-mixer plan's music half
     /// — the dedicated `AL_STREAMING` source + its buffer pool, shared
     /// with the cloned [`MusicSource`] handles).
@@ -270,6 +273,35 @@ impl OpenalBackend {
             free,
             queued: 0,
         }));
+        // The SFX stream (the ONE-PATH endgame, the operator's call): every
+        // SFX + generated clink is OUR 48 kHz stereo PCM, mixed by
+        // th-audio and streamed through THIS source with the same
+        // queue mechanics the music uses — the only delivery the user's
+        // Chrome 155 has never failed to sound. The one-shot
+        // alGenSources+play path (the shim's per-sound sources) is
+        // retired on the web.
+        let mut sfx_source_id: u32 = 0;
+        unsafe {
+            alGenSources(1, &mut sfx_source_id);
+            alSourcei(sfx_source_id, AL_SOURCE_RELATIVE, AL_TRUE as i32);
+            alSourcef(sfx_source_id, AL_GAIN, 1.0);
+        }
+        let mut sfx_pool = Vec::with_capacity(MUSIC_POOL);
+        for _ in 0..MUSIC_POOL {
+            let mut id: u32 = 0;
+            unsafe {
+                alGenBuffers(1, &mut id);
+            }
+            if id != 0 {
+                sfx_pool.push(id);
+            }
+        }
+        let sfx = Arc::new(Mutex::new(MusicState {
+            source: sfx_source_id,
+            free: sfx_pool.iter().copied().collect(),
+            pool: sfx_pool,
+            queued: 0,
+        }));
         let state = Arc::new(Mutex::new(State {
             context_state: "suspended".to_string(), // the autoplay-policy default
             last_source_state: None,
@@ -285,6 +317,7 @@ impl OpenalBackend {
             state: state.clone(),
             unlocked: unlocked.clone(),
             music: music.clone(),
+            sfx: sfx.clone(),
         };
 
         // The world + initial-context diagnostic (visible on the web via
@@ -446,6 +479,17 @@ impl DeviceBackend for OpenalBackend {
         // the gesture listener / Emscripten. (Provided so the seam's contract
         // is uniform across backends.)
         let _ = self.unlocked;
+    }
+
+    fn sfx_source(&self) -> MusicSource {
+        // The ONE-PATH endgame's SFX half: the same streaming mechanics,
+        // th-audio mixes the one-shots into it (the one-shot
+        // alGenSources path retired on the web).
+        MusicSource {
+            inner: Some(Arc::new(OpenalMusicSource {
+                state: self.sfx.clone(),
+            })),
+        }
     }
 
     fn music_source(&self) -> MusicSource {

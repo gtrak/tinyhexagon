@@ -109,6 +109,114 @@ struct Inner {
     /// registered id whose OGG failed to decode — the C++'s failed-load
     /// empty `sf::SoundBuffer`).
     sound_cache: HashMap<String, Option<SoundBuffer>>,
+    /// The SFX MIXER (the ONE-PATH endgame, web-only): the active
+    /// one-shots' playheads, mixed into the SFX stream's chunks per
+    /// frame — the only delivery the user's Chrome 155 reliably sounds.
+    #[cfg(target_os = "emscripten")]
+    sfx: SfxMixer,
+    /// The assets' 48 kHz stereo conversions (convert once per sound,
+    /// reuse per play — "convert on our end", the operator's call).
+    #[cfg(target_os = "emscripten")]
+    sfx_pcm_cache: HashMap<String, Vec<f32>>,
+}
+
+/// The web's SFX mixer: the active one-shots (already OUR 48 kHz stereo
+/// interleaved PCM), each at its playhead with its linear gain; the
+/// frame pump renders the sum into the SFX stream's chunks.
+#[cfg(target_os = "emscripten")]
+struct SfxMixer {
+    active: Vec<ActiveSfx>,
+}
+
+#[cfg(target_os = "emscripten")]
+struct ActiveSfx {
+    /// 48 kHz stereo interleaved f32.
+    pcm: Vec<f32>,
+    /// The playhead (samples, interleaved).
+    cursor: usize,
+    /// The linear gain (the SFML volume × the user's SFX volume).
+    gain: f32,
+}
+
+#[cfg(target_os = "emscripten")]
+impl SfxMixer {
+    fn push(&mut self, pcm: Vec<f32>, gain: f32) {
+        if pcm.is_empty() || gain <= 0.0 {
+            return;
+        }
+        // The cap: the oldest evicted (a burst can't stack into mush).
+        if self.active.len() >= 16 {
+            self.active.remove(0);
+        }
+        self.active.push(ActiveSfx {
+            pcm,
+            cursor: 0,
+            gain,
+        });
+    }
+
+    /// Mix the active one-shots' next `frames.len()` samples into `out`
+    /// (interleaved stereo), advancing the playheads; the finished ones
+    /// evicted.
+    fn render(&mut self, out: &mut [f32]) {
+        self.active.retain_mut(|a| {
+            let end = (a.cursor + out.len()).min(a.pcm.len());
+            if end > a.cursor {
+                for (o, src) in out.iter_mut().zip(&a.pcm[a.cursor..end]) {
+                    *o += *src * a.gain;
+                }
+                a.cursor = end;
+            }
+            a.cursor < a.pcm.len()
+        });
+    }
+}
+
+/// Convert decoded sound PCM to the stream's format: 48 kHz stereo
+/// interleaved f32, with the equal-power pan `pan` (−1..+1; 0 = center).
+/// `samples` is interleaved `channels`-wide at `sample_rate`.
+#[cfg(target_os = "emscripten")]
+fn stream_pcm(samples: &[f32], sample_rate: u32, channels: u16, pan: f32) -> Vec<f32> {
+    let mut l: Vec<f32>;
+    let mut r: Vec<f32>;
+    match channels {
+        1 => {
+            l = samples.to_vec();
+            r = samples.to_vec();
+        }
+        2 => {
+            l = samples.iter().step_by(2).copied().collect();
+            r = samples.iter().skip(1).step_by(2).copied().collect();
+        }
+        _ => return Vec::new(),
+    }
+    // The resample (linear — the SFX are short; the quality is ample).
+    if sample_rate != 48_000 {
+        let ratio = 48_000_f64 / sample_rate as f64;
+        let resample = |src: &[f32]| -> Vec<f32> {
+            let n = ((src.len() as f64) * ratio) as usize;
+            (0..n)
+                .map(|i| {
+                    let t = i as f64 / ratio;
+                    let i0 = (t as usize).min(src.len() - 1);
+                    let i1 = (i0 + 1).min(src.len() - 1);
+                    let f = (t - i0 as f64) as f32;
+                    src[i0] + (src[i1] - src[i0]) * f
+                })
+                .collect()
+        };
+        l = resample(&l);
+        r = resample(&r);
+    }
+    // The equal-power pan.
+    let theta = (pan.clamp(-1.0, 1.0) * 0.5 + 0.5) * std::f32::consts::FRAC_PI_2;
+    let (gl, gr) = (theta.cos(), theta.sin());
+    let mut out = Vec::with_capacity(l.len() * 2);
+    for i in 0..l.len() {
+        out.push(l[i] * gl);
+        out.push(r[i] * gr);
+    }
+    out
 }
 
 /// The C++ `std::optional<sf::Music>`: the pure state model + the live source.
@@ -156,6 +264,10 @@ impl Audio {
                 music_volume: 100.0,
                 sound_volume: 100.0,
                 sound_cache: HashMap::new(),
+                #[cfg(target_os = "emscripten")]
+                sfx: SfxMixer { active: Vec::new() },
+                #[cfg(target_os = "emscripten")]
+                sfx_pcm_cache: HashMap::new(),
             }),
         }
     }
@@ -176,20 +288,45 @@ impl Audio {
         let Some(buffer) = decode_sound(self.assets.as_ref(), &mut inner, asset_id) else {
             return;
         };
-        // Both C++ `Mode::Override` and `Mode::Abort` restart THIS sound's own
-        // instance (the previous one is stopped); other active sounds keep
-        // playing. Drop the old `Player` (stops it), then play fresh.
-        inner.sounds.remove(asset_id);
-        let Some(player) = inner.device.play_one_shot(
-            buffer.get_sample_rate(),
-            buffer.get_channel_count(),
-            buffer.samples().to_vec(),
-            inner.sound_volume,
-            1.0, // the C++ `SoundPlayer` plays one-shots at pitch 1.0
-        ) else {
-            return; // headless — the state guard ran, no device to play into.
-        };
-        inner.sounds.insert(asset_id.to_string(), player);
+        // The ONE-PATH endgame (web): the decoded PCM becomes OUR 48 kHz
+        // stereo stream data (converted once per asset, cached), mixed
+        // into the SFX stream per frame — the one-shot shim path (the
+        // user's Chrome's silent class) is retired on the web.
+        #[cfg(target_os = "emscripten")]
+        {
+            let pcm = inner
+                .sfx_pcm_cache
+                .entry(asset_id.to_string())
+                .or_insert_with(|| {
+                    stream_pcm(
+                        buffer.samples(),
+                        buffer.get_sample_rate(),
+                        buffer.get_channel_count(),
+                        0.0,
+                    )
+                })
+                .clone();
+            let gain = inner.sound_volume / 100.0;
+            inner.sfx.push(pcm, gain);
+            return;
+        }
+        #[cfg(not(target_os = "emscripten"))]
+        {
+            // Both C++ `Mode::Override` and `Mode::Abort` restart THIS sound's own
+            // instance (the previous one is stopped); other active sounds keep
+            // playing. Drop the old `Player` (stops it), then play fresh.
+            inner.sounds.remove(asset_id);
+            let Some(player) = inner.device.play_one_shot(
+                buffer.get_sample_rate(),
+                buffer.get_channel_count(),
+                buffer.samples().to_vec(),
+                inner.sound_volume,
+                1.0, // the C++ `SoundPlayer` plays one-shots at pitch 1.0
+            ) else {
+                return; // headless — the state guard ran, no device to play into.
+            };
+            inner.sounds.insert(asset_id.to_string(), player);
+        }
     }
 
     /// C++ `stopSounds()` (Audio.cpp:120-123) — `_soundPlayer.stop()`.
@@ -470,6 +607,17 @@ impl Audio {
     /// clinks: `samples` interleaved f32, SFML-style `volume` 0..=100
     /// (scaled by the user's SFX volume), and an optional WORLD position
     /// (the web's OpenAL panner; the desktop ignores it).
+    /// Play RAW PCM — the app's generative glass clinks: `samples`
+    /// interleaved f32, SFML-style `volume` 0..=100 (scaled by the user's
+    /// SFX volume), and an optional WORLD position (the web pans it in
+    /// the PCM; the desktop ignores it).
+    ///
+    /// The web's ONE-PATH endgame: the PCM converts to the stream's
+    /// 48 kHz stereo (the pan from the position's x) and MIXES into the
+    /// SFX stream — the one-shot shim path is retired there (it was the
+    /// silent class on the user's Chrome). The desktop plays the rodio
+    /// one-shot (position ignored; the pool keeps the handle alive —
+    /// a dropped player STOPS the source).
     pub fn play_raw(
         &self,
         samples: Vec<f32>,
@@ -481,13 +629,54 @@ impl Audio {
         if samples.is_empty() {
             return;
         }
-        let inner = lock(&self.inner);
+        let mut inner = lock(&self.inner);
         let effective = volume * (inner.sound_volume / 100.0);
-        let pos = position.unwrap_or((0.0, 0.0, 0.0));
-        let _ = inner
-            .device
-            .play_one_shot_at(sample_rate, channels, samples, effective, 1.0, pos);
+        #[cfg(target_os = "emscripten")]
+        {
+            let pan = position.map_or(0.0, |p| (p.0 / 1000.0).clamp(-1.0, 1.0));
+            let pcm = stream_pcm(&samples, sample_rate, channels, pan);
+            inner.sfx.push(pcm, effective / 100.0);
+        }
+        #[cfg(not(target_os = "emscripten"))]
+        {
+            let pos = position.unwrap_or((0.0, 0.0, 0.0));
+            if let Some(player) =
+                inner
+                    .device
+                    .play_one_shot_at(sample_rate, channels, samples, effective, 1.0, pos)
+            {
+                inner.loose_players.push(player);
+                if inner.loose_players.len() > LOOSE_PLAYER_POOL {
+                    inner.loose_players.remove(0);
+                }
+            }
+        }
     }
+
+    /// The SFX stream's frame pump (the ONE-PATH endgame, web-only; the
+    /// app's frame loop calls it next to the music's): reclaim + top the
+    /// queue with the ACTIVE MIX — silence keeps the queue topped when
+    /// idle, so a new sound enters within one buffer (~21 ms). The same
+    /// feed/reclaim dance the music's pump runs.
+    #[cfg(target_os = "emscripten")]
+    pub fn pump_sfx(&self) {
+        let mut inner = lock(&self.inner);
+        let Some(source) = inner.device.sfx_source() else {
+            return;
+        };
+        source.reclaim();
+        loop {
+            let want = source.desired_frames();
+            if want == 0 {
+                break;
+            }
+            let mut frames = vec![0.0_f32; want * 2];
+            inner.sfx.render(&mut frames);
+            source.feed(48_000, &frames);
+        }
+    }
+    #[cfg(not(target_os = "emscripten"))]
+    pub fn pump_sfx(&self) {}
 
     /// The output context's live state (the web's Web Audio "running" /
     /// "suspended" — the status probe's `ctx=` field; "" on the desktop /

@@ -799,6 +799,7 @@ pub fn run(
         #[cfg(target_os = "emscripten")]
         {
             web::audio_pump(&runtime);
+            runtime.audio.as_ref().map(|a| a.pump_sfx());
             let (audio_live, ctx) = web::audio_status(&runtime);
             web::record_frame(
                 runtime.journey.stage,
