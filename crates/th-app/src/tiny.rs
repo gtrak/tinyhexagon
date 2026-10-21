@@ -982,6 +982,11 @@ mod web {
         let Some(source) = audio.music_source() else {
             return;
         };
+        // The RECLAIM runs every pump (the shim's processed buffers
+        // return to the pool) — the top-up's `want` reads the count only
+        // the reclaim decrements: skipping it at the target depth
+        // deadlocked the stream (the frozen buffers=10).
+        source.reclaim();
         let want = source.desired_frames();
         if want == 0 {
             return; // the queue is topped up

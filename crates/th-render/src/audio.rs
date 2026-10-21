@@ -524,6 +524,11 @@ trait MusicSourceBackend: Send + Sync {
     /// status probe's `audio=live` half — live = the in-memory engine is
     /// live AND this source is playing).
     fn is_streaming(&self) -> bool;
+
+    /// The reclaim pass (the one-mixer's pool recycle): the web frame
+    /// pump MUST run this every frame — the top-up's `want` reads the
+    /// count only the reclaim decrements (the deadlock lesson).
+    fn reclaim(&self);
 }
 
 /// The streamed-music source (the one-mixer plan's music half — plan 002
@@ -573,6 +578,13 @@ impl MusicSource {
         self.inner
             .as_deref()
             .is_some_and(MusicSourceBackend::is_streaming)
+    }
+
+    /// The reclaim pass (see the trait's doc).
+    pub fn reclaim(&self) {
+        if let Some(b) = self.inner.as_deref() {
+            b.reclaim();
+        }
     }
 }
 

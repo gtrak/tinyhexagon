@@ -545,10 +545,15 @@ impl MusicSourceBackend for OpenalMusicSource {
         deficit.min(MUSIC_MAX_BURST) * MUSIC_BUFFER_FRAMES
     }
 
-    fn feed(&self, sample_rate: u32, frames: &[f32]) {
+    /// The reclaim pass: recycle the buffers the shim has played back
+    /// into the pool. MUST run every pump — the shim auto-stops a
+    /// drained (non-looping) queue, and the top-up's `want` is computed
+    /// from OUR queued count, which only this decrements: a pump that
+    /// skips this once the target is reached deadlocks the stream at
+    /// the target depth (the probe's frozen buffers=10 — the one-mixer
+    /// issue's second FFI-adjacent bug).
+    fn reclaim(&self) {
         let mut g = self.state.lock().expect("music state poisoned");
-        // 1. Reclaim the processed buffers (the shim marks a buffer
-        //    processed as its scheduled Web Audio node completes).
         let mut processed: i32 = 0;
         unsafe {
             alGetSourcei(g.source, AL_BUFFERS_PROCESSED, &mut processed);
@@ -563,9 +568,14 @@ impl MusicSourceBackend for OpenalMusicSource {
                 g.free.push_back(id);
             }
         }
-        // 2. Queue the rendered chunk in buffer-sized pieces (each piece
-        //    is one `AL_FORMAT_STEREO16` buffer at the render rate — the
-        //    context's rate, so no resample).
+    }
+
+    fn feed(&self, sample_rate: u32, frames: &[f32]) {
+        self.reclaim();
+        if frames.is_empty() {
+            return;
+        }
+        let mut g = self.state.lock().expect("music state poisoned");
         let mut queued_here = 0usize;
         for chunk in frames.chunks(MUSIC_BUFFER_FRAMES * 2) {
             let Some(id) = g.free.pop_back() else {
@@ -594,7 +604,7 @@ impl MusicSourceBackend for OpenalMusicSource {
             g.queued += 1;
             queued_here += 1;
         }
-        // 3. Keep it playing: a stopped source (an underrun, or the
+        // Keep it playing: a stopped source (an underrun, or the
         //    pre-first-play state) needs the explicit start once the
         //    queue has content again.
         if queued_here > 0 {
