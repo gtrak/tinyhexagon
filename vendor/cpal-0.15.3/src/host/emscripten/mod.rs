@@ -99,7 +99,13 @@ const MAX_SAMPLE_RATE: SampleRate = SampleRate(96_000);
 const DEFAULT_SAMPLE_RATE: SampleRate = SampleRate(44_100);
 const MIN_BUFFER_SIZE: u32 = 1;
 const MAX_BUFFER_SIZE: u32 = u32::MAX;
-const DEFAULT_BUFFER_SIZE: usize = 4096; // ~93 ms @44.1k: the look-ahead absorbs the main-thread render hiccups
+const DEFAULT_BUFFER_SIZE: usize = 4096; // ~93 ms @44.1k per buffer…
+/// The buffers rendered PER timer burst (the cursor stays this many
+/// buffers ahead of playback: a main-thread hiccup up to
+/// ~4 × 93 ms ≈ 370 ms re-arms late without gapping the stream — the
+/// game's rAF loop + wasm render work share the main thread, and the
+/// one-buffer depth the old chain kept measurably chopped under it).
+const BUFFERS_PER_TIMER: usize = 4;
 const SUPPORTED_SAMPLE_FORMAT: SampleFormat = SampleFormat::F32;
 
 impl Host {
@@ -355,148 +361,129 @@ where
         let sample_rate = config.sample_rate.0;
         let buffer_size_samples = buffer_size_frames as usize * config.channels as usize;
         let audio_ctxt = &stream.audio_ctxt;
-
-        // TODO: We should be re-using a buffer.
-        let mut temporary_buffer = vec![0f32; buffer_size_samples];
-
-        {
-            let len = temporary_buffer.len();
-            let data = temporary_buffer.as_mut_ptr() as *mut ();
-            let mut data = unsafe { Data::from_parts(data, len, sample_format) };
-            let now_secs: f64 = audio_ctxt.current_time();
-            let callback = crate::StreamInstant::from_secs_f64(now_secs);
-            // TODO: Use proper latency instead. Currently, unsupported on most browsers though, so
-            // we estimate based on buffer size instead. Probably should use this, but it's only
-            // supported by firefox (2020-04-28).
-            // let latency_secs: f64 = audio_ctxt.outputLatency.try_into().unwrap();
-            let buffer_duration = frames_to_duration(len, sample_rate as usize);
-            let playback = callback
-                .add(buffer_duration)
-                .expect("`playback` occurs beyond representation supported by `StreamInstant`");
-            let timestamp = crate::OutputStreamTimestamp { callback, playback };
-            let info = OutputCallbackInfo { timestamp };
-            data_callback(&mut data, &info);
-        }
-
-        let typed_array: Float32Array = temporary_buffer.as_slice().into();
-
-        // 09 instrumentation (tinyhexagon) — read the VIEW's own values
-        // (it is a view over the wasm linear memory): sane values here +
-        // a silent buffer at start() = the getChannelData write half is
-        // broken; zeros here = the view/glue is broken (the same glue
-        // family that dropped lAudioContext's const).
-        {
-            use std::cell::Cell;
-            thread_local! { static DBG: Cell<u32> = const { Cell::new(0) }; }
-            let n = DBG.get() + 1;
-            DBG.set(n);
-            if n % 10 == 1 {
-                console_log(&format!(
-                    "[cpal] copy: view.len={} view[0]={:.4} view[100]={:.4} view[1000]={:.4} temp[0]={:.4} temp[1000]={:.4}",
-                    typed_array.length(),
-                    typed_array.get_index(0),
-                    typed_array.get_index(100),
-                    typed_array.get_index(1000),
-                    temporary_buffer.first().copied().unwrap_or(f32::NAN),
-                    temporary_buffer.get(1000).copied().unwrap_or(f32::NAN),
-                ));
-            }
-        }
-
-        debug_assert_eq!(temporary_buffer.len() % config.channels as usize, 0);
-
-        let context = audio_ctxt;
-        // 09 fix — label the buffer with the CONTEXT's actual rate (the
-        // old cpal-rate label resampled: a 48000 context played the
-        // 44100-labeled buffer ~8% fast — a per-buffer gap under the
-        // scheduler's cursor = choppy).
-        let context_rate = context.sample_rate() as f64;
-        let buffer = context
-            .create_buffer(
-                config.channels as u32,
-                buffer_size_frames,
-                context_rate as f32,
-            )
-            .expect("Buffer could not be created");
-        // 09 fix (tinyhexagon) — THE WEB SILENCE: web-sys's
-        // `get_channel_data` returns a `Vec<f32>` — a COPY — so the old
-        // de-interleave loop wrote the samples into the copy and dropped
-        // it: the AudioBuffer stayed at its zero-initialized content
-        // (silence on every browser, with a perfectly healthy graph,
-        // clock and loop). `copy_to_channel` writes THROUGH the live
-        // AudioBuffer: de-interleave into per-channel Vecs first, then
-        // copy each channel in.
-        let channels = config.channels as usize;
-        let frames = buffer_size_frames as usize;
-        let mut chans: Vec<Vec<f32>> = (0..channels).map(|_| Vec::with_capacity(frames)).collect();
-        for (i, sample) in temporary_buffer.iter().enumerate() {
-            chans[i % channels].push(*sample);
-        }
-        for (channel, data) in chans.iter().enumerate() {
-            buffer
-                .copy_to_channel(data, channel as i32)
-                .map_err(|e| {
-                    console_log(&format!(
-                        "[cpal] copy_to_channel(ch {channel}) failed: {:?}",
-                        e
-                    ))
-                })
-                .ok();
-        }
-
-        let node = context
-            .create_buffer_source()
-            .expect("The buffer source node could not be created");
-        node.set_buffer(Some(&buffer));
-        // 08a fix 3 — connect the source node TO the destination:
-        // `AudioDestinationNode` has 0 outputs, so the registry source's
-        // `context.destination().connect_with_audio_node(&node)` panics at
-        // runtime (IndexSizeError: output index (0) exceeds number of
-        // outputs (0)); `node.connect_with_audio_node(&destination)` is the
-        // WebAudio direction the webaudio host uses (webaudio/mod.rs:363).
-        node
-            .connect_with_audio_node(&context.destination())
-            .expect("Could not connect the audio node to the destination");
-        // 09 fix (tinyhexagon) — gapless audio-clock scheduling + held
-        // sources (see the closure-head note): the buffer plays at
-        // `NEXT_START` (>= now + 20 ms), and the cursor advances by the
-        // buffer's real duration; the main-thread timer only re-arms the
-        // NEXT buffer's render, so its jitter cannot overlap or gap the
-        // playback. The node is held until eviction (~1.6 s of history)
-        // so the GC cannot reap a playing source.
-        let now = audio_ctxt.current_time();
-        // 09 fix — gapless: the cursor is authoritative while it is in
-        // the future (the old now+0.02 clamp reset the schedule whenever
-        // it came near the clock — a fresh gap per buffer); reset only
-        // after a REAL stall. The cursor's step is the buffer's duration
-        // AT THE CONTEXT'S RATE (the resample mismatch above).
+        let context_rate = audio_ctxt.sample_rate() as f64;
         let buffer_duration_secs = buffer_size_frames as f64 / context_rate;
-        let when = {
-            let scheduled = NEXT_START.get();
-            if scheduled >= now {
-                scheduled
-            } else {
-                now + 0.05
+
+        // BUFFERS_PER_TIMER buffers per burst: each is rendered, uploaded
+        // and scheduled at the advancing cursor; the timer re-arms for the
+        // whole burst's duration.
+        for _burst in 0..BUFFERS_PER_TIMER {
+            // TODO: We should be re-using a buffer.
+            let mut temporary_buffer = vec![0f32; buffer_size_samples];
+
+            {
+                let len = temporary_buffer.len();
+                let data = temporary_buffer.as_mut_ptr() as *mut ();
+                let mut data = unsafe { Data::from_parts(data, len, sample_format) };
+                let now_secs: f64 = audio_ctxt.current_time();
+                let callback = crate::StreamInstant::from_secs_f64(now_secs);
+                // TODO: Use proper latency instead. Currently, unsupported on most browsers though, so
+                // we estimate based on buffer size instead. Probably should use this, but it's only
+                // supported by firefox (2020-04-28).
+                // let latency_secs: f64 = audio_ctxt.outputLatency.try_into().unwrap();
+                let buffer_duration = frames_to_duration(len, sample_rate as usize);
+                let playback = callback
+                    .add(buffer_duration)
+                    .expect("`playback` occurs beyond representation supported by `StreamInstant`");
+                let timestamp = crate::OutputStreamTimestamp { callback, playback };
+                let info = OutputCallbackInfo { timestamp };
+                data_callback(&mut data, &info);
             }
-        };
-        node.start_with_when(when)
-            .expect("Could not start the audio node");
-        NEXT_START.set(when + buffer_duration_secs);
-        LIVE_SOURCES.with(|live| {
-            let mut live = live.borrow_mut();
-            live.push(node);
-            let keep = (buffer_duration_secs.recip() * 1.6).max(4.0) as usize;
-            if live.len() > keep {
-                let excess = live.len() - keep;
-                live.drain(0..excess);
+
+            debug_assert_eq!(temporary_buffer.len() % config.channels as usize, 0);
+
+            let context = audio_ctxt;
+            // 09 fix — label the buffer with the CONTEXT's actual rate (the
+            // old cpal-rate label resampled: a 48000 context played the
+            // 44100-labeled buffer ~8% fast — a per-buffer gap under the
+            // scheduler's cursor = choppy).
+            let buffer = context
+                .create_buffer(
+                    config.channels as u32,
+                    buffer_size_frames,
+                    context_rate as f32,
+                )
+                .expect("Buffer could not be created");
+            // 09 fix (tinyhexagon) — THE WEB SILENCE: web-sys's
+            // `get_channel_data` returns a `Vec<f32>` — a COPY — so the old
+            // de-interleave loop wrote the samples into the copy and dropped
+            // it: the AudioBuffer stayed at its zero-initialized content
+            // (silence on every browser, with a perfectly healthy graph,
+            // clock and loop). `copy_to_channel` writes THROUGH the live
+            // AudioBuffer: de-interleave into per-channel Vecs first, then
+            // copy each channel in.
+            let channels = config.channels as usize;
+            let frames = buffer_size_frames as usize;
+            let mut chans: Vec<Vec<f32>> =
+                (0..channels).map(|_| Vec::with_capacity(frames)).collect();
+            for (i, sample) in temporary_buffer.iter().enumerate() {
+                chans[i % channels].push(*sample);
             }
-        });
+            for (channel, data) in chans.iter().enumerate() {
+                buffer
+                    .copy_to_channel(data, channel as i32)
+                    .map_err(|e| {
+                        console_log(&format!(
+                            "[cpal] copy_to_channel(ch {channel}) failed: {:?}",
+                            e
+                        ))
+                    })
+                    .ok();
+            }
+
+            let node = context
+                .create_buffer_source()
+                .expect("The buffer source node could not be created");
+            node.set_buffer(Some(&buffer));
+            // 08a fix 3 — connect the source node TO the destination:
+            // `AudioDestinationNode` has 0 outputs, so the registry source's
+            // `context.destination().connect_with_audio_node(&node)` panics at
+            // runtime (IndexSizeError: output index (0) exceeds number of
+            // outputs (0)); `node.connect_with_audio_node(&destination)` is the
+            // WebAudio direction the webaudio host uses (webaudio/mod.rs:363).
+            node.connect_with_audio_node(&context.destination())
+                .expect("Could not connect the audio node to the destination");
+            // 09 fix (tinyhexagon) — gapless audio-clock scheduling + held
+            // sources (see the closure-head note): the buffer plays at
+            // `NEXT_START` (>= now + 20 ms), and the cursor advances by the
+            // buffer's real duration; the main-thread timer only re-arms the
+            // NEXT buffer's render, so its jitter cannot overlap or gap the
+            // playback. The node is held until eviction (~1.6 s of history)
+            // so the GC cannot reap a playing source.
+            let now = audio_ctxt.current_time();
+            // 09 fix — gapless: the cursor is authoritative while it is in
+            // the future (the old now+0.02 clamp reset the schedule whenever
+            // it came near the clock — a fresh gap per buffer); reset only
+            // after a REAL stall. The cursor's step is the buffer's duration
+            // AT THE CONTEXT'S RATE (the resample mismatch above).
+            let buffer_duration_secs = buffer_size_frames as f64 / context_rate;
+            let when = {
+                let scheduled = NEXT_START.get();
+                if scheduled >= now {
+                    scheduled
+                } else {
+                    now + 0.05
+                }
+            };
+            node.start_with_when(when)
+                .expect("Could not start the audio node");
+            NEXT_START.set(when + buffer_duration_secs);
+            LIVE_SOURCES.with(|live| {
+                let mut live = live.borrow_mut();
+                live.push(node);
+                let keep = (buffer_duration_secs.recip() * 1.6).max(4.0) as usize;
+                if live.len() > keep {
+                    let excess = live.len() - keep;
+                    live.drain(0..excess);
+                }
+            });
+        } // the BUFFERS_PER_TIMER burst
 
         // TODO: handle latency better ; right now we just use setInterval with the amount of sound
         // data that is in each buffer ; this is obviously bad, and also the schedule is too tight
         // and there may be underflows
         set_timeout(
-            (1000.0 * buffer_size_frames as f64 / context_rate) as i32,
+            (1000.0 * BUFFERS_PER_TIMER as f64 * buffer_duration_secs) as i32,
             stream,
             data_callback,
             &config,

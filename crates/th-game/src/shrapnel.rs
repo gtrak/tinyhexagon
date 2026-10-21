@@ -22,44 +22,28 @@
 //! discipline the previous wedge implementation's seconds-based bug
 //! taught us.
 //!
-//! Propagation is PHYSICAL, not queued: the walls live along the ring,
-//! so a burst's spawn aim splits ~half of its pieces into RADIAL SPRAY
-//! (the mass-scaled impulse from the impact point) and ~half into
-//! TANGENTIAL CARRIERS that sweep the ring in both directions (biased
-//! by the hitter's tangential velocity — `CARRIER_SPEED_MIN..MAX`
-//! px/FT, [`CARRIER_LIFE_FT`] life). A carrier that overlaps a LIVE
-//! wall shatters that wall at the piece's position (the engine's impact
-//! pass, `update_shrapnel`): the wall dies, the hitter is consumed, and
-//! the new shards carry the blast's `burst` id with `generation + 1`.
-//! A piece with `generation >= [`MAX_PROPAGATION`] crumbles on impact
-//! instead — the wall survives — so one player hit shatters a bounded
-//! set of walls (the hit wall + at most one hop per generation level,
-//! as far as the carriers physically reach).
-//!
-//! Reach vs the arc to a neighbour (documented per the plan-002 issue
-//! 09 tuning): a carrier's tangent is a FIXED world direction (no
-//! centripetal force), so a piece flies along a CHORD: at chord
-//! distance d its radius is `sqrt(r0^2 + d^2)`. With the per-FT drag
-//! [`SHARD_DRAG_PER_FT`] a piece flies `v · ft · Σ(1 − d·ft)^k ≈ v · 33.7`
-//! px of chord over its 48-FT life (≈ `v · 39.6` px over the carriers'
-//! 60-FT life) — the 6..21 px/FT carriers fly 238..830 px of chord.
-//! Two consequences: (1) IN-BAND DWELL — while a piece stays inside
-//! the walls' radial band it can still hit the neighbour span: the
-//! dwell chord is `sqrt(band_outer^2 − r0^2)` ≈ 87..256 px for a
-//! mid-band piece (r0 ≈ 110, wall thickness 60..200 px), i.e. a
-//! ~40..70° in-band sweep — the 60° arc to the neighbour span, covered
-//! by most of the carrier distribution (thicker walls lengthen the
-//! dwell; the impact-biased fan cut clusters pieces near the hitter,
-//! shortening the remaining arc). (2) OUT-OF-BAND REACH — past the
-//! band the chord keeps growing (final radius `sqrt(r0^2 + d^2)` ≈
-//! 260..840 px from a 110 band), so the fast pieces sweep the whole
-//! annulus and can reach walls far outside the hit's band — in the
-//! seeded integration fixture the level's pattern walls out at
-//! r ~800-1000 get hit by ~tick 200-250, spawning bounded gen-2 debris
-//! there. The generation cap (gen 2 crumbles), the 48/60-FT lifetimes
-//! and the [`MAX_LIVE_SHARDS`] cap bound every blast in all cases. No
-//! timers, no extra bumps: `bump_serial` increments only on the
+//! Propagation is PHYSICAL, not queued, and it is EMERGENT: the hit
+//! knocks the glass inward ([`SHARD_INWARD_KNOCK`]) — pieces fly across
+//! the arena, tumble, and bounce off the core. A piece that later
+//! reaches a LIVE wall shatters that wall at the piece's position (the
+//! engine's impact pass, `update_shrapnel`): the wall dies, the hitter
+//! is consumed, and the new shards carry the blast's `burst` id with
+//! `generation + 1`. A piece with `generation >= [`MAX_PROPAGATION`]
+//! crumbles on impact instead — the wall survives — so one player hit
+//! shatters a bounded set of walls. No dedicated carrier projectiles,
+//! no timers, no extra bumps: `bump_serial` increments only on the
 //! player's physical hit (the flash rides per bump).
+//!
+//! Reach: a piece flies along a CHORD (no centripetal force) at the
+//! mass-scaled impulse speeds ([`SHARD_IMPULSE_MIN..MAX`] / mass,
+//! clamped to [`SHARD_SPEED_MAX`]) with per-FT drag, over its
+//! [`SHARD_LIFE_FT`] life. Pieces knocked inward cross the arena in
+//! well under a second; a piece deflected outward (the blast's radial
+//! component still spreads) can sweep the ring band in its in-band
+//! dwell and reach a neighbour span — propagation happens when the
+//! physics happens to put a piece on a wall, not on a schedule.
+//! The generation cap, the lifetimes and the [`MAX_LIVE_SHARDS`] cap
+//! bound every blast in all cases.
 //!
 //! Lineage: every shard carries its BLAST's `burst` id (the engine's
 //! `next_burst` counter, reset by `new_game`) and its `generation`
@@ -98,35 +82,17 @@ pub const SHARDS_PER_WALL_MAX: usize = 10;
 /// shatters (gen 1 → gen 2); gen 2 never shatters.
 pub const MAX_PROPAGATION: u32 = 2;
 
-/// The tangential-carrier probability in the burst's spawn aim (~half
-/// the pieces sweep the ring, ~half are radial spray).
-pub const CARRIER_PROBABILITY: f32 = 0.5;
+/// How strongly the hit KNOCKS the glass inward, into the arena (0 =
+/// the pure radial blast from the impact point — which points mostly
+/// OFF-SCREEN, because the impact sits at the walls' inner edge; 1 =
+/// straight at the core). The blend keeps a radial component so the
+/// burst still spreads from the impact, while most pieces visibly fly
+/// across the arena, tumble, and bounce off the core.
+pub const SHARD_INWARD_KNOCK: f32 = 0.55;
 
-/// The tangential carriers' speed range (px/FT-unit ≈ × 60 px/s: the
-/// ring sweepers that make propagation physical — 360..1260 px/s).
-pub const CARRIER_SPEED_MIN: f32 = 6.0;
-pub const CARRIER_SPEED_MAX: f32 = 21.0;
-
-/// The carriers' lifetime, in FT units (60 = 1 s real time — longer
-/// than the radial spray's 48 so a carrier can sweep the ring to a
-/// neighbour). See the module docs for the reach math.
-pub const CARRIER_LIFE_FT: f32 = 60.0;
-
-/// The carrier's small OUTWARD radial kick (px/FT): keeps the carrier
-/// just above the ring (not plunging into the core) and keeps its
-/// radial-from-impact component positive (the blast never throws a
-/// piece back toward the impact).
-pub const CARRIER_RADIAL_MIN: f32 = 0.3;
-pub const CARRIER_RADIAL_MAX: f32 = 1.2;
-
-/// How strongly the hitter's tangential velocity biases the carrier's
-/// direction (a full-strength hitter, ±[`CARRIER_SPEED_MAX`] px/FT,
-/// pushes the coin to 0.05/0.95 — still both ring directions).
-pub const CARRIER_BIAS_STRENGTH: f32 = 0.45;
-
-/// A shard's lifetime, in FT units (48 = 0.8 s real time) — the radial
-/// spray; the carriers carry [`CARRIER_LIFE_FT`].
-pub const SHARD_LIFE_FT: f32 = 48.0;
+/// A shard's lifetime, in FT units (110 ≈ 1.8 s real time) — long
+/// enough to SEE the glass fly, tumble and bounce.
+pub const SHARD_LIFE_FT: f32 = 110.0;
 
 /// The cap on total live shards (all bursts combined); the oldest are
 /// evicted first when a new burst would exceed it.
@@ -139,13 +105,15 @@ pub const MAX_LIVE_SHARDS: usize = 64;
 pub const SHARD_IMPULSE_MIN: f32 = 2.0;
 pub const SHARD_IMPULSE_MAX: f32 = 5.5;
 
-/// The tangential jitter range (px/FT-unit ≈ × 60 px/s): breaks the
-/// perfectly-radial symmetry of the burst.
-pub const SHARD_TANGENT_MAX: f32 = 1.6;
+/// The tangential jitter, as a FRACTION of the piece's own speed (±0.35
+/// = ±35%): breaks the perfectly-radial symmetry of the burst while
+/// staying mass-scaled (the jitter rides the same speed the impulse
+/// produced — a heavy chunk's sideways kick is as gentle as its flight).
+pub const SHARD_TANGENT_MAX: f32 = 0.35;
 
 /// The speed clamp (px/FT-unit): the blast never throws a piece faster
-/// than this (≈ 720 px/s).
-pub const SHARD_SPEED_MAX: f32 = 12.0;
+/// than this (≈ 540 px/s).
+pub const SHARD_SPEED_MAX: f32 = 9.0;
 
 /// The spin range (rad/FT-unit): ±(1..5 rad/s → × 1/60).
 pub const SHARD_SPIN_MAX: f32 = 5.0 / 60.0;
@@ -157,19 +125,20 @@ pub const SHARD_MASS_SCALE: f32 = 500.0;
 pub const SHARD_MASS_MIN: f32 = 0.2;
 pub const SHARD_MASS_MAX: f32 = 4.0;
 
-/// Drag per FT-unit (0.9/s → the velocity halves in ~0.77 s): the
-/// shards settle instead of flying off the screen.
-pub const SHARD_DRAG_PER_FT: f32 = 0.9_f32 / 60.0;
+/// Drag per FT-unit (0.5/s → the velocity halves in ~1.4 s): the
+/// shards settle instead of flying off the screen, but keep flying
+/// long enough to read as glass.
+pub const SHARD_DRAG_PER_FT: f32 = 0.5_f32 / 60.0;
 
 /// Spin decay per FT-unit (1.2/s): the tumble winds down.
 pub const SHARD_SPIN_DECAY_PER_FT: f32 = 0.02;
 
 /// The core bounce: the radial reflection keeps this fraction of the
-/// speed (energy loss ~0.5 — a real bounce eats energy).
-pub const BOUNCE_KEEP: f32 = 0.5;
+/// speed (energetic glass — the pieces skip and spin across the arena).
+pub const BOUNCE_KEEP: f32 = 0.72;
 
 /// The shard-shard bounce restitution (light elastic collisions).
-pub const SHARD_BOUNCE_KEEP: f32 = 0.5;
+pub const SHARD_BOUNCE_KEEP: f32 = 0.7;
 
 /// How far the shard's perimeter-vertex color is lightened toward white
 /// (the "glass edge" tint): `channel + (255 - channel) * TINT`.
@@ -225,6 +194,35 @@ pub struct Shrapnel {
 }
 
 impl Shrapnel {
+    /// A synthetic piece for the integration tests' deterministic
+    /// impact-pass drives (the real spawn path is `split_wall_quad`'s;
+    /// this one is a small, heavy, full-life triangle the tests place
+    /// exactly where they need a hit).
+    #[must_use]
+    pub fn test_piece(position: Vec2, velocity: Vec2, generation: u32) -> Shrapnel {
+        let local = [
+            Vec2::new(-6.0, -4.0),
+            Vec2::new(7.0, -2.0),
+            Vec2::new(-1.0, 6.0),
+        ];
+        let radius = local.iter().fold(0.0_f32, |m, p| m.max(get_mag(p)));
+        Shrapnel {
+            position,
+            velocity,
+            local,
+            angle: 0.0,
+            spin: 0.0,
+            mass: 1.2,
+            radius,
+            life: SHARD_LIFE_FT,
+            max_life: SHARD_LIFE_FT,
+            burst: 0,
+            generation,
+            color_in: Color::new(10, 20, 30, 255),
+            color_out: Color::new(10, 20, 30, 255),
+        }
+    }
+
     /// Advance by the frame delta `ft` (FT units — the update loop's
     /// scale, 60 = 1 real second): the position rides the velocity
     /// (explicit Euler), a light drag settles it, the tumble integrates
@@ -320,14 +318,11 @@ impl Shrapnel {
 /// direction); `color`: the wall's current color; `burst`: the blast id
 /// the pieces inherit (the engine's `next_burst`); `generation`: the
 /// propagation generation (0 = the player's physical hit, +1 per
-/// shard-impact shatter); `tangential`: the hitter's tangential (ring)
-/// velocity at the impact, in px/FT, +CCW (0.0 = neutral — it biases
-/// the carrier direction); `rng`: the cosmetic rng (non-simulation).
-/// The pieces carry the dual-mode spawn aim: ~half a radial spray
-/// (mass-scaled impulse from `impact` + tangential jitter), ~half
-/// TANGENTIAL CARRIERS sweeping the ring in both directions (biased by
-/// `tangential`), with decaying spin, the glass colors, and their
-/// lineage (`burst`, `generation`).
+/// shard-impact shatter); `rng`: the cosmetic rng (non-simulation).
+/// The pieces carry the spawn aim: the mass-scaled impulse from
+/// `impact` knocked inward (see [`SHARD_INWARD_KNOCK`]) + tangential
+/// jitter, with decaying spin, the glass colors, and their lineage
+/// (`burst`, `generation`).
 // 8 args: the flat spawn contract (geometry + color + lineage + rng)
 // stays more readable than a builder struct at a single call site
 // family (the engine's shatters + the unit tests).
@@ -339,7 +334,6 @@ pub fn split_wall_quad(
     color: Color,
     burst: u32,
     generation: u32,
-    tangential: f32,
     rng: &dyn CosmeticRng,
 ) -> Vec<Shrapnel> {
     // 2..6 extra perimeter points → 6..10 pieces.
@@ -419,20 +413,19 @@ pub fn split_wall_quad(
             continue; // a degenerate sliver (coincident perimeter points)
         }
         out.push(make_shard(
-            &fan, a, b, impact, outward, color, burst, generation, tangential, rng,
+            &fan, a, b, impact, outward, color, burst, generation, rng,
         ));
     }
     out
 }
 
 /// Build one shard from the fan triangle (fan, a, b): centroid + local
-/// offsets, area-based mass, the DUAL-MODE blast velocity (~half the
-/// pieces a radial spray — mass-scaled impulse from the impact point +
-/// tangential jitter, speed-clamped — and ~half tangential CARRIERS
-/// sweeping the ring in both directions, biased by the hitter's
-/// tangential velocity — the walls live along the ring, so the
-/// propagation needs angular sweepers), the tumble, the glass colors,
-/// and the lineage.
+/// offsets, area-based mass, the blast velocity (the mass-scaled
+/// impulse from the impact point + tangential jitter, speed-clamped,
+/// KNOCKED INWARD by [`SHARD_INWARD_KNOCK`] — the walls live along the
+/// ring and the impact sits at their inner edge, so the pure radial
+/// blast mostly points off-screen), the tumble, the glass colors, and
+/// the lineage.
 #[allow(clippy::too_many_arguments)]
 fn make_shard(
     fan: &Vec2,
@@ -443,7 +436,6 @@ fn make_shard(
     color: Color,
     burst: u32,
     generation: u32,
-    tangential: f32,
     rng: &dyn CosmeticRng,
 ) -> Shrapnel {
     let position = (*fan + a + b) * (1.0_f32 / 3.0);
@@ -464,46 +456,27 @@ fn make_shard(
         dir *= 1.0 / dir_mag;
     }
 
-    // The spawn aim: ~half the pieces are radial spray (the existing
-    // mass-scaled impulse), ~half tangential carriers (the ring
-    // sweepers that carry the physical propagation).
-    let (velocity, life) = if rng.get_rnd_r(0.0, 1.0) < CARRIER_PROBABILITY {
-        // Tangential carrier: the ring tangent at the piece (CCW
-        // positive), swept in the hitter's direction — the coin is
-        // biased by the hitter's tangential velocity (a full-strength
-        // hitter, ±CARRIER_SPEED_MAX px/FT, pushes it to 0.05/0.95).
+    // The spawn aim: the mass-scaled impulse from the impact point,
+    // KNOCKED INWARD (see [`SHARD_INWARD_KNOCK`] — the impact sits at
+    // the walls' inner edge, so a pure radial blast flies off-screen;
+    // the knock throws the glass into the arena where the physics is
+    // visible), plus the symmetry-breaking tangential jitter.
+    {
+        // Blend the blast direction with the inward unit vector.
         let r_mag = get_mag(&position).max(1.0e-4);
-        let tangent = Vec2::new(-position.y / r_mag, position.x / r_mag);
-        let bias = (tangential / CARRIER_SPEED_MAX).clamp(-1.0, 1.0);
-        let p_ccw = (0.5 + CARRIER_BIAS_STRENGTH * bias).clamp(0.05, 0.95);
-        let sign = if rng.get_rnd_r(0.0, 1.0) < p_ccw {
-            1.0
-        } else {
-            -1.0
-        };
-        let speed = rng.get_rnd_r(CARRIER_SPEED_MIN, CARRIER_SPEED_MAX);
-        // The small outward kick keeps the carrier just above the ring
-        // and its radial-from-impact component positive (the blast
-        // never throws a piece back toward the impact).
-        let radial_kick = rng.get_rnd_r(CARRIER_RADIAL_MIN, CARRIER_RADIAL_MAX);
-        (
-            tangent * (sign * speed) + dir * radial_kick,
-            CARRIER_LIFE_FT,
-        )
-    } else {
-        // Radial spray: the mass-scaled impulse + the symmetry-breaking
-        // tangential jitter, speed-clamped (the carriers carry their
-        // own bounded CARRIER_SPEED_MIN..MAX range instead).
-        let speed = rng.get_rnd_r(SHARD_IMPULSE_MIN, SHARD_IMPULSE_MAX) / mass;
-        let tangential_jitter = rng.get_rnd_r(-SHARD_TANGENT_MAX, SHARD_TANGENT_MAX);
-        let perp = Vec2::new(-dir.y, dir.x);
-        let mut velocity = dir * speed + perp * tangential_jitter;
-        let v_mag = get_mag(&velocity);
-        if v_mag > SHARD_SPEED_MAX {
-            velocity *= SHARD_SPEED_MAX / v_mag;
-        }
-        (velocity, SHARD_LIFE_FT)
-    };
+        let inward = position * (-1.0 / r_mag);
+        let dir_blend = dir * (1.0 - SHARD_INWARD_KNOCK) + inward * SHARD_INWARD_KNOCK;
+        dir = dir_blend * (1.0 / get_mag(&dir_blend).max(1.0e-4));
+    }
+    let speed = rng.get_rnd_r(SHARD_IMPULSE_MIN, SHARD_IMPULSE_MAX) / mass;
+    let tangential_jitter = rng.get_rnd_r(-SHARD_TANGENT_MAX, SHARD_TANGENT_MAX) * speed;
+    let perp = Vec2::new(-dir.y, dir.x);
+    let mut velocity = dir * speed + perp * tangential_jitter;
+    let v_mag = get_mag(&velocity);
+    if v_mag > SHARD_SPEED_MAX {
+        velocity *= SHARD_SPEED_MAX / v_mag;
+    }
+    let life = SHARD_LIFE_FT;
 
     let radius = local.iter().fold(0.0_f32, |m, p| m.max(get_mag(p)));
 
@@ -694,7 +667,6 @@ mod tests {
                 Color::new(10, 20, 30, 255),
                 7,
                 0,
-                0.0,
                 &rng,
             );
             assert!(
@@ -727,7 +699,7 @@ mod tests {
     }
 
     #[test]
-    fn split_bursts_outward_from_the_impact_point() {
+    fn split_knocks_the_glass_inward_into_the_arena() {
         let corners = wall_quad();
         let impact = corners[0]; // angle -30°, r=80
         let shards = split_wall_quad(
@@ -737,59 +709,38 @@ mod tests {
             Color::new(10, 20, 30, 255),
             7,
             0,
-            0.0,
             &SeededCosmeticRng::new(42),
         );
-        // The wall sits at angle 0 (the +x half-plane): every RADIAL
-        // SPRAY piece's impulse from `impact` points away from it (the
-        // tangential jitter only shaves the radial component, never
-        // inverts it). The CARRIERS instead sweep the ring: their
-        // tangential component dominates the small outward kick, in one
-        // of the two ring directions.
-        let mut saw_spray = 0;
-        let mut saw_carrier = 0;
+        // The impact sits at the wall's inner corner, so the pure radial
+        // blast would point OFF-SCREEN: the knock (SHARD_INWARD_KNOCK)
+        // blends every piece's blast direction with the inward unit
+        // vector, and the perp jitter never touches the radial axis —
+        // so EVERY piece's radial velocity component is net inward
+        // (the glass visibly flies into the arena and bounces off the
+        // core instead of spraying off-screen).
         for s in &shards {
-            let to_shard = s.position - impact;
-            let dot = s.velocity.x * to_shard.x + s.velocity.y * to_shard.y;
-            if s.max_life == SHARD_LIFE_FT {
-                saw_spray += 1;
-                assert!(
-                    dot >= -1.0e-4,
-                    "spray piece velocity {:?} carries the radial impulse from the impact point",
-                    s.velocity
-                );
-            } else {
-                saw_carrier += 1;
-                let r_mag = get_mag(&s.position).max(1.0e-4);
-                let tangent = Vec2::new(-s.position.y / r_mag, s.position.x / r_mag);
-                let radial = s.position * (1.0 / r_mag);
-                let v_tan = s.velocity.x * tangent.x + s.velocity.y * tangent.y;
-                let v_rad = s.velocity.x * radial.x + s.velocity.y * radial.y;
-                assert!(
-                    v_tan.abs() >= CARRIER_SPEED_MIN - CARRIER_RADIAL_MAX - 1.0e-4,
-                    "carrier {:?} sweeps the ring at its speed",
-                    s.velocity
-                );
-                assert!(
-                    v_tan.abs() > v_rad.abs(),
-                    "the carrier's tangential sweep dominates its radial kick"
-                );
-            }
+            let r_mag = get_mag(&s.position).max(1.0e-4);
+            let inward = s.position * (-1.0 / r_mag);
+            let v_in = s.velocity.x * inward.x + s.velocity.y * inward.y;
+            assert!(
+                v_in > 0.0,
+                "piece velocity {:?} is knocked inward (inward component {})",
+                s.velocity,
+                v_in
+            );
+            assert_eq!(s.max_life, SHARD_LIFE_FT, "one life for all pieces");
+            assert!(
+                get_mag(&s.velocity) <= SHARD_SPEED_MAX + 1.0e-4,
+                "the blast is speed-clamped"
+            );
         }
-        assert!(
-            saw_spray > 0 && saw_carrier > 0,
-            "both spawn modes are present (seed 42)"
-        );
     }
 
     #[test]
-    fn split_aims_half_radial_spray_half_tangential_carriers() {
-        // The spawn aim: ~half the pieces are radial spray (the
-        // mass-scaled impulse, clamped to SHARD_SPEED_MAX), ~half
-        // tangential CARRIERS (the ring sweepers: the longer carrier
-        // life, a speed in CARRIER_SPEED_MIN..MAX, one of the two ring
-        // directions). A piece's ring tangent at its position:
-        // CCW-positive.
+    fn split_pieces_all_carry_the_single_inward_knock_aim() {
+        // The spawn aim is ONE mode now (the mass-scaled impulse knocked
+        // inward): every piece carries the full shard life, is
+        // speed-clamped, and has a positive inward radial component.
         let corners = wall_quad();
         let impact = corners[0];
         let rng = SeededCosmeticRng::new(1234);
@@ -800,92 +751,18 @@ mod tests {
             Color::new(10, 20, 30, 255),
             9,
             1,
-            0.0,
             &rng,
         );
-        let mut carriers = 0;
-        let mut radial = 0;
         for s in &shards {
+            assert_eq!(s.max_life, SHARD_LIFE_FT);
             let r_mag = get_mag(&s.position).max(1.0e-4);
-            let tangent = Vec2::new(-s.position.y / r_mag, s.position.x / r_mag);
-            let v_tan = s.velocity.x * tangent.x + s.velocity.y * tangent.y;
-            if s.max_life == CARRIER_LIFE_FT {
-                carriers += 1;
-                // A carrier: swept in one of the two ring directions at
-                // its bounded speed.
-                assert!(v_tan != 0.0, "a carrier sweeps a ring direction");
-                assert!(
-                    ((CARRIER_SPEED_MIN - CARRIER_RADIAL_MAX - 1.0e-4)
-                        ..=(CARRIER_SPEED_MAX + CARRIER_RADIAL_MAX + 1.0e-4))
-                        .contains(&v_tan.abs()),
-                    "carrier speed {} in the {}..{} range",
-                    v_tan.abs(),
-                    CARRIER_SPEED_MIN,
-                    CARRIER_SPEED_MAX
-                );
-            } else {
-                radial += 1;
-                assert_eq!(s.max_life, SHARD_LIFE_FT);
-                assert!(
-                    get_mag(&s.velocity) <= SHARD_SPEED_MAX + 1.0e-4,
-                    "the radial spray is speed-clamped"
-                );
-            }
+            let inward = s.position * (-1.0 / r_mag);
+            assert!(
+                s.velocity.x * inward.x + s.velocity.y * inward.y > 0.0,
+                "every piece is knocked inward"
+            );
+            assert!(get_mag(&s.velocity) <= SHARD_SPEED_MAX + 1.0e-4);
         }
-        // Both modes are present (6..10 pieces, 50% coin — pinned by the
-        // seed).
-        assert!(
-            carriers > 0 && radial > 0,
-            "carriers {} radial {}",
-            carriers,
-            radial
-        );
-    }
-
-    #[test]
-    fn split_carrier_direction_is_biased_by_the_hitters_tangential_velocity() {
-        // A strong CCW hitter (+CARRIER_SPEED_MAX px/FT) pushes the
-        // carrier coin toward CCW (p = 0.5 + 0.45); a strong CW hitter
-        // pushes it the other way; a neutral hitter splits both ways.
-        let corners = wall_quad();
-        let impact = corners[0];
-        let outward = 0.0;
-        let color = Color::new(10, 20, 30, 255);
-        // The carriers' ring direction, per seed (exact carrier
-        // detection: the carriers carry the longer CARRIER_LIFE_FT).
-        let count_ccw = |tangential: f32, seed: u64| -> (u32, u32) {
-            let rng = SeededCosmeticRng::new(seed);
-            let shards = split_wall_quad(corners, impact, outward, color, 1, 0, tangential, &rng);
-            let mut ccw = 0u32;
-            let mut cw = 0u32;
-            for s in &shards {
-                if s.max_life != CARRIER_LIFE_FT {
-                    continue; // a radial spray piece
-                }
-                let r_mag = get_mag(&s.position).max(1.0e-4);
-                let tangent = Vec2::new(-s.position.y / r_mag, s.position.x / r_mag);
-                let v_tan = s.velocity.x * tangent.x + s.velocity.y * tangent.y;
-                if v_tan > 0.0 {
-                    ccw += 1;
-                } else {
-                    cw += 1;
-                }
-            }
-            (ccw, cw)
-        };
-        // A full-strength CCW hitter: every carrier goes CCW (p_ccw =
-        // 0.95 — with the pinned seed the CW minority is still
-        // possible, but the majority is certain at these counts).
-        let (ccw_a, cw_a) = count_ccw(CARRIER_SPEED_MAX, 3);
-        assert!(ccw_a > cw_a, "CCW hitter: {} CCW vs {} CW", ccw_a, cw_a);
-        let (ccw_b, cw_b) = count_ccw(-CARRIER_SPEED_MAX, 3);
-        assert!(cw_b > ccw_b, "CW hitter: {} CW vs {} CCW", cw_b, ccw_b);
-        // Neutral: both directions appear across the burst.
-        let (ccw_c, cw_c) = count_ccw(0.0, 19);
-        assert!(
-            ccw_c > 0 && cw_c > 0,
-            "neutral hitter splits both ring directions"
-        );
     }
 
     #[test]
@@ -907,9 +784,9 @@ mod tests {
         assert!((s.life - (SHARD_LIFE_FT - 0.25)).abs() < 1e-6);
 
         // A huge delta stalls drag/spin-decay (never negative) and runs
-        // the life out (48 units; 50 > 48).
+        // the life out (110 units; 120 > 110).
         let mut s = shard();
-        s.update(50.0, 72.0);
+        s.update(120.0, 72.0);
         assert!(s.velocity.x >= 0.0);
         assert!(s.spin >= 0.0);
         assert!(!s.is_alive());
@@ -996,9 +873,10 @@ mod tests {
         // a at -0.5, b at 8.5 (positions apart again).
         assert!((shards[0].position.x - -0.5).abs() < 1e-6);
         assert!((shards[1].position.x - 8.5).abs() < 1e-6);
-        // vn = -2, j = (1.5 * 2) / 2 = 1.5, equal masses: each Δv = 1.5.
-        assert!((shards[0].velocity.x - -0.5).abs() < 1e-6);
-        assert!((shards[1].velocity.x - 0.5).abs() < 1e-6);
+        // vn = -2, j = (1.7 * 2) / 2 = 1.7 (restitution 0.7), equal
+        // masses: each Δv = 1.7 → a at −0.7, b at +0.7 (they separate).
+        assert!((shards[0].velocity.x - -0.7).abs() < 1e-6);
+        assert!((shards[1].velocity.x - 0.7).abs() < 1e-6);
 
         // Non-overlapping pairs are untouched.
         let mut far = shard();

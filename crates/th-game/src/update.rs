@@ -558,7 +558,7 @@ impl<S: SharedStore> HexagonGame<S> {
                 // propagation to the neighbours is PHYSICAL (the impact
                 // pass: a shard that sweeps into a live wall shatters it —
                 // no queued hops, no extra bumps).
-                let (impact, tangential, burst) = {
+                let (impact, burst) = {
                     let g = self.st();
                     let w = &g.walls[i];
                     // The impact point: the wall vertex nearest the
@@ -574,17 +574,14 @@ impl<S: SharedStore> HexagonGame<S> {
                         }
                     }
                     let e = self.est();
-                    // The player's tangential (ring) speed at the
-                    // impact — the burst's carrier direction bias.
-                    let tangential = e.player.tangential_speed(self.get_input_movement(), m_ft);
                     let burst = e.next_burst;
-                    (impact, tangential, burst)
+                    (impact, burst)
                 };
                 {
                     let mut e = self.est();
                     e.next_burst = e.next_burst.wrapping_add(1);
                 }
-                self.shatter_wall_at(i, &impact, tangential, burst, 0);
+                self.shatter_wall_at(i, &impact, burst, 0);
                 {
                     let mut g = self.st();
                     g.status.flash_effect = f32::max(g.status.flash_effect, 120.0_f32);
@@ -702,19 +699,10 @@ impl<S: SharedStore> HexagonGame<S> {
 
     /// Shatter wall `index` at the blast origin `impact`: kill it (the
     /// existing `retain` drops it), cut its quad into glass shards —
-    /// ~half a radial spray from `impact`, ~half tangential carriers
-    /// (the ring sweepers that carry the physical propagation, biased
-    /// by `tangential`, the hitter's tangential velocity in px/FT) —
-    /// with the lineage (`burst`, `generation`). The cap evicts the
-    /// oldest shards first.
-    fn shatter_wall_at(
-        &self,
-        index: usize,
-        impact: &Vec2,
-        tangential: f32,
-        burst: u32,
-        generation: u32,
-    ) {
+    /// the mass-scaled impulse spray knocked inward (see
+    /// [`SHARD_INWARD_KNOCK`]) — with the lineage (`burst`,
+    /// `generation`). The cap evicts the oldest shards first.
+    fn shatter_wall_at(&self, index: usize, impact: &Vec2, burst: u32, generation: u32) {
         let (corners, outward, wall_color) = {
             let g = self.st();
             let w = &g.walls[index];
@@ -730,8 +718,9 @@ impl<S: SharedStore> HexagonGame<S> {
 
         // The glass burst: the wall's ACTUAL quad cut into 6..10
         // irregular pieces (a jittered fan, biased to the impact
-        // point), each carrying the dual-mode spawn aim (the cosmetic
-        // rng — non-simulation, same policy as the swap particles).
+        // point), each carrying the inward-knocked blast aim (the
+        // cosmetic rng — non-simulation, same policy as the swap
+        // particles).
         let shards = split_wall_quad(
             corners,
             *impact,
@@ -739,7 +728,6 @@ impl<S: SharedStore> HexagonGame<S> {
             wall_color,
             burst,
             generation,
-            tangential,
             &*self.0.cosmetic_rng,
         );
         {
@@ -773,9 +761,8 @@ impl<S: SharedStore> HexagonGame<S> {
     /// plan 002 issue 09 (shards-3) — the physical propagation pass:
     /// each live shard that overlaps a live wall resolves a collision —
     /// `generation < MAX_PROPAGATION`: shatter THAT wall AT THE PIECE'S
-    /// POSITION (the new shards inherit the blast's `burst` id, step up
-    /// to `generation + 1`, and the hitter's tangential velocity biases
-    /// the new burst's carrier direction); the hitter is consumed.
+    /// POSITION (the new shards inherit the blast's `burst` id and step
+    /// up to `generation + 1`); the hitter is consumed.
     /// `generation >= MAX_PROPAGATION`: the piece crumbles (dies) and
     /// the wall survives. Dead walls are NEVER hit — a piece flying
     /// over a dead wall's former quad is not consumed (only live walls
@@ -827,17 +814,10 @@ impl<S: SharedStore> HexagonGame<S> {
             let Some(piece) = piece else {
                 continue; // evicted by a same-tick shatter
             };
-            let (generation, burst, tangential) = {
+            let (generation, burst) = {
                 let e = self.est();
                 let s = e.shrapnel[piece];
-                // The hitter's tangential (ring) velocity at the impact:
-                // the velocity dotted with the ring tangent at the
-                // piece's position (+CCW) — the new burst's carrier
-                // direction bias.
-                let r = get_mag(&s.position).max(1.0e-4);
-                let tangential =
-                    s.velocity.x * (-s.position.y / r) + s.velocity.y * (s.position.x / r);
-                (s.generation, s.burst, tangential)
+                (s.generation, s.burst)
             };
             // Consume the hitter FIRST (its index is only valid before
             // the shatter's make_room front-eviction).
@@ -862,7 +842,7 @@ impl<S: SharedStore> HexagonGame<S> {
             }
             // Shatter the wall at the piece's position: the new shards
             // carry the blast's burst id + generation + 1 (the lineage).
-            self.shatter_wall_at(wi, &snap[pi].position, tangential, burst, generation + 1);
+            self.shatter_wall_at(wi, &snap[pi].position, burst, generation + 1);
         }
     }
 

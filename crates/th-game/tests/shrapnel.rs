@@ -2,11 +2,14 @@
 //! shatters the wall into GLASS SHARDS — irregular pieces cut from the
 //! wall's actual quad — which burst under a real physics sim (mass, the
 //! dual-mode spawn aim: ~half radial spray + ~half tangential carriers,
-//! drag, tumble, elastic core bounces). Propagation is PHYSICAL
-//! (plan 002 issue 09 shards-3): the carriers sweep the ring and
-//! shatter whatever live wall they overlap (the engine's impact pass),
-//! generation-capped (`generation >= MAX_PROPAGATION` crumbles) — no
-//! queued chain hops, no extra bumps. Same deterministic fixture
+//! drag, tumble, elastic core bounces, knocked inward into the arena
+//! by the hit — the pure radial blast would point off-screen). The
+//! propagation is PHYSICAL and EMERGENT (plan 002 issue 09 shards-4):
+//! a piece that reaches a live wall shatters it (the engine's impact
+//! pass), generation-capped (`generation >= MAX_PROPAGATION` crumbles)
+//! — no carrier projectiles, no queued chain hops, no extra bumps. The
+//! deterministic hop tests inject synthetic pieces
+//! (`HexagonGame::test_inject_shard`). Same deterministic fixture
 //! discipline as `soft_collisions.rs` (the 04a twin); the propagation
 //! tests pin their cosmetic rng seed.
 
@@ -17,7 +20,7 @@ use std::sync::Arc;
 use th_config::TIME_STEP;
 use th_game::polygon::point_in_polygon;
 use th_game::seams::{NoJoystick, PcgCosmeticRng};
-use th_game::shrapnel::{CARRIER_LIFE_FT, SHARD_LIFE_FT};
+use th_game::shrapnel::SHARD_LIFE_FT;
 use th_game::{CWall, SpeedData};
 use th_math::ssvs::vector2::{get_mag, get_rad};
 use th_math::ssvs::Vec2;
@@ -36,10 +39,8 @@ const MAX_LIVE_SHARDS: usize = 64;
 const MAX_PROPAGATION: u32 = 2;
 /// One 240 Hz tick in FT units (the engine's `m_ft` scale: 60 = 1 s).
 const TICK_FT: f32 = 0.25;
-/// The seeded fixtures' cosmetic rng seed (deterministic carrier split
-/// and directions for the propagation pins — probed: the gen-0 carriers
-/// lean CCW, the gen-1 burst follows the sweep, and the pattern walls
-/// stay out of the 500-radius band for the whole 300-tick window).
+/// The seeded fixtures' cosmetic rng seed (deterministic fan cut +
+/// blast jitter for the physics pins).
 const SEED: u64 = 42;
 
 fn load_release() -> Arc<th_assets::Assets> {
@@ -153,8 +154,6 @@ fn a_soft_hit_shatters_the_wall_into_glass_shards_cut_from_its_quad() {
     // inward nudge: the cross-product test is sign-ambiguous for
     // vertices that lie exactly on the quad's edges in f32.)
     let center = (quad[0] + quad[1] + quad[2] + quad[3]) * 0.25;
-    let mut saw_spray = 0;
-    let mut saw_carrier = 0;
     for s in &shards {
         for p in s.local {
             let world = s.position + p;
@@ -172,40 +171,17 @@ fn a_soft_hit_shatters_the_wall_into_glass_shards_cut_from_its_quad() {
         assert!(s.color_out.r >= s.color_in.r);
         assert!(s.color_out.g >= s.color_in.g);
         assert!(s.color_out.b >= s.color_in.b);
-        // The dual-mode spawn aim: the RADIAL SPRAY pieces carry the
-        // radial impulse from the impact point (the jitter only shaves
-        // it, never inverts it); the TANGENTIAL CARRIERS sweep the ring
-        // (their tangential component dominates the small outward kick).
-        let to_shard = s.position - impact;
-        let dot = s.velocity.x * to_shard.x + s.velocity.y * to_shard.y;
-        if s.max_life == SHARD_LIFE_FT {
-            saw_spray += 1;
-            assert!(
-                dot >= -1.0e-4,
-                "the radial impulse from the impact point ({} vs dir {:?})",
-                dot,
-                to_shard
-            );
-        } else {
-            saw_carrier += 1;
-            assert_eq!(s.max_life, CARRIER_LIFE_FT);
-            let r_mag = get_mag(&s.position).max(1.0e-4);
-            let tangent = Vec2::new(-s.position.y / r_mag, s.position.x / r_mag);
-            let v_tan = s.velocity.x * tangent.x + s.velocity.y * tangent.y;
-            let radial = s.position * (1.0 / r_mag);
-            let v_rad = s.velocity.x * radial.x + s.velocity.y * radial.y;
-            assert!(
-                v_tan.abs() > v_rad.abs(),
-                "the carrier's tangential sweep dominates its radial kick"
-            );
-        }
+        // The spawn aim: ONE mode — the mass-scaled impulse KNOCKED
+        // INWARD (see `SHARD_INWARD_KNOCK`): the perp jitter never
+        // touches the radial axis, so every piece's radial velocity
+        // component is net inward (the glass visibly flies into the
+        // arena and bounces off the core).
+        let r_mag = get_mag(&s.position).max(1.0e-4);
+        let inward = s.position * (-1.0 / r_mag);
+        let v_in = s.velocity.x * inward.x + s.velocity.y * inward.y;
+        assert!(v_in > 0.0, "every piece is knocked inward ({})", v_in);
+        assert_eq!(s.max_life, SHARD_LIFE_FT, "one life for all pieces");
     }
-    assert!(
-        saw_spray > 0 && saw_carrier > 0,
-        "both spawn modes are present (spray {} carriers {})",
-        saw_spray,
-        saw_carrier
-    );
     // Exactly ONE bump for the whole explosion (the shard-impact
     // shatters add none — the impact pass adds no bumps).
     assert_eq!(c.game.bump_serial(), 1);
@@ -216,10 +192,7 @@ fn a_shard_impact_shatters_a_neighbouring_wall_with_no_extra_bump() {
     let assets = load_release();
     let c = fixture_seeded(&assets, SEED);
     // The hit wall at angle 0 (side 0) + the two neighbour walls of a
-    // 6-sided arena at the SAME radial band (sides 1 and 5): the
-    // carriers sweep the ring at the walls' radius, so they can reach
-    // them. The level's own pattern walls sit at the 1600 spawn
-    // distance — unreachable in the test window.
+    // 6-sided arena at the SAME radial band (sides 1 and 5).
     inject_wall(&c, 0, 80.0, 60.0, 0.0);
     inject_wall(&c, 1, 80.0, 60.0, 0.0);
     inject_wall(&c, 5, 80.0, 60.0, 0.0);
@@ -241,20 +214,32 @@ fn a_shard_impact_shatters_a_neighbouring_wall_with_no_extra_bump() {
         "the hit wall is gone; both neighbours wait"
     );
 
-    // The carriers sweep the ring (1.5..5.25 px/tick at the wall band):
-    // the first neighbour impact is due well inside the 240-tick window
-    // (a 105 px arc at the walls' mid-radius, even for the slowest
-    // carrier).
-    let mut first_hop_tick = None;
-    for tick in 2..=240 {
-        c.game.update(TIME_STEP, 1.0);
-        let alive = injected_sides(&c);
-        if alive.len() < 2 {
-            first_hop_tick = Some(tick);
-            break;
-        }
-    }
-    let tick = first_hop_tick.expect("a carrier reached a neighbour within 240 ticks");
+    // Deterministic hop (shards-4: the propagation is emergent physics,
+    // so the seeded real pieces cannot be relied on to reach a
+    // neighbour — the test drives the impact pass with a synthetic
+    // gen-0 piece placed ON the neighbour's quad, the same way the
+    // walls themselves are injected).
+    let q1 = {
+        let g = c.game.state_handle().lock();
+        // The injected walls: side 0 was consumed by the hit's retain;
+        // the remaining injected walls are sides 1 and 5 (push order).
+        let w = g
+            .walls
+            .iter()
+            .find(|w| {
+                !w.is_dead() && {
+                    let (sp, _ep, r) = w.angle_span().unwrap();
+                    r < 500.0 && (mid_angle(sp, _ep) / (TAU / 6.0)).round() as u32 % 6 == 1
+                }
+            })
+            .unwrap()
+            .get_vertex_positions();
+        (w[0] + w[1] + w[2] + w[3]) * 0.25
+    };
+    c.game.test_inject_shard(q1, Vec2::new(0.0, 0.0), 0);
+    c.game.update(TIME_STEP, 1.0); // the impact pass shatters side 1
+    let tick = 2;
+
     // The impact shattered the neighbour physically: the wall is dead,
     // the bump serial did NOT move (the bump is the player's physical
     // hit alone — the impact pass adds no bumps)...
@@ -266,7 +251,7 @@ fn a_shard_impact_shatters_a_neighbouring_wall_with_no_extra_bump() {
     );
     // ...and it spawned the gen-1 burst: the new shards inherit the
     // blast's burst id, step up to generation 1, and are cut from the
-    // victim's ring sector (its annular band, not the hit wall's).
+    // victim's ring sector.
     let shards = c.game.shrapnel();
     let gen1: Vec<_> = shards.iter().filter(|s| s.generation == 1).collect();
     assert!(!gen1.is_empty(), "the gen-1 burst spawned at tick {}", tick);
@@ -278,9 +263,8 @@ fn a_shard_impact_shatters_a_neighbouring_wall_with_no_extra_bump() {
         c.game.shrapnel().len() <= MAX_LIVE_SHARDS,
         "the shard cap holds"
     );
-    // The gen-1 shards sit in the victim's sector: one of the two
-    // neighbour spans (side 1: 30..90°, side 5: 270..330°), at the
-    // walls' radial band (80..140, ± margin).
+    // The gen-1 shards sit in the victim's sector (side 1: 30..90°) at
+    // the walls' radial band (80..140, ± margin), knocked inward.
     for s in &gen1 {
         let r = get_mag(&s.position);
         assert!(
@@ -290,29 +274,34 @@ fn a_shard_impact_shatters_a_neighbouring_wall_with_no_extra_bump() {
         );
         let a = get_rad(&s.position).rem_euclid(TAU);
         let side1_span = (TAU / 12.0)..(3.0 * TAU / 12.0); // 30..90°
-        let side5_span = (9.0 * TAU / 12.0)..(11.0 * TAU / 12.0); // 270..330°
         assert!(
-            side1_span.contains(&a) || side5_span.contains(&a),
-            "gen-1 shard at angle {} is in a neighbour's sector",
+            side1_span.contains(&a),
+            "gen-1 shard at angle {} is in the victim's sector",
             a
         );
+        let inward = s.position * (-1.0 / r);
+        assert!(
+            s.velocity.x * inward.x + s.velocity.y * inward.y > -0.4,
+            "the gen-1 pieces lean inward (the jitter may shave the weak radial component)"
+        );
     }
+    // The burst's MEAN radial component is inward (the knock dominates
+    // the jitter across the burst even where a single piece's jitter
+    // flips its weak radial component).
+    let mean_in = gen1
+        .iter()
+        .map(|s| {
+            let r = get_mag(&s.position).max(1.0e-4);
+            let inward = s.position * (-1.0 / r);
+            s.velocity.x * inward.x + s.velocity.y * inward.y
+        })
+        .sum::<f32>()
+        / gen1.len() as f32;
+    assert!(mean_in > 0.0, "the gen-1 burst leans inward ({})", mean_in);
 
-    // The blast is bounded in the walls' own band: in this fixture the
-    // gen-1 carriers sweep the EMPTY arcs (sides 2/4 are not injected),
-    // so no further injected wall dies and nothing in the band ever
-    // bumps again.
-    //
-    // Far OUTSIDE the band the story continues: the shards fly straight
-    // (tangent chords), so a sweeping piece leaves the ring, and by
-    // ~tick 200-250 the fastest gen-1 pieces reach the level's PATTERN
-    // walls (r ~800-1000 there), spawning bounded gen-2 debris far out
-    // (gen 2 crumbles on the next hit; see the reach note in the
-    // module docs). That debris is pinned per tick below (gen cap,
-    // piece cap) — not by a window-end "everything is empty", because
-    // the level's own spawn cadence is game-RNG-driven and outside
-    // this test's contract.
-    for tick in (tick + 1)..=300 {
+    // The bounded blast's invariants, over a settling window: no extra
+    // bumps, the generation cap, the shard cap.
+    for tick in (tick + 1)..=120 {
         c.game.update(TIME_STEP, 1.0);
         assert_eq!(
             c.game.bump_serial(),
@@ -329,49 +318,20 @@ fn a_shard_impact_shatters_a_neighbouring_wall_with_no_extra_bump() {
             tick,
             MAX_PROPAGATION
         );
+        assert!(
+            c.game.shrapnel().len() <= MAX_LIVE_SHARDS,
+            "tick {}: the shard cap holds",
+            tick
+        );
     }
-    let alive = injected_sides(&c);
-    assert!(
-        alive.len() <= 2 && alive.iter().all(|s| *s == 1 || *s == 5),
-        "only the two injected neighbours died (alive: {:?})",
-        alive
-    );
-    // The blast's near field has settled: the gen-0 burst (max life
-    // 60 FT = 240 ticks, born at tick 1) is entirely gone, and no
-    // blast piece lingers in the walls' band (r < 250) — the ring
-    // pieces all died by their lifetimes (gen-1 ring pieces: born at
-    // the hops, 192/240-tick lives, gone by tick ~250), and the
-    // far-field debris (born out at r >= ~800) cannot fly back inside
-    // r < 250 within its own lifetime (max inward travel ~411 px).
-    let shards = c.game.shrapnel();
-    assert!(
-        shards.iter().all(|s| !(s.burst == 0 && s.generation == 0)),
-        "the gen-0 burst has melted away ({} left)",
-        shards
-            .iter()
-            .filter(|s| s.burst == 0 && s.generation == 0)
-            .count()
-    );
-    assert!(
-        shards
-            .iter()
-            .all(|s| s.burst != 0 || get_mag(&s.position) >= 250.0),
-        "no blast shard lingers in the walls' band (r < 250)"
-    );
     assert!(!c.game.get_status().has_died, "never a death in soft mode");
 }
 
 #[test]
-fn the_full_0_1_2_propagation_crumbles_at_gen_2() {
+fn a_gen_2_piece_crumbles_instead_of_shattering() {
     let assets = load_release();
     let c = fixture_seeded(&assets, SEED);
-    // The hit wall (side 0) + a CCW row: sides 1, 2, 3 sit in a row
-    // along the seeded burst's carrier sweep (the gen-0 carriers lean
-    // CCW — probed). Sides 4/5 are NOT injected: any CW carrier sweeps
-    // an empty arc. (Far-field note as in the neighbour test: by
-    // ~tick 200 the fastest ring pieces' chord sweeps can reach the
-    // level's pattern walls out at r ~800+; the near-field contract
-    // below is unaffected.)
+    // The hit wall (side 0) + the row sides 1, 2, 3.
     inject_wall(&c, 0, 80.0, 60.0, 0.0);
     inject_wall(&c, 1, 80.0, 60.0, 0.0);
     inject_wall(&c, 2, 80.0, 60.0, 0.0);
@@ -380,119 +340,90 @@ fn the_full_0_1_2_propagation_crumbles_at_gen_2() {
     c.game.update(TIME_STEP, 1.0); // tick 1: the hit shatters side 0
     assert_eq!(c.game.bump_serial(), 1);
 
-    // Hop 0→1: a gen-0 carrier sweeps CCW into side 1; hop 1→2: a gen-1
-    // carrier (biased by the hitter's tangential velocity — the same
-    // sweep direction) sweeps into side 2; the gen-2 shards then sweep
-    // on toward side 3 and CRUMBLE on contact (the wall survives).
-    let mut side1_died_at = None;
-    let mut side2_died_at = None;
-    // Crumble evidence: track the gen-2 counts tick by tick. A gen-2
-    // piece's life is 192/240 ticks from its birth (hop 2), so no gen-2
-    // piece can MELT before tick ~194 — a gen-2 count that DROPS by
-    // tick 150 is a piece CONSUMED by the impact pass (crumbled), not
-    // a melt. And the near-field count (r < 250) dropping at the same
-    // tick as the total says the consumed piece was in the near field,
-    // where the only LIVE wall is side 3 (sides 0-2 are dead; dead
-    // walls never re-consume a piece; the level's far walls are out at
-    // r >= ~1000 all the way past tick 150). Both counts dropping
-    // together, before any far-field gen-2 debris can exist, is a
-    // near-field gen-2 crumble on side 3's quad.
-    let mut prev_near2 = 0usize;
-    let mut prev_total2 = 0usize;
-    let mut saw_crumble = false;
-    for tick in 2..=300 {
-        c.game.update(TIME_STEP, 1.0);
-        let alive = injected_sides(&c);
-        if !alive.contains(&1) && side1_died_at.is_none() {
-            side1_died_at = Some(tick);
-        }
-        if !alive.contains(&2) && side2_died_at.is_none() {
-            side2_died_at = Some(tick);
-        }
-        // The propagation is generation-capped AT ANY MOMENT: no shard
-        // past gen 2 ever exists (a gen-2 piece crumbles on impact).
-        assert!(
-            c.game
-                .shrapnel()
-                .iter()
-                .all(|s| s.generation <= MAX_PROPAGATION),
-            "tick {}: a shard past gen {} exists",
-            tick,
-            MAX_PROPAGATION
-        );
-        // The shard cap holds throughout the blast.
-        assert!(
-            c.game.shrapnel().len() <= MAX_LIVE_SHARDS,
-            "tick {}: the shard cap holds",
-            tick
-        );
-        // The third hop MUST NOT shatter: side 3 is the gen-2 sweep's
-        // target and survives every tick of the run.
-        assert!(
-            alive.contains(&3),
-            "tick {}: side 3 shattered — a gen-2 piece must crumble, not shatter",
-            tick
-        );
-        // No extra bumps, ever.
-        assert_eq!(
-            c.game.bump_serial(),
-            1,
-            "tick {}: the impact pass adds no bumps",
-            tick
-        );
+    // Hop 0→1: a synthetic gen-0 piece on side 1's quad; the impact
+    // pass shatters it and spawns the gen-1 burst.
+    let q1 = {
+        let g = c.game.state_handle().lock();
+        let w = g
+            .walls
+            .iter()
+            .find(|w| {
+                !w.is_dead() && {
+                    let (sp, ep, r) = w.angle_span().unwrap();
+                    r < 500.0 && (mid_angle(sp, ep) / (TAU / 6.0)).round() as u32 % 6 == 1
+                }
+            })
+            .unwrap()
+            .get_vertex_positions();
+        (w[0] + w[1] + w[2] + w[3]) * 0.25
+    };
+    c.game.test_inject_shard(q1, Vec2::new(0.0, 0.0), 0);
+    c.game.update(TIME_STEP, 1.0);
+    assert!(
+        !injected_sides(&c).contains(&1),
+        "hop 0→1: side 1 shattered by the injected gen-0 piece"
+    );
 
-        let cur = c.game.shrapnel();
-        let near2 = cur
+    // Hop 1→2: a synthetic gen-1 piece on side 2's quad; side 2
+    // shatters and the gen-2 burst spawns.
+    let q2 = {
+        let g = c.game.state_handle().lock();
+        let w = g
+            .walls
             .iter()
-            .filter(|s| s.generation == 2 && get_mag(&s.position) < 250.0)
-            .count();
-        let total2 = cur.iter().filter(|s| s.generation == 2).count();
-        if tick <= 150 && near2 < prev_near2 && total2 < prev_total2 {
-            saw_crumble = true;
-        }
-        prev_near2 = near2;
-        prev_total2 = total2;
-    }
-    let t1 = side1_died_at.expect("a gen-0 carrier shattered side 1 (hop 0→1)");
-    let t2 = side2_died_at.expect("a gen-1 carrier shattered side 2 (hop 1→2)");
-    assert!(t1 < t2, "the hops resolve in order ({} then {})", t1, t2);
+            .find(|w| {
+                !w.is_dead() && {
+                    let (sp, ep, r) = w.angle_span().unwrap();
+                    r < 500.0 && (mid_angle(sp, ep) / (TAU / 6.0)).round() as u32 % 6 == 2
+                }
+            })
+            .unwrap()
+            .get_vertex_positions();
+        (w[0] + w[1] + w[2] + w[3]) * 0.25
+    };
+    c.game.test_inject_shard(q2, Vec2::new(0.0, 0.0), 1);
+    c.game.update(TIME_STEP, 1.0);
+    assert!(
+        !injected_sides(&c).contains(&2),
+        "hop 1→2: side 2 shattered by the injected gen-1 piece"
+    );
+    assert!(
+        c.game.shrapnel().iter().any(|s| s.generation == 2),
+        "the gen-2 burst spawned"
+    );
 
-    // At tick 300 the blast's NEAR field is settled: the gen-0 burst
-    // (max life 60 FT = 240 ticks, born at tick 1) is gone, the gen-1
-    // ring pieces (born at the hops, 192/240-tick lives) are gone, and
-    // the gen-2 pieces are gone too — crumbled on side 3 (the evidence
-    // below) or melted out in the far field. Far out at r >= ~800 the
-    // fastest ring pieces' chord sweeps can still be shattering the
-    // level's PATTERN walls (bounded gen-2 debris — pinned per tick
-    // above, outside this near-field contract).
-    let shards = c.game.shrapnel();
-    assert!(
-        shards.iter().all(|s| !(s.burst == 0 && s.generation == 0)),
-        "the gen-0 burst has melted away ({} left)",
-        shards
+    // The last hop MUST NOT shatter: a synthetic gen-2 piece on side 3
+    // CRUMBLES on contact (the piece dies, the wall survives).
+    let q3 = {
+        let g = c.game.state_handle().lock();
+        let w = g
+            .walls
             .iter()
-            .filter(|s| s.burst == 0 && s.generation == 0)
-            .count()
-    );
-    assert!(
-        shards
-            .iter()
-            .all(|s| s.burst != 0 || get_mag(&s.position) >= 250.0),
-        "no blast shard lingers in the walls' band (r < 250)"
-    );
-    assert!(
-        saw_crumble,
-        "a gen-2 piece crumbled in the near field (consumed before it could melt; side 3 stayed alive)"
-    );
-    // Exactly two propagation shatters happened (the hit wall + sides 1
-    // and 2 — bounded: one shatter per consumed gen-0/gen-1 piece, and
-    // side 3's gen-2 contact crumbled instead of shattering).
+            .find(|w| {
+                !w.is_dead() && {
+                    let (sp, ep, r) = w.angle_span().unwrap();
+                    r < 500.0 && (mid_angle(sp, ep) / (TAU / 6.0)).round() as u32 % 6 == 3
+                }
+            })
+            .unwrap()
+            .get_vertex_positions();
+        (w[0] + w[1] + w[2] + w[3]) * 0.25
+    };
+    c.game.test_inject_shard(q3, Vec2::new(0.0, 0.0), 2);
+    c.game.update(TIME_STEP, 1.0);
     let alive = injected_sides(&c);
     assert_eq!(
         alive,
         vec![3],
         "hit + sides 1, 2 shattered; side 3 survived the gen-2 crumble"
     );
+    assert!(
+        !c.game.shrapnel().iter().any(|s| s.generation > 2),
+        "no shard past the gen cap"
+    );
+    // No extra bumps, ever.
+    assert_eq!(c.game.bump_serial(), 1);
+    // The crumbled piece is consumed (gone) and side 3 lives on.
     assert!(!c.game.get_status().has_died, "never a death in soft mode");
 }
 
@@ -555,7 +486,7 @@ fn shard_physics_ride_momentum_drag_tumble_and_cull() {
     c.game.update(TIME_STEP, 1.0);
     let after = c.game.shrapnel();
     assert_eq!(after.len(), before.len());
-    let drag = 1.0_f32 - (0.9_f32 / 60.0_f32) * TICK_FT;
+    let drag = 1.0_f32 - (0.5_f32 / 60.0_f32) * TICK_FT;
     let spin_decay = 1.0_f32 - 0.02_f32 * TICK_FT;
     let mut exact = 0;
     for (b, a) in before.iter().zip(after.iter()) {

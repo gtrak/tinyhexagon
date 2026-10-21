@@ -597,6 +597,18 @@ impl<S: SharedStore> HexagonGame<S> {
         self.0.state.get().expect("state not attached")
     }
 
+    /// Test seam (plan 002 issue 09): inject a synthetic shard so the
+    /// seeded integration tests can drive the impact pass
+    /// deterministically (the real spawn path is `split_wall_quad`'s).
+    #[doc(hidden)]
+    pub fn test_inject_shard(&self, position: Vec2, velocity: Vec2, generation: u32) {
+        self.est()
+            .shrapnel
+            .push(crate::shrapnel::Shrapnel::test_piece(
+                position, velocity, generation,
+            ));
+    }
+
     pub(crate) fn st(&self) -> SharedGuard<'_, S> {
         SharedGuard(self.state_handle().lock())
     }
