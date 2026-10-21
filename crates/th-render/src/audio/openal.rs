@@ -136,6 +136,7 @@ extern "C" {
     ) -> *mut core::ffi::c_void;
     fn alcMakeContextCurrent(context: *mut core::ffi::c_void) -> u32;
     fn alcDestroyContext(context: *mut core::ffi::c_void);
+    fn alcGetIntegerv(device: *mut core::ffi::c_void, param: i32, size: i32, values: *mut i32);
 
     fn alGenBuffers(n: i32, buffers: *mut u32);
     fn alBufferData(buffer: u32, format: u32, data: *const core::ffi::c_void, size: i32, freq: i32);
@@ -217,20 +218,16 @@ impl OpenalBackend {
                 detail: "no Web Audio AudioContext (alcOpenDevice returned NULL)".to_string(),
             });
         }
-        // The one-mixer plan: the context is created at the in-memory
-        // engine's render rate (the `ALC_FREQUENCY` attribute — emscripten
-        // passes it to `new AudioContext({ sampleRate })`), so the music
-        // stream needs no resample. A browser that rejects the rate
-        // (NotSupportedError → NULL) gets the default-rate context: the
-        // 48 kHz-labeled music buffers then resample in Web Audio, and the
-        // SFX path is exactly what it was before.
-        let mut context = unsafe {
-            let attrs: [i32; 3] = [ALC_FREQUENCY, MUSIC_RATE as i32, 0];
-            alcCreateContext(device, attrs.as_ptr())
-        };
-        if context.is_null() {
-            context = unsafe { alcCreateContext(device, core::ptr::null()) };
-        }
+        // The ONE-PATH endgame (the operator's "one sample rate, convert
+        // on our end"): the context is created at the DEVICE'S NATURAL
+        // rate (no `ALC_FREQUENCY` demand) — the 48 kHz demand produced
+        // "The AudioContext encountered an error from the audio device"
+        // on the user's Chrome 155 (the renderer froze at the first
+        // resume; everything scheduled on it stayed silent). OUR side
+        // converts: the feeds resample the 48 kHz engine/mixer frames to
+        // the context's actual rate (read below) and label the buffers
+        // with it.
+        let context = unsafe { alcCreateContext(device, core::ptr::null()) };
         if context.is_null() {
             unsafe {
                 alcCloseDevice(device);
@@ -242,6 +239,17 @@ impl OpenalBackend {
         unsafe {
             alcMakeContextCurrent(context);
         }
+        // The context's ACTUAL rate (the device's natural one): both
+        // streams' feeds convert to it.
+        let mut context_rate: i32 = 48_000;
+        unsafe {
+            alcGetIntegerv(device, ALC_FREQUENCY, 1, &mut context_rate);
+        }
+        let context_rate = if (8_000..=96_000).contains(&context_rate) {
+            context_rate as u32
+        } else {
+            48_000
+        };
         // The music streaming source (the one-mixer plan's music half):
         // ONE dedicated `AL_STREAMING` source on this context (the SFX and
         // the music share the context + its gesture unlock). Created
@@ -272,6 +280,7 @@ impl OpenalBackend {
             pool,
             free,
             queued: 0,
+            rate: context_rate,
         }));
         // The SFX stream (the ONE-PATH endgame, the operator's call): every
         // SFX + generated clink is OUR 48 kHz stereo PCM, mixed by
@@ -301,6 +310,7 @@ impl OpenalBackend {
             free: sfx_pool.iter().copied().collect(),
             pool: sfx_pool,
             queued: 0,
+            rate: context_rate,
         }));
         let state = Arc::new(Mutex::new(State {
             context_state: "suspended".to_string(), // the autoplay-policy default
@@ -569,6 +579,10 @@ struct MusicState {
     /// The dedicated source (created stopped at device open; the feed
     /// plays it once the queue has content).
     source: u32,
+    /// The context's actual sample rate (the device's natural rate): the
+    /// feeds convert the 48 kHz engine frames to this and label the
+    /// buffers with it (the ONE-PATH "convert on our end").
+    rate: u32,
     /// Every buffer id the pool owns (the free + the queued ones).
     pool: Vec<u32>,
     /// The ids ready to be (re)uploaded (hand-out order: `pop_back`).
@@ -576,6 +590,28 @@ struct MusicState {
     /// Buffers currently in the source's queue (our bookkeeping — the
     /// shim's zero-buffer sentinel is internal to it).
     queued: usize,
+}
+
+/// Linear-resample interleaved stereo `f32` from `from` to `to` Hz (the
+/// ONE-PATH conversion — the SFX mixer's stream_pcm does the same for
+/// the decoded assets; this one lives with the feeds).
+fn resample_stereo(frames: &[f32], from: u32, to: u32) -> Vec<f32> {
+    let ratio = f64::from(to) / f64::from(from);
+    let out_frames = ((frames.len() / 2) as f64 * ratio) as usize;
+    let mut out = Vec::with_capacity(out_frames * 2);
+    for i in 0..out_frames {
+        let t = i as f64 / ratio;
+        let i0 = (t as usize).min(frames.len() / 2 - 1);
+        let i1 = (i0 + 1).min(frames.len() / 2 - 1);
+        let f = (t - i0 as f64) as f32;
+        let l0 = frames[i0 * 2];
+        let r0 = frames[i0 * 2 + 1];
+        let l1 = frames[i1 * 2];
+        let r1 = frames[i1 * 2 + 1];
+        out.push(l0 + (l1 - l0) * f);
+        out.push(r0 + (r1 - r0) * f);
+    }
+    out
 }
 
 /// The OpenAL half of a [`MusicSource`] (the dedicated streaming source's
@@ -643,7 +679,7 @@ impl MusicSourceBackend for OpenalMusicSource {
                     AL_FORMAT_STEREO16,
                     i16.as_ptr() as *const core::ffi::c_void,
                     size_bytes,
-                    sample_rate as i32,
+                    g.rate as i32,
                 );
                 alSourceQueueBuffers(g.source, 1, &id);
             }
