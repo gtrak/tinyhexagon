@@ -228,7 +228,20 @@
       // listeners — that's why SFX could work while the synth stayed
       // silent).
       let audioLive = false;
+      let unlockLogged = false;
       const onGesture = (source) => {
+        // THE REAL CONTEXT'S RESUME (the one-mixer's silence lesson): the
+        // shim's own auto-resume listeners are `{ once: true }` — ONE
+        // attempt ever, and on Chrome 155 the user measured 170 keydown
+        // gestures with the real context still `suspended` (everything
+        // scheduled on it inaudible). We own it now: EVERY gesture
+        // resumes every context the page captured (idempotent while
+        // running; a resume() inside a user gesture is always granted).
+        try {
+          for (const c of window.__ctxs || []) {
+            if (c.state === "suspended") c.resume();
+          }
+        } catch (err) { /* diagnostics-grade */ }
         if (audioLive) return;
         try {
           // The unlock ATTEMPT (every gesture until live — the export is
@@ -237,7 +250,10 @@
           // NEXT rAF frame — reading it here (synchronously) sees the
           // pre-gesture value and would never log.
           mod.resumeAudio();
-          console.log("[shell] audio unlock requested (" + source + ")");
+          if (!unlockLogged) {
+            unlockLogged = true;
+            console.log("[shell] audio unlock requested (" + source + "; retries silently until audio=live)");
+          }
         } catch (err) {
           console.error("[shell] resumeAudio failed: " + err);
         }
