@@ -47,14 +47,20 @@
 // --timeout — the boot wait in seconds (default 120: the `.data` is the
 //             22 MB `--preload-file` package + the engine's boot —
 //             assets, config, Luau, the first frame).
-// OH_SCORELAB=1 — the score lab's OPT-IN half (plan 002 issue 10b):
-//             the default CI probe stays fast — without the flag the
-//             probe is the pre-10b behaviour (the plain URL, no
-//             scorelab checks). With it, the probe navigates with
-//             ?scorelab=1 (appended when absent) and adds the
-//             overlay's DOM + the frozen getScore/setScore contract's
-//             checks (via the page's window.ohMod / window.ohSetScore
-//             hooks).
+// OH_SCORELAB=1 — the score lab's OPT-IN half (plan 002 issue 10b,
+//             extended by 11b): the default CI probe stays fast —
+//             without the flag the probe is the pre-10b behaviour
+//             (the plain URL, no scorelab checks). With it, the
+//             probe navigates with ?scorelab=1 (appended when absent)
+//             and adds the overlay's DOM + the frozen
+//             getScore/setScore contract's checks (via the page's
+//             window.ohMod / window.ohSetScore hooks) + the 11b DAW
+//             checks (the 8 track headers with M/S + the instrument
+//             selects, the M/S -> getScore round trip with the
+//             visible state classes, the Clear-solo escape hatch, the
+//             <select> -> slots[i].kind round trip, the bass piano
+//             roll's cell-click -> bass.notes round trip, and the
+//             drum rack's shared step columns).
 //
 // Assertions (exit 0 only when ALL pass):
 //   * the game boots + starts: `#status` reaches
@@ -83,7 +89,12 @@
 //     `mod.setScore(mod.getScore()) === ""`, a deliberately broken
 //     score returns a non-empty error (through the page's ohSetScore
 //     push path — the same mod.setScore call + the status paint), and
-//     the `#scorelab-status` span reflects that error
+//     the `#scorelab-status` span reflects that error; 11b adds the
+//     DAW checks (the 8 track headers with M/S + the instrument
+//     <select>s, M/S/Clear-solo -> getScore round trips with the
+//     visible state classes, <select> -> slots[i].kind, the bass
+//     piano roll's cell-click -> bass.notes, the drum rack's shared
+//     step columns)
 //   * clean console: no errors / exceptions (a `/favicon.ico` 404 +
 //     the boot's autoplay "AudioContext was not allowed to start"
 //     warning are tolerated — the OpenAL SFX device's pre-gesture
@@ -383,6 +394,129 @@ if (scorelabProbe) {
     return s ? s.textContent : "";
   })()`);
   scorelabChecks.push(['scorelab: Load rejects broken JSON and paints the span', typeof loadBad === 'string' && loadBad !== '' && loadBad !== 'ok']);
+
+  // ---- 11b: the DAW checks. Every one of them drives the page's OWN
+  // controls (the M/S buttons, the <select>s, the roll cells) and
+  // reads the ENGINE's truth back through getScore() — so they fail if
+  // the DAW is absent OR if an edit doesn't reach the engine. The
+  // final restore below puts the engine back on the shipped score, so
+  // none of these mutations leak into the rest of the run.
+
+  // The track-header column: 8 headers, each with M + S + an
+  // instrument <select> over the 8 kinds.
+  const headerCount = await pageEval(`(() => {
+    let n = 0;
+    for (let i = 0; i < 8; i++) {
+      const r = document.getElementById("scorelab-track-" + i);
+      const m = document.getElementById("scorelab-mute-" + i);
+      const s = document.getElementById("scorelab-solo-" + i);
+      const k = document.getElementById("scorelab-kind-" + i);
+      if (r && m && s && k && k.tagName === "SELECT" && k.options.length === 8) n++;
+    }
+    return n;
+  })()`);
+  scorelabChecks.push(['scorelab: the DAW renders 8 track headers with M/S + an instrument <select>', headerCount === 8]);
+
+  // M toggles slots[i].muted in the engine AND the row dims visibly
+  // (a hidden mute is indistinguishable from a bug when the operator
+  // cannot hear the lane); M again clears both.
+  const muteFlip = await pageEval(`(() => {
+    const m = window.ohMod;
+    const mutedOf = () => JSON.parse(m.getScore()).slots[1].muted;
+    const dimmed = () => document.getElementById("scorelab-track-1").classList.contains("muted");
+    document.getElementById("scorelab-mute-1").click();
+    const a = mutedOf(); const d1 = dimmed();
+    document.getElementById("scorelab-mute-1").click();
+    const b = mutedOf(); const d0 = dimmed();
+    return a === true && b === false && d1 === true && d0 === false;
+  })()`);
+  scorelabChecks.push(['scorelab: M sets slots[1].muted in getScore (row dims); M again clears it', muteFlip === true]);
+
+  // S sets score.solo to the clicked index (the row highlights);
+  // Clear solo nulls it; the soloed slot's own S nulls it too.
+  const soloFlip = await pageEval(`(() => {
+    const m = window.ohMod;
+    const solo = () => JSON.parse(m.getScore()).solo;
+    const hl = () => document.getElementById("scorelab-track-3").classList.contains("solo");
+    document.getElementById("scorelab-solo-3").click();
+    const a = solo(); const h1 = hl();
+    document.getElementById("scorelab-clear-solo").click();
+    const b = solo();
+    document.getElementById("scorelab-solo-3").click();
+    const c = solo();
+    document.getElementById("scorelab-solo-3").click();
+    const d = solo(); const h0 = hl();
+    return a === 3 && h1 === true && b === null && c === 3 && d === null && h0 === false;
+  })()`);
+  scorelabChecks.push(['scorelab: S solos the slot in getScore (row highlights); Clear solo + the soloed S null it', soloFlip === true]);
+
+  // The instrument <select> reaches slots[i].kind in the engine (the
+  // select's options are the th-synth ALL_KIND_IDS set).
+  const kindFlip = await pageEval(`(() => {
+    const m = window.ohMod;
+    const sel = document.getElementById("scorelab-kind-0");
+    const kind = () => JSON.parse(m.getScore()).slots[0].kind;
+    sel.value = "bell";
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    const a = kind();
+    sel.value = "shimmer";
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    const b = kind();
+    return a === "bell" && b === "shimmer";
+  })()`);
+  scorelabChecks.push(['scorelab: changing the <select> sets slots[0].kind in getScore', kindFlip === true]);
+
+  // The bass piano roll exists and is a PICKER: mousedown on a cell
+  // sets that pitch at the step (bass.notes[1] = 7 — the shipped bass
+  // rests there); the note's own cell clicked again clears to rest.
+  // The trailing window mouseup ends the roll's drag state cleanly.
+  const rollFlip = await pageEval(`(() => {
+    const m = window.ohMod;
+    const cell = document.querySelector('#scorelab-roll-bass [data-pitch="7"][data-step="1"]');
+    if (!cell || !cell.classList.contains("rcell")) return false;
+    const note = () => JSON.parse(m.getScore()).bass.notes[1];
+    cell.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    const a = note();
+    cell.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    const b = note();
+    window.dispatchEvent(new MouseEvent("mouseup"));
+    return a === 7 && b === null;
+  })()`);
+  scorelabChecks.push(['scorelab: the bass roll sets bass.notes[1]=7 on a cell click and clears it to rest on the second', rollFlip === true]);
+
+  // The drum rack's 3 rows share the step columns (the grouped-block
+  // contract: the same x for the same step across the rows) — 16
+  // cells per row, all 48 present, first cells at identical x.
+  const rackAlign = await pageEval(`(() => {
+    const first = (sel) => { const c = document.querySelector(sel); return c ? c.offsetLeft : -1; };
+    const a = first("#scorelab-track-0 .cell");
+    const b = first("#scorelab-track-1 .cell");
+    const c = first("#scorelab-track-2 .cell");
+    const n = document.querySelectorAll("#scorelab .drumrow .cell").length;
+    return a >= 0 && a === b && b === c && n === 48;
+  })()`);
+  scorelabChecks.push(['scorelab: the drum rack rows share the step x positions (48 cells, identical first-cell offsetLeft)', rackAlign === true]);
+
+  // The rolls must stay COMPACT (the pitch-range regression): the first
+  // implementation padded a full octave either side of the notes' range,
+  // giving the bass a 37-row grid (notes spanned -12..+24) that pushed
+  // the LEAD roll below a screen of empty rows. The range now rounds out
+  // to octave BOUNDARIES instead, so each roll is at most ~3 octaves of
+  // rows and both rolls are readable at once. A guard, because the
+  // failure mode is invisible to every other assertion (the notes are
+  // all still correct — you just cannot see half of them).
+  const rollCompact = await pageEval(`(() => {
+    const rows = (id) => { const el = document.getElementById(id); return el ? el.querySelectorAll(".rollrow").length : -1; };
+    return JSON.stringify({ bass: rows("scorelab-roll-bass"), lead: rows("scorelab-roll-lead") });
+  })()`);
+  let rollRows = null;
+  try { rollRows = JSON.parse(rollCompact || "null"); } catch { rollRows = null; }
+  const rollOk = rollRows && rollRows.bass > 0 && rollRows.lead > 0
+    && rollRows.bass <= 48 && rollRows.lead <= 48;
+  scorelabChecks.push([
+    `scorelab: the piano rolls stay compact (bass ${rollRows ? rollRows.bass : "?"} rows, lead ${rollRows ? rollRows.lead : "?"} rows; a full-octave pad regressed this to 37/44)`,
+    rollOk === true,
+  ]);
 
   // Leave the engine on the SHIPPED score (the Load check above changed
   // the bpm — do not leak state into the rest of the run). The canonical
