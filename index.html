@@ -134,6 +134,10 @@
       #scorelab .gain .val { width: 3em; }
       #scorelab .gnum { width: 1.2em; color: #999; }
       #scorelab button { padding: 2px 8px; font-family: inherit; }
+      #scorelab textarea { width: 100%; height: 88px; box-sizing: border-box;
+        font-family: inherit; font-size: 11px; background: #0a0a0a;
+        color: #bbb; border: 1px solid #444; margin-top: 3px; }
+      #scorelab .jsonrow { display: block; margin-top: 4px; }
       #scorelab .status { display: inline-block; min-width: 200px; }
     </style>
   </head>
@@ -338,6 +342,38 @@
         // The setScore result's paint ("" = ok in green, the error in
         // red; the span exists only with the overlay — a no-op
         // otherwise).
+        // The bake's copy path. `navigator.clipboard` is SECURE-CONTEXT
+        // ONLY, so on a plain-http origin (the LAN/phone case: a
+        // 192.168.x.x page is not secure) it is `undefined` and
+        // writeText throws "Cannot read properties of undefined" — the
+        // 10b bug. Fall back to the legacy execCommand path, which works
+        // on insecure origins; if BOTH fail, hand the operator the JSON
+        // box pre-selected instead of silently doing nothing.
+        const copyText = async (text, box) => {
+          if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
+            try {
+              await navigator.clipboard.writeText(text);
+              return "";
+            } catch (err) { /* fall through to the legacy path */ }
+          }
+          try {
+            const ta = document.createElement("textarea");
+            ta.value = text;
+            ta.style.position = "fixed";
+            ta.style.opacity = "0";
+            document.body.append(ta);
+            ta.select();
+            const ok = document.execCommand("copy");
+            ta.remove();
+            if (ok) return "";
+          } catch (err) { /* fall through */ }
+          if (box) {
+            box.focus();
+            box.select();
+          }
+          return "clipboard blocked - the JSON box is selected, press Ctrl-C";
+        };
+
         const paintScoreStatus = (err) => {
           if (!lab.statusEl) return;
           lab.statusEl.textContent = err === "" ? "ok" : err;
@@ -471,25 +507,9 @@
           // leaves headroom; the schema itself takes any non-negative
           // fraction).
           lab.els.swing = slider("swing", 0, 0.5, 0.01, (v) => { lab.score.swing = v; pushScore(); });
-          const copyBtn = mk("button", "Copy JSON");
-          copyBtn.id = "scorelab-copy";
-          copyBtn.addEventListener("click", async () => {
-            try {
-              // The bake: the canonical getScore() text (issue 10a's
-              // to_json_pretty — exactly what assets/score.json holds
-              // for the shipped score; THIS text is the bake).
-              await navigator.clipboard.writeText(mod.getScore());
-              const old = copyBtn.textContent;
-              copyBtn.textContent = "copied";
-              setTimeout(() => { copyBtn.textContent = old; }, 900);
-            } catch (err) {
-              console.error("[scorelab] copy failed: " + err);
-              paintScoreStatus("copy: " + (err && err.message ? err.message : String(err)));
-            }
-          });
           lab.statusEl = mk("span", "", "status");
           lab.statusEl.id = "scorelab-status";
-          transport.append(copyBtn, lab.statusEl);
+          transport.append(lab.statusEl);
 
           // The grids: the drum rows (a click toggles the step in the
           // CURRENT stage's effective tier) + the melodic rows (a click
@@ -638,6 +658,88 @@
             gainRow.append(mk("span", String(i + 1), "gnum"), s, read);
           }
 
+          // ---- the JSON row: the bake's read/write surface. The box
+          // holds the canonical JSON (refreshed from the engine's truth
+          // on every sync/paint); Load pushes it back through setScore,
+          // so pasting a score and applying it is one click. Download
+          // saves it as score.json — the bake that needs no clipboard at
+          // all (the reliable path on an insecure origin). Doing the
+          // bake = Load/Download then paste-or-save over
+          // crates/th-synth/assets/score.json.
+          const jsonRow = mk("div", null, "jsonrow");
+          const jsonBox = mk("textarea");
+          jsonBox.id = "scorelab-json";
+          jsonBox.spellcheck = false;
+          jsonBox.placeholder = "score json - paste one here and click Load";
+          const jsonBtns = mk("div", null, "row");
+          const copyBtn = mk("button", "Copy JSON");
+          copyBtn.id = "scorelab-copy";
+          const dlBtn = mk("button", "Download");
+          dlBtn.id = "scorelab-download";
+          const loadBtn = mk("button", "Load");
+          loadBtn.id = "scorelab-load";
+          const fileInput = mk("input");
+          fileInput.type = "file";
+          fileInput.id = "scorelab-file";
+          fileInput.accept = ".json,application/json";
+
+          copyBtn.addEventListener("click", async () => {
+            // The bake text: the box's content IS the canonical JSON
+            // (refreshed from getScore()); copy the box, not the export,
+            // so an unsaved edit in the box is what you get.
+            const err = await copyText(jsonBox.value, jsonBox);
+            paintScoreStatus(err);
+            if (err === "") {
+              const old = copyBtn.textContent;
+              copyBtn.textContent = "copied";
+              setTimeout(() => { copyBtn.textContent = old; }, 900);
+            }
+          });
+          dlBtn.addEventListener("click", () => {
+            try {
+              const blob = new Blob([jsonBox.value], { type: "application/json" });
+              const a = document.createElement("a");
+              a.href = URL.createObjectURL(blob);
+              a.download = "score.json";
+              a.click();
+              setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+              paintScoreStatus("");
+            } catch (err) {
+              paintScoreStatus("download: " + (err && err.message ? err.message : String(err)));
+            }
+          });
+          const applyJson = (text) => {
+            if (typeof mod.setScore !== "function") {
+              paintScoreStatus("setScore export missing (issue 10a not in this build)");
+              return;
+            }
+            const err = mod.setScore(text);
+            paintScoreStatus(err);
+            if (err !== "") {
+              console.error("[scorelab] load rejected: " + err);
+            } else {
+              // Applied: adopt the engine's truth (it may canonicalise).
+              syncFromEngine();
+            }
+          };
+          loadBtn.addEventListener("click", () => applyJson(jsonBox.value));
+          // The real "load json" workflow: pick a file off disk.
+          fileInput.addEventListener("change", async () => {
+            const file = fileInput.files && fileInput.files[0];
+            if (!file) return;
+            try {
+              const text = await file.text();
+              jsonBox.value = text;
+              applyJson(text);
+            } catch (err) {
+              paintScoreStatus("read: " + (err && err.message ? err.message : String(err)));
+            } finally {
+              fileInput.value = ""; // re-picking the same file fires again
+            }
+          });
+          jsonBtns.append(copyBtn, dlBtn, loadBtn, fileInput);
+          jsonRow.append(jsonBtns, jsonBox);
+
           // The full repaint from the engine's truth (the boot sync,
           // the hot-reload sync, and the rejected-push re-sync all land
           // here): the grids (rebuilt only if steps_per_bar changed)
@@ -660,9 +762,15 @@
               c.input.value = String(g);
               c.read.textContent = g.toFixed(2);
             });
+            // The JSON box mirrors the engine's truth (unless the
+            // operator is mid-edit in it and it is focused — their text
+            // wins until they Load or re-sync).
+            if (document.activeElement !== jsonBox) {
+              jsonBox.value = mod.getScore ? mod.getScore() : "";
+            }
           };
 
-          panel.append(titleEl, transport, gridHost, gainRow);
+          panel.append(titleEl, transport, gridHost, gainRow, jsonRow);
           document.body.append(panel);
 
           // The probe's entry (tools/web-tiny-probe.mjs's OH_SCORELAB
