@@ -5,9 +5,14 @@
 //! [`EngineHandle`]. The engine takes its `Vec<Track>` by value; the
 //! `TrackParams` we hand it are clones whose `Shared` fields are
 //! `Arc<AtomicU32>` — so the live DSP graph reads the *same* atomics the
-//! director mutates here: `set_stage`/`set_score`/`bump`/`tick` only write
-//! `Shared` params and never touch the graph (no `rebuild_graph`, no
-//! clicks on stage changes).
+//! director mutates here: `set_stage`/`bump`/`tick` only write `Shared`
+//! params and never touch the graph (no `rebuild_graph`, no clicks on
+//! stage changes). `set_score` is the same for its Shared-only halves
+//! (gains, patterns, the baked `muted`/`solo`) — with ONE documented
+//! exception (the plan 11 instrument swap): a changed `slots[i].kind`
+//! mutates the live engine's track kind and calls `rebuild_graph` ONCE
+//! (the vendor's swap path — its reverb-tail discontinuity is accepted
+//! for an explicit user action, never on a plain gain/mute edit).
 //!
 //! # The chiptune score (plan 002 issue 09-taste-2, data'd by 10a)
 //!
@@ -42,13 +47,29 @@
 //! pre-refactor (d97d4277) expressions in `score.rs`'s private
 //! `mod legacy` (verbatim copies) — asserting through these shorthands
 //! would make it vacuous (they are `Score::default()` lookups).
+//!
+//! # The plan 11 effective-mute fold (mute/solo + the instrument kinds)
+//!
+//! A slot's role (fixed by index) and its timbre (selectable — the
+//! score's `slots[i].kind`, or the built-in `SLOTS[i].kind` when `None`)
+//! are split: the role's driver keeps sequencing the slot (the drum
+//! tiers, the bass/lead lines, the bar chord); the kind only changes
+//! the timbre's parameters (character/LFO/reverb). Mute is the ONE
+//! exception to the "Shared writes only" rule above in its USER half:
+//! `sequence()` writes EVERY slot's effective mute EVERY tick — the
+//! program state (`program_mute`: the stage unlock for drums/harmony,
+//! the staccato gate for bass/lead) ORed with the user state (the
+//! baked `muted`, a baked `solo` silencing every non-soloed slot). A
+//! user mute written once thus survives the gate's every-tick rewrites
+//! (`user_mute_survives_the_gate` proves the regression is gone), and a
+//! mix change is audible within one tick.
 
 use rust_synth::audio::preset::{LFO_CUTOFF, LFO_FREQ};
 use rust_synth::audio::{AudioEngine, EngineHandle, PresetKind, Track};
 use std::sync::atomic::Ordering;
 
 use crate::beat::{bar_phase, beat_phase, energy, BeatView};
-use crate::score::Score;
+use crate::score::{kind_from_id, Score};
 
 /// `StageParams` is defined in `score.rs` (it carries the score's
 /// `root_hz`/`root_shift`); re-exported here so
@@ -230,6 +251,22 @@ pub struct MusicDirector {
     /// The chiptune score being sequenced (the plan 10 single source of
     /// truth; `Score::default()` = the baked `assets/score.json`).
     score: Score,
+    /// The per-slot PROGRAM mute state (the plan 11 fold's program half):
+    /// the stage-unlock state for drums/harmony (recorded by
+    /// `apply_slot`), the staccato gate for bass/lead (recorded by
+    /// `sequence`'s `gate_voice`). `fold_mutes` is the ONLY `mute`
+    /// writer: program OR the user state (baked `muted`/`solo`), every
+    /// tick.
+    program_mute: [bool; 8],
+    /// The count of graph rebuilds caused by kind swaps (test/
+    /// instrumentation surface — mirroring how `tracks`/`score()` are
+    /// exposed for tests): incremented by `apply_kinds` exactly where it
+    /// calls the live engine's `rebuild_graph()`, i.e. only when a
+    /// slot's kind actually changed while live. A plain gain/mute/solo
+    /// edit never advances it, and construction never does (a fresh
+    /// engine is built with the resolved kinds in `build_tracks`, no
+    /// `rebuild_graph` call).
+    kind_rebuilds: u32,
     bpm: f32,
     brightness: f32,
     last_bar: Option<u64>,
@@ -305,62 +342,108 @@ impl MusicDirector {
         let score = Score::default();
         let stage = 0u32;
         let p = score.stage_params(stage);
-        Self {
-            tracks: Self::build_tracks(stage, &score),
+        let (tracks, program_mute) = Self::build_tracks(stage, &score);
+        let mut d = Self {
+            tracks,
             live: None,
             stage,
             score,
+            program_mute,
+            kind_rebuilds: 0,
             bpm: p.bpm,
             brightness: p.brightness,
             last_bar: None,
             last_step: None,
             duck_recover: DUCK_RECOVER_S,
             fallback_t: 0.0,
-        }
+        };
+        // The initial mute state (the old `apply_slot`'s mute write —
+        // now the fold's job: the locked pad/bell start muted).
+        d.fold_mutes();
+        d
     }
 
-    fn build_tracks(stage: u32, score: &Score) -> Vec<Track> {
+    fn build_tracks(stage: u32, score: &Score) -> (Vec<Track>, [bool; 8]) {
+        // The tracks are CONSTRUCTED with the score's RESOLVED kind/label
+        // (the plan 11 fresh-start path: a swapped instrument is in the
+        // track at construction — the live-swap path mutates the
+        // engine's EXISTING tracks instead, `apply_kinds`).
+        let mut program_mute = [false; 8];
         let mut tracks: Vec<Track> = SLOTS
             .iter()
             .enumerate()
-            .map(|(i, slot)| Track::new(i, slot.kind.label(), slot.kind, 0.0))
+            .map(|(i, _slot)| {
+                let kind = Self::resolved_kind(score, i);
+                Track::new(i, kind.label(), kind, 0.0)
+            })
             .collect();
         for (i, slot) in SLOTS.iter().enumerate() {
-            Self::apply_slot(&mut tracks[i], slot, i, stage, score);
+            Self::apply_slot(&mut tracks[i], slot, i, stage, score, &mut program_mute);
         }
-        tracks
+        (tracks, program_mute)
     }
 
-    fn apply_slot(track: &mut Track, slot: &Slot, index: usize, stage: u32, score: &Score) {
+    fn apply_slot(
+        track: &mut Track,
+        slot: &Slot,
+        index: usize,
+        stage: u32,
+        score: &Score,
+        program_mute: &mut [bool; 8],
+    ) {
         let s = stage.min(score.bpm.cap) as f32;
         let p = score.stage_params(stage);
         let pms = track.params.clone();
-        pms.mute
-            .set_value(if stage >= slot.unlock { 0.0 } else { 1.0 });
+        // The stage-unlock PROGRAM state (the fold's program half —
+        // recorded, NOT written: `fold_mutes` is the only `mute` writer
+        // now; the bass/lead re-record theirs every tick in `sequence`
+        // instead of this unlock state).
+        program_mute[index] = stage < slot.unlock;
         pms.gain.set_value(score.slots[index].gain);
         pms.arp.set_value(0.0);
         pms.life_mod
             .set_value(0.85 + 0.15 * (s / (score.bpm.cap as f32)));
         pms.freq.set_value(p.root() * slot.ratio);
 
-        match slot.kind {
+        // The per-preset parameters key on the slot's RESOLVED kind
+        // (the plan 11 role/timbre split: a swapped instrument keeps the
+        // role's driver — the tiered drum pattern / the step line / the
+        // bar chord — but takes the NEW preset's character/LFO/reverb
+        // values).
+        match Self::resolved_kind(score, index) {
             PresetKind::Heartbeat => {
-                let bits = match index {
-                    0 => score.drum_pattern(&score.kick, stage),
-                    1 => score.drum_pattern(&score.snare, stage),
-                    _ => score.drum_pattern(&score.hat, stage),
+                // The drum-role slots (0..3) read their stage-tiered
+                // patterns; a Heartbeat swapped INTO another slot is a
+                // chord-following drum (the plan 11 role/timbre split —
+                // the role's `apply_bar` freq writes drive it) on the
+                // 4-hit Euclidean DEFAULT `pattern_bits` (the
+                // `TrackParams::default_for` value — never overwritten
+                // here).
+                let bits = if index < 3 {
+                    match index {
+                        0 => score.drum_pattern(&score.kick, stage),
+                        1 => score.drum_pattern(&score.snare, stage),
+                        _ => score.drum_pattern(&score.hat, stage),
+                    }
+                } else {
+                    0
                 };
                 pms.pulse_depth.set_value(0.0);
                 pms.lfo_depth.set_value(0.0);
                 pms.character.set_value(match index {
                     0 => 0.30,
                     1 => 0.85,
-                    _ => 0.95,
+                    2 => 0.95,
+                    _ => 0.5, // the swapped-in Heartbeat: the neutral character
                 });
                 pms.reverb_mix.set_value(0.05);
-                pms.pattern_hits.set_value(bits.count_ones() as f32);
-                pms.pattern_rotation.set_value(0.0);
-                pms.pattern_bits.store(bits, Ordering::Relaxed);
+                if index < 3 {
+                    pms.pattern_hits.set_value(bits.count_ones() as f32);
+                    pms.pattern_rotation.set_value(0.0);
+                    pms.pattern_bits.store(bits, Ordering::Relaxed);
+                } else {
+                    pms.pattern_hits.set_value(4.0); // the euclidean_bits(4, 0) default
+                }
             }
             PresetKind::BassPulse => {
                 pms.pulse_depth.set_value(0.0);
@@ -418,7 +501,14 @@ impl MusicDirector {
         self.bpm = p.bpm;
         self.brightness = p.brightness;
         for (i, slot) in SLOTS.iter().enumerate() {
-            Self::apply_slot(&mut self.tracks[i], slot, i, stage, &self.score);
+            Self::apply_slot(
+                &mut self.tracks[i],
+                slot,
+                i,
+                stage,
+                &self.score,
+                &mut self.program_mute,
+            );
         }
         // Re-apply the current bar/step on the next tick.
         self.last_bar = None;
@@ -434,6 +524,9 @@ impl MusicDirector {
                     0.0
                 });
         }
+        // The stage-unlock fold (the old `apply_slot`'s mute write —
+        // now the fold's job): a layer unlock/lock lands immediately.
+        self.fold_mutes();
     }
 
     /// Hot-swap the chiptune score in place (the score lab's LIVE path —
@@ -441,17 +534,33 @@ impl MusicDirector {
     /// gains + the drum patterns from the new score, re-derive the
     /// stage's bpm/brightness, re-arm the bar/step writes (the next
     /// tick rewrites the chord/notes from the new score), and re-push
-    /// the live globals. NO graph rebuild — Shared writes only, so the
-    /// swap is click-free (the one-mixer contract) and effective within
-    /// one frame.
+    /// the live globals. The Shared-only halves (gains, patterns, the
+    /// baked `muted`/`solo`) take NO graph rebuild — click-free (the
+    /// one-mixer contract) and effective within one frame. The one
+    /// exception (plan 11): a changed `slots[i].kind` mutates the live
+    /// engine's track kind and calls `rebuild_graph` ONCE (the vendor's
+    /// documented swap path — its reverb-tail discontinuity is accepted
+    /// for an explicit instrument swap, never on a plain gain/mute
+    /// edit).
     pub fn set_score(&mut self, score: Score) {
         self.score = score;
         let p = self.score.stage_params(self.stage);
         self.bpm = p.bpm;
         self.brightness = p.brightness;
         for (i, slot) in SLOTS.iter().enumerate() {
-            Self::apply_slot(&mut self.tracks[i], slot, i, self.stage, &self.score);
+            Self::apply_slot(
+                &mut self.tracks[i],
+                slot,
+                i,
+                self.stage,
+                &self.score,
+                &mut self.program_mute,
+            );
         }
+        // The instrument swap (plan 11): the resolved kinds reach the
+        // tracks — and the live engine (guarded: only on an actual
+        // kind change, one rebuild for all changed slots).
+        self.apply_kinds();
         // Re-apply the current bar/step on the next tick (from the
         // new score).
         self.last_bar = None;
@@ -467,6 +576,81 @@ impl MusicDirector {
                     0.0
                 });
         }
+        // The mute/solo fold (the baked `muted`/`solo` + the program
+        // state) — effective now, and re-written every tick from
+        // `sequence`.
+        self.fold_mutes();
+    }
+
+    /// The slot's RESOLVED instrument kind (the plan 11 role/timbre
+    /// split): the score's `kind` (validated by `Score::from_json`)
+    /// or the slot's built-in kind (`SLOTS[i].kind`) when the score
+    /// leaves it `None` (the issue-10 backwards-compat path).
+    fn resolved_kind(score: &Score, i: usize) -> PresetKind {
+        score.slots[i]
+            .kind
+            .as_deref()
+            .map_or(SLOTS[i].kind, |id| {
+                kind_from_id(id).expect(
+                    "Score::from_json validates the kind ids (a hand-built Score with an unknown id must not reach the director)",
+                )
+            })
+    }
+
+    /// The plan 11 instrument swap: apply the new score's RESOLVED
+    /// kinds to the director's tracks (which `try_start_live` clones
+    /// into a FRESH engine — the construction path) and, when a kind
+    /// actually CHANGED, to the live engine's track kinds + ONE
+    /// `rebuild_graph` (the vendor's documented swap path — its
+    /// reverb-tail/oscillator-phase discontinuity is the cost the guard
+    /// exists to avoid on every other edit). `kind_rebuilds` counts
+    /// exactly these calls.
+    fn apply_kinds(&mut self) {
+        let kinds: [PresetKind; 8] = core::array::from_fn(|i| Self::resolved_kind(&self.score, i));
+        let changed = kinds
+            .iter()
+            .enumerate()
+            .any(|(i, &kind)| self.tracks[i].kind != kind);
+        if !changed {
+            return; // the guard: no kind change → no mutation, no rebuild
+        }
+        for (i, &kind) in kinds.iter().enumerate() {
+            self.tracks[i].kind = kind;
+            self.tracks[i].name = kind.label().to_string();
+        }
+        if let Some(e) = &self.live {
+            let mut live_tracks = e.tracks.lock();
+            for (t, kind) in live_tracks.iter_mut().zip(kinds.iter()) {
+                t.kind = *kind;
+                t.name = kind.label().to_string();
+            }
+            drop(live_tracks);
+            e.rebuild_graph();
+            // The ONE real rebuild — the counter advances here and
+            // nowhere else (the guard's no-change path never reaches
+            // this line).
+            self.kind_rebuilds += 1;
+        }
+    }
+
+    /// The effective-mute fold (the plan 11 mute/solo core): write
+    /// ALL 8 slots' `mute` — the PROGRAM state (the stage unlock for
+    /// drums/harmony, the staccato gate for bass/lead —
+    /// `program_mute`) ORed with the USER state (the baked `muted`, a
+    /// baked `solo` silencing every non-soloed slot). Called from
+    /// `sequence` EVERY tick — which is what makes a user mute written
+    /// once survive the gate's every-tick rewrites (the regression
+    /// this restructure exists to prevent) — and from the stage/score
+    /// writers so a mix change is current before the next tick too.
+    fn fold_mutes(&mut self) {
+        for i in 0..8 {
+            let user = self.score.slots[i].muted || self.score.solo.is_some_and(|s| s != i as u32);
+            let effective = self.program_mute[i] || user;
+            self.tracks[i]
+                .params
+                .mute
+                .set_value(if effective { 1.0 } else { 0.0 });
+        }
     }
 
     /// The director's current score (the lab's read half; `score()`'s
@@ -474,6 +658,17 @@ impl MusicDirector {
     #[must_use]
     pub fn score(&self) -> &Score {
         &self.score
+    }
+
+    /// The count of `rebuild_graph()` calls `apply_kinds` actually ran
+    /// (the test/instrumentation surface that pins the swap guard): only
+    /// a score edit that changed a slot's instrument kind advances this
+    /// — one per rebuild, never on a plain gain/mute/solo edit, never on
+    /// construction (fresh engines are built with the resolved kinds, no
+    /// rebuild).
+    #[must_use]
+    pub fn kind_rebuilds(&self) -> u32 {
+        self.kind_rebuilds
     }
 
     pub fn bump(&mut self) {
@@ -538,16 +733,23 @@ impl MusicDirector {
             0.0..self.score.gate_open
         };
         let on = window.contains(&in_step);
+        // The gate's program half: the bass/lead are audible only while
+        // their step has a note AND the window is open (the staccato).
+        // The user state (baked `muted`/`solo`) folds on top in
+        // `fold_mutes` — a user mute can no longer be clobbered by the
+        // gate (the plan 11 regression).
         self.gate_voice(3, self.score.bass.notes[idx].is_some() && on);
         self.gate_voice(4, self.score.lead.notes[idx].is_some() && on);
+        // The effective-mute fold: ALL 8 slots, EVERY tick.
+        self.fold_mutes();
     }
 
-    /// Write one sequenced voice's mute (`on` = audible).
+    /// Record one sequenced voice's PROGRAM state (`on` = the program
+    /// wants it audible): the staccato gate's half of the fold. The
+    /// user state (`muted`/`solo`) is folded on top in `fold_mutes` —
+    /// so a user mute can no longer be clobbered by the gate (plan 11).
     fn gate_voice(&mut self, slot: usize, on: bool) {
-        self.tracks[slot]
-            .params
-            .mute
-            .set_value(if on { 0.0 } else { 1.0 });
+        self.program_mute[slot] = !on;
     }
 
     /// Write the bar's chord onto the harmonic slots (pad/bell/sub).
@@ -564,7 +766,9 @@ impl MusicDirector {
         }
     }
 
-    /// Write the step's bass/lead note (rests gate with `mute`).
+    /// Write the step's bass/lead note (rests gate the voice in
+    /// `sequence` — the note-present half of the fold's program state;
+    /// this pass writes freqs only, never `mute`).
     fn apply_step(&mut self, step: u64, bar: u64) {
         let p = self.score.stage_params(self.stage);
         let offset = self.score.chord_offset(self.stage, bar);
@@ -580,9 +784,6 @@ impl MusicDirector {
                     * 2.0_f32.powf(self.score.bass.octave_shift as f32)
                     * semitone_ratio(offset + note),
             );
-            bass.mute.set_value(0.0);
-        } else {
-            bass.mute.set_value(1.0);
         }
 
         // Lead (slot 4): the fixed motif on the key root, one octave up
@@ -593,9 +794,6 @@ impl MusicDirector {
             lead.freq.set_value(
                 p.root() * 2.0_f32.powf(self.score.lead.octave_shift as f32) * semitone_ratio(note),
             );
-            lead.mute.set_value(0.0);
-        } else {
-            lead.mute.set_value(1.0);
         }
     }
 
@@ -990,7 +1188,11 @@ mod tests {
         let mut d = MusicDirector::new_fallback();
         let before = d.tracks[0].params.gain.value();
         let mut score = Score::default();
-        score.slots[0] = SlotGain { gain: 0.3 };
+        score.slots[0] = SlotGain {
+            gain: 0.3,
+            kind: None,
+            muted: false,
+        };
         d.set_score(score);
         assert_eq!(d.tracks[0].params.gain.value(), 0.3);
         assert!(before > 0.3);
@@ -1005,18 +1207,181 @@ mod tests {
         );
     }
 
+    /// The regression the plan 11 per-tick fold exists to prevent: before
+    /// the fold, `mute` was written by the score/stage writers
+    /// (`apply_slot`'s unlock write, the gate's every-tick rewrite), so
+    /// a user mute written once was clobbered. Here the kick (slot 0 —
+    /// its tier has hits at steps 0/7/10) is user-muted and must STAY
+    /// muted across a whole bar of ticks, INCLUDING those hit steps;
+    /// and the bass (slot 3 — the GATED voice whose gate rewrote `mute`
+    /// every tick) must stay muted while its window is OPEN on a note
+    /// step. With the fold removed, the first half fails at the first
+    /// assert (the `set_score` clobber) and the second at every in-window
+    /// tick (the gate's clobber).
+    #[test]
+    fn user_mute_survives_the_gate() {
+        // The drum half: the user-muted kick stays muted across a full
+        // bar of ticks (its tier's hit steps 0/7/10 included).
+        let mut d = MusicDirector::new_fallback();
+        let mut score = Score::default();
+        score.slots[0].muted = true; // the kick
+        d.set_score(score);
+        assert_eq!(
+            d.tracks[0].params.mute.value(),
+            1.0,
+            "the user mute lands immediately (the fold — not a stale write)"
+        );
+        let step_len = 60.0 / BPM_BASE / 4.0;
+        for step in 0..16u64 {
+            d.tick(step_len * 0.5);
+            assert_eq!(
+                d.tracks[0].params.mute.value(),
+                1.0,
+                "the user-muted kick stays muted on step {step} (its tier's hits at 0/7/10 included)"
+            );
+        }
+        // The fold is per-slot: the snare is not touched by the kick's
+        // mute (unlock 0 → live).
+        assert_eq!(
+            d.tracks[1].params.mute.value(),
+            0.0,
+            "the snare is not touched by the kick's mute"
+        );
+
+        // The gate half: the user-muted BASS (the gated voice) stays
+        // muted while its window is OPEN on a note step — pre-fold,
+        // `sequence`'s gate wrote mute 0.0 on exactly these ticks.
+        let mut d = MusicDirector::new_fallback();
+        let mut score = Score::default();
+        score.slots[3].muted = true; // the bass
+        d.set_score(score);
+        // Step 0 carries the default bass's note 0; the even-step
+        // window is 0..0.7, and in-steps 0.125..0.625 sit well inside
+        // it — the pre-fold gate (note present, window open) would have
+        // clobbered the mute on every one of these ticks.
+        for k in 1..=5 {
+            d.tick(step_len * 0.125);
+            assert_eq!(
+                d.tracks[3].params.mute.value(),
+                1.0,
+                "the user-muted bass stays muted inside its open window (in-step ≈{}*0.125)",
+                k
+            );
+        }
+    }
+
+    /// The plan 11 solo contract: `solo = Some(0)` silences every slot
+    /// except the soloed one (the fold's user half), the soloed slot
+    /// follows its own PROGRAM (the kick's unlock state), and clearing
+    /// the solo brings the other slots back to their program state —
+    /// the stage-locked pad/bell STAY muted at stage 0 (the fold is
+    /// program OR solo, not just the solo's absence).
+    #[test]
+    fn solo_isolates_one_slot() {
+        let mut d = MusicDirector::new_fallback();
+        let step_len = 60.0 / BPM_BASE / 4.0;
+        // Solo the kick (slot 0).
+        let score = Score {
+            solo: Some(0),
+            ..Default::default()
+        };
+        d.set_score(score);
+        for k in 0..8u64 {
+            d.tick(step_len * 0.5);
+            assert_eq!(
+                d.tracks[0].params.mute.value(),
+                0.0,
+                "the soloed kick follows its own program (unlock 0 → live, tick {k})"
+            );
+            for i in 1..8 {
+                assert_eq!(
+                    d.tracks[i].params.mute.value(),
+                    1.0,
+                    "soloing the kick silences slot {i} (tick {k})"
+                );
+            }
+        }
+        // Clear the solo: the other slots come back to their PROGRAM
+        // state. The tick lands on step 4, in-step ≈0.5 (the even
+        // window 0..0.7 open; the default bass AND lead both carry a
+        // note on step 4) — the gated voices come back through their
+        // gate; the unlocked drums/harmony are live; the pad/bell are
+        // still stage-locked (program, not solo).
+        d.set_score(Score::default());
+        d.tick(step_len * 0.5);
+        for i in [1usize, 2, 7] {
+            assert_eq!(
+                d.tracks[i].params.mute.value(),
+                0.0,
+                "clearing the solo un-mutes the unlocked slot {i}"
+            );
+        }
+        assert_eq!(
+            d.tracks[3].params.mute.value(),
+            0.0,
+            "the bass comes back through its gate (step 4's note, window open)"
+        );
+        assert_eq!(
+            d.tracks[4].params.mute.value(),
+            0.0,
+            "the lead comes back through its gate (step 4's note, window open)"
+        );
+        assert_eq!(
+            d.tracks[5].params.mute.value(),
+            1.0,
+            "the pad is STILL stage-locked at stage 0 (program, not solo)"
+        );
+        assert_eq!(
+            d.tracks[6].params.mute.value(),
+            1.0,
+            "the bell is STILL stage-locked at stage 0 (program, not solo)"
+        );
+    }
+
+    /// The plan 11 backwards-compat contract: a score JSON saved by
+    /// issue 10 (NO `kind`, NO `muted`, NO `solo` fields) still parses
+    /// (serde defaults) and every slot resolves to its BUILT-IN kind
+    /// (`SLOTS[i].kind`) — the operator's saved score files keep
+    /// working.
+    #[test]
+    fn slots_without_kind_use_the_builtin() {
+        // Simulate an issue-10 file: strip the 11a fields from the
+        // canonical JSON (what issue-10's `to_json_pretty` emitted).
+        let mut value = serde_json::to_value(Score::default()).expect("default serializes");
+        for slot in value["slots"].as_array_mut().expect("slots is an array") {
+            let slot = slot.as_object_mut().expect("a slot is an object");
+            slot.remove("kind");
+            slot.remove("muted");
+        }
+        value
+            .as_object_mut()
+            .expect("the score is an object")
+            .remove("solo");
+        let score = Score::from_json(&value.to_string()).expect("an issue-10 score file parses");
+        for (i, slot) in SLOTS.iter().enumerate() {
+            assert!(score.slots[i].kind.is_none(), "slot {i} keeps no kind");
+            assert!(!score.slots[i].muted, "slot {i} defaults to unmuted");
+            assert_eq!(
+                MusicDirector::resolved_kind(&score, i),
+                slot.kind,
+                "slot {i} resolves to its built-in kind"
+            );
+        }
+        assert_eq!(score.solo, None, "solo defaults to null");
+    }
+
     /// The `set_score` re-arm pair (the review's uncovered lines): the
     /// cleared `last_bar`/`last_step` are what make the next tick
     /// re-write the current bar's chord frequencies (`apply_bar`) and
     /// the current step's note frequencies (`apply_step`). The mutes
-    /// cannot pin this — `sequence()`'s gate_voice rewrites them every
-    /// tick, masking a missed re-apply. Driven through a real fallback
-    /// director: tick to step 0 (the default bass's note 0 is on),
-    /// swap in a score that moved that note AND the bar's chord, and
-    /// within the SAME step (a tiny dt — the step index does not
-    /// advance) both freqs must already be the new values; without the
-    /// re-arm the already-visited bar/step are skipped and both stay
-    /// stale.
+    /// cannot pin this — `sequence()`'s effective-mute fold rewrites
+    /// them every tick, masking a missed re-apply. Driven through a
+    /// real fallback director: tick to step 0 (the default bass's note
+    /// 0 is on), swap in a score that moved that note AND the bar's
+    /// chord, and within the SAME step (a tiny dt — the step index does
+    /// not advance) both freqs must already be the new values; without
+    /// the re-arm the already-visited bar/step are skipped and both
+    /// stay stale.
     #[test]
     fn set_score_reapplies_the_current_step_and_bar() {
         let mut d = MusicDirector::new_fallback();
@@ -1126,6 +1491,148 @@ mod tests {
         assert!(
             (clock - 1.0).abs() < 1e-3,
             "phase clock advanced by the render: {clock}"
+        );
+    }
+
+    /// The plan 11 instrument swap reaches the LIVE engine (CI-safe:
+    /// the in-memory engine, no device — same path as
+    /// `in_memory_engine_renders_the_score`): a changed `slots[3].kind`
+    /// actually mutates the engine's track kind (the graph rebuilds
+    /// from it — the vendor's documented swap path), a second swap
+    /// diffs against the engine's CURRENT kind (the tracking, not the
+    /// built-in), and a plain gain edit triggers NO kind mutation AND
+    /// NO graph rebuild — the guard. The rebuild is pinned by the
+    /// `kind_rebuilds` COUNTER (the kind vector alone is vacuous: it
+    /// is unchanged whether the guard skips the work or the work is
+    /// redone identically — the report's mutation check proves it).
+    #[test]
+    fn kind_change_reaches_the_engine() {
+        let mut d = MusicDirector::new_fallback();
+        let tracks: Vec<Track> = d
+            .tracks
+            .iter()
+            .map(|t| Track {
+                id: t.id,
+                name: t.name.clone(),
+                kind: t.kind,
+                params: t.params.clone(),
+            })
+            .collect();
+        let handle = AudioEngine::start_in_memory(tracks).expect("in-memory start");
+        d.live = Some(handle);
+        let builtin: Vec<PresetKind> = SLOTS.iter().map(|s| s.kind).collect();
+        let engine_kinds = |d: &MusicDirector| -> Vec<PresetKind> {
+            d.live
+                .as_ref()
+                .expect("live")
+                .tracks
+                .lock()
+                .iter()
+                .map(|t| t.kind)
+                .collect()
+        };
+
+        // The snapshot AFTER construction: a fresh director + a fresh
+        // in-memory engine did NO `rebuild_graph` (construction builds
+        // the tracks with the resolved kinds — `build_tracks`), so the
+        // counter is 0 here and every later assert is an absolute one.
+        let before = d.kind_rebuilds();
+        assert_eq!(before, 0, "construction does a fresh engine, not a rebuild");
+
+        // 1. The guard: a plain gain edit changes NO kind — so nothing
+        //    is mutated and NO rebuild runs. The counter is the
+        //    observable (the kind vector unchanged is kept as the
+        //    secondary assert; the gain itself DID apply).
+        let mut score = Score::default();
+        score.slots[3].gain = 0.3;
+        d.set_score(score);
+        assert_eq!(
+            d.kind_rebuilds(),
+            before,
+            "a gain-only edit triggers NO graph rebuild (the guard)"
+        );
+        assert_eq!(
+            engine_kinds(&d),
+            builtin,
+            "a gain-only edit touches no kind (no rebuild)"
+        );
+        assert_eq!(
+            d.tracks[3].params.gain.value(),
+            0.3,
+            "the gain itself applied (Shared write, no rebuild)"
+        );
+
+        // 2. The swap: the bass (slot 3, BassPulse) → SuperSaw. The
+        //    engine's track kind AND label actually change (the graph
+        //    rebuilds from the mutated tracks — the vendor's path) —
+        //    and the rebuild is counted exactly once.
+        let mut score = Score::default();
+        score.slots[3].kind = Some("super_saw".to_string());
+        d.set_score(score);
+        {
+            let live_tracks = d.live.as_ref().expect("live").tracks.lock();
+            assert_eq!(
+                live_tracks[3].kind,
+                PresetKind::SuperSaw,
+                "the swapped kind reaches the engine's tracks"
+            );
+            assert_eq!(
+                live_tracks[3].name, "SuperSaw",
+                "the track's label follows the kind"
+            );
+        }
+        assert_eq!(
+            d.tracks[3].kind,
+            PresetKind::SuperSaw,
+            "the director's tracks mirror the swap (the next fresh engine builds it at construction)"
+        );
+        assert_eq!(
+            d.kind_rebuilds(),
+            before + 1,
+            "the real swap rebuilt the graph exactly once"
+        );
+
+        // 3. The diff tracks the engine's CURRENT kind (not the
+        //    built-in): a second swap (SuperSaw → PluckSaw) still
+        //    diffs — one more rebuild.
+        let mut score = Score::default();
+        score.slots[3].kind = Some("pluck_saw".to_string());
+        d.set_score(score);
+        let swapped = vec![
+            PresetKind::Heartbeat,
+            PresetKind::Heartbeat,
+            PresetKind::Heartbeat,
+            PresetKind::PluckSaw,
+            PresetKind::PluckSaw,
+            PresetKind::PadZimmer,
+            PresetKind::Bell,
+            PresetKind::DroneSub,
+        ];
+        assert_eq!(
+            engine_kinds(&d),
+            swapped,
+            "the second swap diffs against the engine's current kind"
+        );
+        assert_eq!(
+            d.kind_rebuilds(),
+            before + 2,
+            "the second real swap rebuilt exactly once more"
+        );
+
+        // 4. Re-applying the SAME kind is a no-op diff: nothing mutates
+        //    AND the counter does not advance (no redundant rebuild).
+        let mut same = Score::default();
+        same.slots[3].kind = Some("pluck_saw".to_string());
+        d.set_score(same);
+        assert_eq!(
+            d.kind_rebuilds(),
+            before + 2,
+            "re-applying the same kind is a no-op diff (no redundant rebuild)"
+        );
+        assert_eq!(
+            engine_kinds(&d),
+            swapped,
+            "re-applying the same kind is a no-op diff"
         );
     }
 

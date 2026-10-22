@@ -19,8 +19,57 @@
 
 use serde::{Deserialize, Serialize};
 
+use rust_synth::audio::preset::PresetKind;
+
 /// The shipped score: the bake artifact (`assets/score.json`).
 pub const SCORE_JSON: &str = include_str!("../assets/score.json");
+
+/// The 8 instrument ids, in `PresetKind`'s ALL_KINDS order (stable JSON
+/// ids — the DAW's kind cycler walks this order, so it must match the
+/// vendor's `ALL_KINDS` cycle order EXACTLY).
+pub const ALL_KIND_IDS: [&str; 8] = [
+    "pad_zimmer",
+    "bass_pulse",
+    "heartbeat",
+    "drone_sub",
+    "shimmer",
+    "bell",
+    "super_saw",
+    "pluck_saw",
+];
+
+/// The stable JSON id of a preset kind (the `ALL_KIND_IDS` entry in
+/// ALL_KINDS order).
+#[must_use]
+pub fn kind_id(kind: PresetKind) -> &'static str {
+    match kind {
+        PresetKind::PadZimmer => "pad_zimmer",
+        PresetKind::BassPulse => "bass_pulse",
+        PresetKind::Heartbeat => "heartbeat",
+        PresetKind::DroneSub => "drone_sub",
+        PresetKind::Shimmer => "shimmer",
+        PresetKind::Bell => "bell",
+        PresetKind::SuperSaw => "super_saw",
+        PresetKind::PluckSaw => "pluck_saw",
+    }
+}
+
+/// The preset kind of a stable JSON id. Case-sensitive; `None` for an
+/// unknown id (never panics — `Score::validate` turns this into an `Err`).
+#[must_use]
+pub fn kind_from_id(id: &str) -> Option<PresetKind> {
+    Some(match id {
+        "pad_zimmer" => PresetKind::PadZimmer,
+        "bass_pulse" => PresetKind::BassPulse,
+        "heartbeat" => PresetKind::Heartbeat,
+        "drone_sub" => PresetKind::DroneSub,
+        "shimmer" => PresetKind::Shimmer,
+        "bell" => PresetKind::Bell,
+        "super_saw" => PresetKind::SuperSaw,
+        "pluck_saw" => PresetKind::PluckSaw,
+        _ => return None,
+    })
+}
 
 /// The full chiptune score (the plan 10 schema, snake_case field names).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -62,6 +111,13 @@ pub struct Score {
     pub lead: NoteLine,
     /// The 8 slots' mix gains, engine order (`SLOTS`' order).
     pub slots: Vec<SlotGain>,
+    /// The baked solo (an FL-project track solo, plan 11): the
+    /// effective-mute fold silences every slot except this one
+    /// (`None` = no solo — the shipped bake; a stray baked solo would
+    /// silence the game for a child, so the DAW panel gets a
+    /// "clear mix" button).
+    #[serde(default)]
+    pub solo: Option<u32>,
 }
 
 /// The bpm ramp: `base + per_stage * min(stage, cap)`.
@@ -132,6 +188,17 @@ pub struct NoteLine {
 pub struct SlotGain {
     /// The slot's fixed mix gain.
     pub gain: f32,
+    /// The slot's instrument (the plan 11 role/timbre split): the stable
+    /// kind id ([`ALL_KIND_IDS`]). `None` = the slot's built-in kind
+    /// (`director::SLOTS[i].kind`) — which keeps an issue-10 score file
+    /// (no `kind` fields) valid and keeps the shipped bake diff-free.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// The baked mute (an FL-project track mute, plan 11): the
+    /// effective-mute fold ORs it with the program state EVERY tick, so
+    /// a `true` written once survives the gate's every-tick rewrites.
+    #[serde(default)]
+    pub muted: bool,
 }
 
 /// The bar's chord root offset tables (semitones).
@@ -295,6 +362,25 @@ impl Score {
                 "slots: must have exactly 8 entries (got {})",
                 self.slots.len()
             ));
+        }
+        for (i, slot) in self.slots.iter().enumerate() {
+            if let Some(kind) = &slot.kind {
+                if kind_from_id(kind).is_none() {
+                    return Err(format!(
+                        "slots[{i}].kind: \"{kind}\" is not a known kind id (expected one of {})",
+                        ALL_KIND_IDS.join(", ")
+                    ));
+                }
+            }
+        }
+        if let Some(solo) = self.solo {
+            if !(solo < self.slots.len() as u32) {
+                return Err(format!(
+                    "solo: {solo} must index one of the {} slots (0..{}), or be absent",
+                    self.slots.len(),
+                    self.slots.len()
+                ));
+            }
         }
         if self.bars_per_chord == 0 {
             return Err(
@@ -509,6 +595,46 @@ mod tests {
         let parsed =
             Score::from_json(&score.to_json_pretty()).expect("the canonical pretty text re-parses");
         assert_eq!(parsed, score);
+    }
+
+    /// The 11a kind-id mapping pins the vendor's ALL_KINDS cycle order
+    /// (a UI cycling kinds walks a STABLE order — a drift between the
+    /// ids and the vendor's enum breaks the cycle, so this asserts the
+    /// pairing against `ALL_KINDS` itself, plus the case-sensitivity and
+    /// unknown-id contracts of `kind_from_id`).
+    #[test]
+    fn kind_ids_follow_the_vendor_cycle_order() {
+        use rust_synth::audio::preset::ALL_KINDS;
+        for (id, kind) in ALL_KIND_IDS.iter().zip(ALL_KINDS.iter()) {
+            assert_eq!(kind_id(*kind), *id, "the stable id of {kind:?}");
+            assert_eq!(kind_from_id(id), Some(*kind), "the round-trip of {id}");
+        }
+        assert_eq!(
+            kind_from_id("PAD_ZIMMER"),
+            None,
+            "kind_from_id is case-sensitive"
+        );
+        assert_eq!(kind_from_id("nope"), None, "an unknown id is None");
+    }
+
+    /// A bad kind id or out-of-range solo is an `Err` naming the culprit
+    /// (the lab's status line must be able to surface both), not a panic
+    /// or a silently-ignored field.
+    #[test]
+    fn unknown_kind_is_an_error() {
+        // A kind id the mapping does not know: the Err names the slot
+        // index and the bad id.
+        let mut value = serde_json::to_value(Score::default()).expect("default serializes");
+        value["slots"][3]["kind"] = serde_json::json!("nope");
+        let err = Score::from_json(&value.to_string()).unwrap_err();
+        assert!(err.contains("slots[3]"), "names the slot index: {err}");
+        assert!(err.contains("nope"), "names the bad id: {err}");
+
+        // A solo that indexes no slot.
+        let mut value = serde_json::to_value(Score::default()).expect("default serializes");
+        value["solo"] = serde_json::json!(99);
+        let err = Score::from_json(&value.to_string()).unwrap_err();
+        assert!(err.contains("solo"), "names the solo field: {err}");
     }
 
     /// The bake IS the canonical text: `assets/score.json` is

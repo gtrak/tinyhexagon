@@ -40,8 +40,14 @@ gate below).
   updates `peak_l/peak_r/phase_clock` once per callback.
 - `EngineHandle::rebuild_graph()` — rebuilds the master `Net` from the
   current tracks + globals; **discards internal DSP state** (reverb tails,
-  oscillator phases → a small audible discontinuity). `th-synth` NEVER calls
-  it: stage changes mutate `Shared` params only (click-free by contract).
+  oscillator phases → a small audible discontinuity). Stage changes mutate
+  `Shared` params only (click-free by contract). The ONE exception (plan 11,
+  issue 11a): an instrument-kind swap — `MusicDirector::set_score` with a
+  changed `slots[i].kind` mutates the live `handle.tracks[i].kind`/`.name`
+  and calls `rebuild_graph()` ONCE (guarded: the diff runs against the
+  tracks' current kinds, so a plain gain/mute/solo edit never rebuilds;
+  a fresh engine instead gets the resolved kind at `Track::new`
+  construction — no live mutation needed).
 - `build_master` = sum of the 8 `Preset::build(kind, params, global)` graphs
   piped through `master_bus(brightness)`.
 

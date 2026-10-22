@@ -122,28 +122,37 @@
   },
   "slots": [
     {
-      "gain": 0.9
+      "gain": 0.9,
+      "muted": false
     },
     {
-      "gain": 0.6
+      "gain": 0.6,
+      "muted": false
     },
     {
-      "gain": 0.26
+      "gain": 0.26,
+      "muted": false
     },
     {
-      "gain": 0.8
+      "gain": 0.8,
+      "muted": false
     },
     {
-      "gain": 0.5
+      "gain": 0.5,
+      "muted": false
     },
     {
-      "gain": 0.2
+      "gain": 0.2,
+      "muted": false
     },
     {
-      "gain": 0.2
+      "gain": 0.2,
+      "muted": false
     },
     {
-      "gain": 0.28
+      "gain": 0.28,
+      "muted": false
     }
-  ]
+  ],
+  "solo": null
 }
