@@ -60,8 +60,8 @@ a bitmask), `null` = rest for the melodic lines. Every existing constant maps
   "minor_until": 16,
   "chords": { "major": [0, 9, 5, 7], "minor": [0, 8, 3, 10] },
   "kick":  { "tiers": [ { "stage": 0,  "pattern": "x......x..x....." },
-                        { "stage": 10, "pattern": "x......x..x..x.." },
-                        { "stage": 16, "pattern": "x......x..x..x.x" } ] },
+                        { "stage": 10, "pattern": "x..x...x..x....." },
+                        { "stage": 16, "pattern": "x..x...x..x..x.." } ] },
   "snare": { "tiers": [ { "stage": 0,  "pattern": "....x.......x..." },
                         { "stage": 12, "pattern": "....x.......x.x." } ] },
   "hat":   { "tiers": [ { "stage": 0,  "pattern": "..x...x...x...x." },
@@ -69,7 +69,8 @@ a bitmask), `null` = rest for the melodic lines. Every existing constant maps
                         { "stage": 14, "pattern": "xxxxxxxxxxxxxxxx", "exclude": [4, 12] } ] },
   "bass":  { "notes": [0,null,null,12,0,null,7,null,0,null,10,12,0,10,3,null],
              "octave_shift": -1 },
-  "lead":  { "notes": [12,null,15,null,19,17,null,15,12,null,10,null,7,10,null,12] },
+  "lead":  { "notes": [12,null,15,null,19,17,null,15,12,null,10,null,7,10,null,12],
+             "octave_shift": 1 },
   "slots": [ { "gain": 0.9 }, { "gain": 0.6 }, { "gain": 0.26 }, { "gain": 0.8 },
              { "gain": 0.5 }, { "gain": 0.20 }, { "gain": 0.20 }, { "gain": 0.28 } ]
 }

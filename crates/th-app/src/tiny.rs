@@ -1050,6 +1050,38 @@ mod web {
         });
     }
 
+    /// The score lab's read half (plan 002 issue 10a): the director's
+    /// current chiptune score as the canonical pretty JSON — the
+    /// `getScore` export's return value (the lab's `?scorelab=1` grid +
+    /// the "Copy JSON" bake text). `""` before the director is installed
+    /// (the web boot's `run` installs it — the lab page's pre-boot state).
+    pub(super) fn get_score() -> String {
+        DIRECTOR.with(|d| match d.borrow().as_ref() {
+            Some(music) => music.borrow().score().to_json_pretty(),
+            None => String::new(),
+        })
+    }
+
+    /// The score lab's write half (plan 002 issue 10a): parse `json`
+    /// (`th_synth::Score::from_json` — the human-facing `Err` text is the
+    /// status line's error) and hot-swap the director's score in place
+    /// (`set_score` — the `Shared` writes, NO graph rebuild; effective
+    /// within one frame). `""` on success; `"score lab: no director"`
+    /// before the director is installed.
+    pub(super) fn set_score(json: &str) -> String {
+        let score = match th_synth::Score::from_json(json) {
+            Ok(score) => score,
+            Err(err) => return format!("score lab: {err}"),
+        };
+        DIRECTOR.with(|d| match d.borrow().as_ref() {
+            Some(music) => {
+                music.borrow_mut().set_score(score);
+                String::new()
+            }
+            None => "score lab: no director".to_string(),
+        })
+    }
+
     /// The one-mixer plan's web audio pass (issue 09): the live in-memory
     /// engine's frames feed the SFX device's OpenAL streaming source —
     /// ONE OpenAL context for BOTH the SFX and the music, so the first
@@ -1331,6 +1363,30 @@ pub fn web_status() -> String {
 #[cfg(target_os = "emscripten")]
 pub fn web_request_audio_unlock() {
     web::resume_audio();
+}
+
+/// The score lab's read export half (plan 002 issue 10a): `th-web`'s
+/// `getScore()` export returns this — the director's current chiptune
+/// score as the canonical pretty JSON (the lab's "Copy JSON" bake text).
+/// `""` before the web boot installed the director. The emscripten-only
+/// cfg mirrors `web_request_audio_unlock`'s exact shape (the host gate
+/// compiles `th-app` without these: the only consumer, `th-web`, depends
+/// on `th-app` under `cfg(target_os = "emscripten")` only).
+#[cfg(target_os = "emscripten")]
+#[must_use]
+pub fn web_get_score() -> String {
+    web::get_score()
+}
+
+/// The score lab's write export half (plan 002 issue 10a): `th-web`'s
+/// `setScore()` export calls this with the page's JSON — parse +
+/// validate + hot-swap the director's score in place (no graph
+/// rebuild). `""` on success; the human-facing parse/validation error
+/// text otherwise (the lab's status line shows it).
+#[cfg(target_os = "emscripten")]
+#[must_use]
+pub fn web_set_score(json: &str) -> String {
+    web::set_score(json)
 }
 
 #[cfg(test)]

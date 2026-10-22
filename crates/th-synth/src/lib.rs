@@ -40,6 +40,7 @@
 pub mod beat;
 pub mod clink;
 pub mod director;
+pub mod score;
 
 pub use beat::BeatView;
 pub use director::MusicDirector;
@@ -48,3 +49,4 @@ pub use director::MusicDirector;
 /// re-export keeps the th-app web frame timer from naming the engine
 /// crate directly).
 pub use rust_synth::audio::engine::IN_MEMORY_SAMPLE_RATE;
+pub use score::Score;

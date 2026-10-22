@@ -1,0 +1,149 @@
+{
+  "steps_per_bar": 16,
+  "gate_open": 0.7,
+  "swing": 0.15,
+  "bpm": {
+    "base": 150.0,
+    "per_stage": 1.2,
+    "cap": 20
+  },
+  "brightness": {
+    "base": 0.45,
+    "per_stage": 0.025
+  },
+  "root_hz": 110.0,
+  "root_shift": 1.3333334,
+  "bars_per_chord": 1,
+  "minor_from": 8,
+  "minor_until": 16,
+  "chords": {
+    "major": [
+      0,
+      9,
+      5,
+      7
+    ],
+    "minor": [
+      0,
+      8,
+      3,
+      10
+    ]
+  },
+  "kick": {
+    "tiers": [
+      {
+        "stage": 0,
+        "pattern": "x......x..x....."
+      },
+      {
+        "stage": 10,
+        "pattern": "x..x...x..x....."
+      },
+      {
+        "stage": 16,
+        "pattern": "x..x...x..x..x.."
+      }
+    ]
+  },
+  "snare": {
+    "tiers": [
+      {
+        "stage": 0,
+        "pattern": "....x.......x..."
+      },
+      {
+        "stage": 12,
+        "pattern": "....x.......x.x."
+      }
+    ]
+  },
+  "hat": {
+    "tiers": [
+      {
+        "stage": 0,
+        "pattern": "..x...x...x...x."
+      },
+      {
+        "stage": 6,
+        "pattern": ".x.x.x.x.x.x.x.x"
+      },
+      {
+        "stage": 14,
+        "pattern": "xxxxxxxxxxxxxxxx",
+        "exclude": [
+          4,
+          12
+        ]
+      }
+    ]
+  },
+  "bass": {
+    "notes": [
+      0,
+      null,
+      null,
+      12,
+      0,
+      null,
+      7,
+      null,
+      0,
+      null,
+      10,
+      12,
+      0,
+      10,
+      3,
+      null
+    ],
+    "octave_shift": -1
+  },
+  "lead": {
+    "notes": [
+      12,
+      null,
+      15,
+      null,
+      19,
+      17,
+      null,
+      15,
+      12,
+      null,
+      10,
+      null,
+      7,
+      10,
+      null,
+      12
+    ],
+    "octave_shift": 1
+  },
+  "slots": [
+    {
+      "gain": 0.9
+    },
+    {
+      "gain": 0.6
+    },
+    {
+      "gain": 0.26
+    },
+    {
+      "gain": 0.8
+    },
+    {
+      "gain": 0.5
+    },
+    {
+      "gain": 0.2
+    },
+    {
+      "gain": 0.2
+    },
+    {
+      "gain": 0.28
+    }
+  ]
+}

@@ -5,33 +5,60 @@
 //! [`EngineHandle`]. The engine takes its `Vec<Track>` by value; the
 //! `TrackParams` we hand it are clones whose `Shared` fields are
 //! `Arc<AtomicU32>` — so the live DSP graph reads the *same* atomics the
-//! director mutates here: `set_stage`/`bump`/`tick` only write `Shared`
-//! params and never touch the graph (no `rebuild_graph`, no clicks on
-//! stage changes).
+//! director mutates here: `set_stage`/`set_score`/`bump`/`tick` only write
+//! `Shared` params and never touch the graph (no `rebuild_graph`, no
+//! clicks on stage changes).
 //!
-//! # The chiptune score (plan 002 issue 09-taste-2)
+//! # The chiptune score (plan 002 issue 09-taste-2, data'd by 10a)
 //!
-//! The operator rejected the ambient chord/arp version: the music is now a
+//! The operator rejected the ambient chord/arp version: the music is a
 //! **step-sequenced chiptune drum-and-bass** piece over the same eight
 //! `rust-synth` presets:
 //!
 //! - **drums**: three `Heartbeat` voices — kick (low), snare (mid, clicky),
-//!   hat (high) — each with its own 16-step bitmask;
-//! - **bass**: the `BassPulse` follows a fixed syncopated 16-step line over
+//!   hat (high) — each with its own stage-tiered 16-step pattern;
+//! - **bass**: the `BassPulse` follows a syncopated 16-step line over
 //!   the bar's chord root (a step gates the voice with `mute`);
-//! - **lead**: the `PluckSaw` plays a fixed 16-step A-minor motif;
+//! - **lead**: the `PluckSaw` plays a 16-step A-minor motif on the key
+//!   root (deliberately NOT chord-following);
 //! - **harmony**: pad/bell/sub follow the bar chord (major I–vi–IV–V;
 //!   minor i–VI–III–VII from stage 8);
 //! - **escalation**: BPM 150→174, a denser hat as the stage rises, the
 //!   root shift every 3 stages, and the pad/bell layer unlocks.
+//!
+//! Since 10a the CONTENT of that piece is data — a [`Score`] (`score.rs`),
+//! baked in `assets/score.json` (the shipped default, `Score::default()`)
+//! and hot-swappable live (`set_score`, the wasm `setScore` export's
+//! half): the director's live path reads `self.score` (the gate, the
+//! swing, the bpm/brightness ramps, the chord tables, the drum tiers,
+//! the bass/lead lines, the slots' gains). The module-level free
+//! functions below (`stage_params`, `chord_offset`, `minor_for_stage`,
+//! `scale_mode_for_stage`, `kick_bits`/`snare_bits`/`hat_bits`) and the
+//! `BPM_*` / `BRIGHTNESS_*` / `ROOT_*` / `GATE_OPEN` / `SWING` consts are
+//! the DEFAULT-score shorthands the tests' tick arithmetic asserts
+//! against. The bake-fidelity test
+//! (`score_default_matches_the_legacy_constants`, in `score.rs`) does
+//! NOT: it compares the parsed default score against the FROZEN
+//! pre-refactor (d97d4277) expressions in `score.rs`'s private
+//! `mod legacy` (verbatim copies) — asserting through these shorthands
+//! would make it vacuous (they are `Score::default()` lookups).
 
 use rust_synth::audio::preset::{LFO_CUTOFF, LFO_FREQ};
 use rust_synth::audio::{AudioEngine, EngineHandle, PresetKind, Track};
 use std::sync::atomic::Ordering;
 
 use crate::beat::{bar_phase, beat_phase, energy, BeatView};
+use crate::score::Score;
 
-/// One row of the fixed 8-slot track map.
+/// `StageParams` is defined in `score.rs` (it carries the score's
+/// `root_hz`/`root_shift`); re-exported here so
+/// `th_synth::director::StageParams` keeps resolving.
+pub use crate::score::StageParams;
+
+/// One row of the fixed 8-slot track map (the synthesis design: the
+/// preset kind, the unlock stage, the ratio to the slot's root, and the
+/// chord-following flag. The slot's MIX GAIN is score data —
+/// `Score.slots` — since 10a: one source, no drift).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Slot {
     pub kind: PresetKind,
@@ -40,8 +67,6 @@ pub struct Slot {
     /// `true`: follows the bar's chord root (pad/bell/sub). The bass/lead
     /// are sequenced per step, and the drums have fixed pitches.
     pub chord: bool,
-    /// The fixed mix gain.
-    pub gain: f32,
 }
 
 /// The 8 slots in engine order.
@@ -51,69 +76,67 @@ pub const SLOTS: [Slot; 8] = [
         unlock: 0,
         ratio: 0.5,
         chord: false,
-        gain: 0.9,
     }, // kick
     Slot {
         kind: PresetKind::Heartbeat,
         unlock: 0,
         ratio: 1.6,
         chord: false,
-        gain: 0.6,
     }, // snare
     Slot {
         kind: PresetKind::Heartbeat,
         unlock: 0,
         ratio: 8.0,
         chord: false,
-        gain: 0.26,
     }, // hat
     Slot {
         kind: PresetKind::BassPulse,
         unlock: 0,
         ratio: 0.5,
         chord: false,
-        gain: 0.8,
     }, // bass
     Slot {
         kind: PresetKind::PluckSaw,
         unlock: 0,
         ratio: 2.0,
         chord: false,
-        gain: 0.5,
     }, // lead
     Slot {
         kind: PresetKind::PadZimmer,
         unlock: 4,
         ratio: 1.0,
         chord: true,
-        gain: 0.20,
     }, // pad
     Slot {
         kind: PresetKind::Bell,
         unlock: 2,
         ratio: 2.0,
         chord: true,
-        gain: 0.20,
     }, // bell
     Slot {
         kind: PresetKind::DroneSub,
         unlock: 0,
         ratio: 0.25,
         chord: true,
-        gain: 0.28,
     }, // sub
 ];
 
-/// Stage-0 root: A2.
+/// Stage-0 root: A2. The DEFAULT score's `root_hz`; the director's live
+/// path reads `self.score`.
 pub const ROOT_A2_HZ: f32 = 110.0;
-/// The root shift per 3-stage block: up a fourth.
+/// The root shift per 3-stage block: up a fourth. The DEFAULT score's
+/// `root_shift`; the live path reads `self.score`.
 pub const ROOT_SHIFT: f32 = 4.0 / 3.0;
-/// Stage cap of the bpm/brightness/root ramps.
+/// Stage cap of the bpm/brightness/root ramps. The DEFAULT score's
+/// `bpm.cap`; the live path reads `self.score`.
 pub const STAGE_RAMP_CAP: u32 = 20;
-/// `bpm = 150 + 1.2 * min(stage, 20)` → 174 (drum-and-bass tempo).
+/// `bpm = 150 + 1.2 * min(stage, 20)` → 174 (drum-and-bass tempo). The
+/// DEFAULT score's `bpm.base`/`bpm.per_stage`; the live path reads
+/// `self.score`.
 pub const BPM_BASE: f32 = 150.0;
 pub const BPM_PER_STAGE: f32 = 1.2;
-/// `brightness = 0.45 + 0.025 * min(stage, 20)` → 0.95.
+/// `brightness = 0.45 + 0.025 * min(stage, 20)` → 0.95. The DEFAULT
+/// score's `brightness.*`; the live path reads `self.score`.
 pub const BRIGHTNESS_BASE: f32 = 0.45;
 pub const BRIGHTNESS_PER_STAGE: f32 = 0.025;
 /// The master gain.
@@ -122,90 +145,31 @@ pub const MASTER_GAIN: f32 = 1.0;
 pub const DUCK_GAIN: f32 = 0.22;
 /// The duck recovery time.
 pub const DUCK_RECOVER_S: f32 = 0.6;
-
-/// Beats per bar (4/4), 4 steps per beat → 16 steps.
-const STEPS_PER_BAR: u64 = 16;
-/// Major progression (semitones): I, vi, IV, V.
-const CHORD_MAJOR: [i32; 4] = [0, 9, 5, 7];
-/// Minor progression: i, VI, III, VII.
-const CHORD_MINOR: [i32; 4] = [0, 8, 3, 10];
-
-/// The syncopated bass line (16 steps; `None` = a rest/gated step) —
-/// a ROLLING line (most 8ths plus the 16th pickups at 11/13) so the
-/// groove reads as a walking DnB bass, not sparse blips.
-const BASS_LINE: [Option<i32>; 16] = [
-    Some(0),
-    None,
-    None,
-    Some(12),
-    Some(0),
-    None,
-    Some(7),
-    None,
-    Some(0),
-    None,
-    Some(10),
-    Some(12),
-    Some(0),
-    Some(10),
-    Some(3),
-    None,
-];
-/// The staccato gate: bass/lead notes play only this fraction of a step
-/// (punchy — the note's tail never rings into the next).
-const GATE_OPEN: f32 = 0.7;
+/// The staccato gate: a note plays only this fraction of a step
+/// (punchy — the note's tail never rings into the next). The DEFAULT
+/// score's `gate_open`; the director's live path reads
+/// `self.score.gate_open` (the const keeps the tests' tick arithmetic
+/// honest against the baked default).
+pub const GATE_OPEN: f32 = 0.7;
 /// The swing: odd 16ths attack this fraction of a step LATE (the
-/// shuffle that makes the grid a groove).
-const SWING: f32 = 0.15;
-/// The lead motif (16 steps; A-minor degrees above the key root).
-const LEAD_LINE: [Option<i32>; 16] = [
-    Some(12),
-    None,
-    Some(15),
-    None,
-    Some(19),
-    Some(17),
-    None,
-    Some(15),
-    Some(12),
-    None,
-    Some(10),
-    None,
-    Some(7),
-    Some(10),
-    None,
-    Some(12),
-];
+/// shuffle that makes the grid a groove). The DEFAULT score's `swing`;
+/// the live path reads `self.score.swing`.
+pub const SWING: f32 = 0.15;
 
-/// The stage → parameter map.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct StageParams {
-    pub bpm: f32,
-    pub brightness: f32,
-    pub fourths: u32,
-}
-
-impl StageParams {
-    pub fn root(&self) -> f32 {
-        ROOT_A2_HZ * ROOT_SHIFT.powi(self.fourths as i32)
-    }
-}
-
-/// The pure stage mapping — monotonic in stage, capped.
+/// The pure stage mapping — monotonic in stage, capped. The
+/// DEFAULT-score shorthand (`Score::default().stage_params`): the
+/// director's live path reads `self.score`.
 #[must_use]
 pub fn stage_params(stage: u32) -> StageParams {
-    let s = stage.min(STAGE_RAMP_CAP);
-    StageParams {
-        bpm: BPM_BASE + BPM_PER_STAGE * s as f32,
-        brightness: BRIGHTNESS_BASE + BRIGHTNESS_PER_STAGE * s as f32,
-        fourths: s / 3,
-    }
+    Score::default().stage_params(stage)
 }
 
-/// `true` for the darker (minor) half: stages 8..16.
+/// `true` for the darker (minor) half: stages 8..16 (the default score's
+/// window). The DEFAULT-score shorthand: the live path reads
+/// `self.score.minor_for_stage`.
 #[must_use]
 pub fn minor_for_stage(stage: u32) -> bool {
-    (8..16).contains(&stage)
+    Score::default().minor_for_stage(stage)
 }
 
 /// The engine's `scale_mode` (0 major pentatonic, 1 minor pentatonic).
@@ -218,51 +182,39 @@ pub fn scale_mode_for_stage(stage: u32) -> f32 {
     }
 }
 
-/// The chord root offset in semitones for `bar` at `stage`.
+/// The chord root offset in semitones for `bar` at `stage`. The
+/// DEFAULT-score shorthand: the live path reads `self.score.chord_offset`.
 #[must_use]
 pub fn chord_offset(stage: u32, bar: u64) -> i32 {
-    let table = if minor_for_stage(stage) {
-        CHORD_MINOR
-    } else {
-        CHORD_MAJOR
-    };
-    table[(bar % 4) as usize]
+    Score::default().chord_offset(stage, bar)
 }
 
 /// The kick pattern (16-step bitmask) — the DnB syncopation: 1, the
 /// "and" at 7 (off the snare's backbeat), the pickup at 10; ghosts late.
+/// The DEFAULT-score shorthand: the live path reads
+/// `self.score.drum_pattern(&self.score.kick, stage)`.
 #[must_use]
 pub fn kick_bits(stage: u32) -> u32 {
-    let mut bits = (1 << 0) | (1 << 7) | (1 << 10);
-    if stage >= 10 {
-        bits |= 1 << 3;
-    }
-    if stage >= 16 {
-        bits |= 1 << 13;
-    }
-    bits
+    let score = Score::default();
+    score.drum_pattern(&score.kick, stage)
 }
 
-/// The snare pattern: backbeat on 2 and 4, with a late ghost.
+/// The snare pattern: backbeat on 2 and 4, with a late ghost. The
+/// DEFAULT-score shorthand: the live path reads
+/// `self.score.drum_pattern(&self.score.snare, stage)`.
 #[must_use]
 pub fn snare_bits(stage: u32) -> u32 {
-    let mut bits = (1 << 4) | (1 << 12);
-    if stage >= 12 {
-        bits |= 1 << 14;
-    }
-    bits
+    let score = Score::default();
+    score.drum_pattern(&score.snare, stage)
 }
 
-/// The hat pattern: 8ths early, 16ths from stage 6, busier late.
+/// The hat pattern: 8ths early, 16ths from stage 6, busier late. The
+/// DEFAULT-score shorthand: the live path reads
+/// `self.score.drum_pattern(&self.score.hat, stage)`.
 #[must_use]
 pub fn hat_bits(stage: u32) -> u32 {
-    if stage < 6 {
-        (1 << 2) | (1 << 6) | (1 << 10) | (1 << 14)
-    } else if stage < 14 {
-        (1 << 1) | (1 << 3) | (1 << 5) | (1 << 7) | (1 << 9) | (1 << 11) | (1 << 13) | (1 << 15)
-    } else {
-        0xFFFF & !(1 << 4) & !(1 << 12)
-    }
+    let score = Score::default();
+    score.drum_pattern(&score.hat, stage)
 }
 
 /// Semitone offset → frequency ratio.
@@ -275,6 +227,9 @@ pub struct MusicDirector {
     tracks: Vec<Track>,
     live: Option<EngineHandle>,
     stage: u32,
+    /// The chiptune score being sequenced (the plan 10 single source of
+    /// truth; `Score::default()` = the baked `assets/score.json`).
+    score: Score,
     bpm: f32,
     brightness: f32,
     last_bar: Option<u64>,
@@ -347,12 +302,14 @@ impl MusicDirector {
     /// director never touches a device on any platform.
     #[must_use]
     pub fn new_fallback() -> Self {
+        let score = Score::default();
         let stage = 0u32;
-        let p = stage_params(stage);
+        let p = score.stage_params(stage);
         Self {
-            tracks: Self::build_tracks(stage),
+            tracks: Self::build_tracks(stage, &score),
             live: None,
             stage,
+            score,
             bpm: p.bpm,
             brightness: p.brightness,
             last_bar: None,
@@ -362,35 +319,36 @@ impl MusicDirector {
         }
     }
 
-    fn build_tracks(stage: u32) -> Vec<Track> {
+    fn build_tracks(stage: u32, score: &Score) -> Vec<Track> {
         let mut tracks: Vec<Track> = SLOTS
             .iter()
             .enumerate()
             .map(|(i, slot)| Track::new(i, slot.kind.label(), slot.kind, 0.0))
             .collect();
         for (i, slot) in SLOTS.iter().enumerate() {
-            Self::apply_slot(&mut tracks[i], slot, i, stage);
+            Self::apply_slot(&mut tracks[i], slot, i, stage, score);
         }
         tracks
     }
 
-    fn apply_slot(track: &mut Track, slot: &Slot, index: usize, stage: u32) {
-        let s = stage.min(STAGE_RAMP_CAP) as f32;
-        let p = stage_params(stage);
+    fn apply_slot(track: &mut Track, slot: &Slot, index: usize, stage: u32, score: &Score) {
+        let s = stage.min(score.bpm.cap) as f32;
+        let p = score.stage_params(stage);
         let pms = track.params.clone();
         pms.mute
             .set_value(if stage >= slot.unlock { 0.0 } else { 1.0 });
-        pms.gain.set_value(slot.gain);
+        pms.gain.set_value(score.slots[index].gain);
         pms.arp.set_value(0.0);
-        pms.life_mod.set_value(0.85 + 0.15 * (s / 20.0));
+        pms.life_mod
+            .set_value(0.85 + 0.15 * (s / (score.bpm.cap as f32)));
         pms.freq.set_value(p.root() * slot.ratio);
 
         match slot.kind {
             PresetKind::Heartbeat => {
                 let bits = match index {
-                    0 => kick_bits(stage),
-                    1 => snare_bits(stage),
-                    _ => hat_bits(stage),
+                    0 => score.drum_pattern(&score.kick, stage),
+                    1 => score.drum_pattern(&score.snare, stage),
+                    _ => score.drum_pattern(&score.hat, stage),
                 };
                 pms.pulse_depth.set_value(0.0);
                 pms.lfo_depth.set_value(0.0);
@@ -456,11 +414,11 @@ impl MusicDirector {
             return;
         }
         self.stage = stage;
-        let p = stage_params(stage);
+        let p = self.score.stage_params(stage);
         self.bpm = p.bpm;
         self.brightness = p.brightness;
         for (i, slot) in SLOTS.iter().enumerate() {
-            Self::apply_slot(&mut self.tracks[i], slot, i, stage);
+            Self::apply_slot(&mut self.tracks[i], slot, i, stage, &self.score);
         }
         // Re-apply the current bar/step on the next tick.
         self.last_bar = None;
@@ -468,8 +426,54 @@ impl MusicDirector {
         if let Some(e) = &self.live {
             e.global.bpm.set_value(p.bpm);
             e.global.brightness.set_value(p.brightness);
-            e.global.scale_mode.set_value(scale_mode_for_stage(stage));
+            e.global
+                .scale_mode
+                .set_value(if self.score.minor_for_stage(stage) {
+                    1.0
+                } else {
+                    0.0
+                });
         }
+    }
+
+    /// Hot-swap the chiptune score in place (the score lab's LIVE path —
+    /// the wasm `setScore` export's director half): re-apply the 8 slots'
+    /// gains + the drum patterns from the new score, re-derive the
+    /// stage's bpm/brightness, re-arm the bar/step writes (the next
+    /// tick rewrites the chord/notes from the new score), and re-push
+    /// the live globals. NO graph rebuild — Shared writes only, so the
+    /// swap is click-free (the one-mixer contract) and effective within
+    /// one frame.
+    pub fn set_score(&mut self, score: Score) {
+        self.score = score;
+        let p = self.score.stage_params(self.stage);
+        self.bpm = p.bpm;
+        self.brightness = p.brightness;
+        for (i, slot) in SLOTS.iter().enumerate() {
+            Self::apply_slot(&mut self.tracks[i], slot, i, self.stage, &self.score);
+        }
+        // Re-apply the current bar/step on the next tick (from the
+        // new score).
+        self.last_bar = None;
+        self.last_step = None;
+        if let Some(e) = &self.live {
+            e.global.bpm.set_value(p.bpm);
+            e.global.brightness.set_value(p.brightness);
+            e.global
+                .scale_mode
+                .set_value(if self.score.minor_for_stage(self.stage) {
+                    1.0
+                } else {
+                    0.0
+                });
+        }
+    }
+
+    /// The director's current score (the lab's read half; `score()`'s
+    /// JSON is the `getScore` export's return value).
+    #[must_use]
+    pub fn score(&self) -> &Score {
+        &self.score
     }
 
     pub fn bump(&mut self) {
@@ -502,39 +506,40 @@ impl MusicDirector {
         }
     }
 
-    /// Drive the 16-step sequencer from the mono clock `t` (seconds):
+    /// Drive the step sequencer from the mono clock `t` (seconds):
     /// the step/bar writes on change, then the GATE every tick — the
-    /// staccato window (a note plays only `GATE_OPEN` of its step) with
-    /// the odd 16ths swung late (`SWING` of a step), which is what turns
-    /// the grid into a groove.
-    /// the odd 16ths swung late (`SWING` of a step), which is what turns
-    /// the grid into a groove.
+    /// staccato window (a note plays only `gate_open` of its step) with
+    /// the odd 16ths swung late (`swing` of a step), which is what turns
+    /// the grid into a groove. The gate/swing/steps come from
+    /// `self.score` (a non-default score moves the window —
+    /// `set_score_takes_effect_live` proves it).
     fn sequence(&mut self, t: f32) {
         let step_len = 60.0 / self.bpm / 4.0;
         let step_f = t.max(0.0) / step_len;
         let step = step_f as u64;
         let in_step = step_f - step as f32;
-        let bar = step / STEPS_PER_BAR;
+        let steps = self.score.steps_per_bar as u64;
+        let bar = step / steps;
         if self.last_bar != Some(bar) {
             self.apply_bar(bar);
             self.last_bar = Some(bar);
         }
         if self.last_step != Some(step) {
-            self.apply_step(step % STEPS_PER_BAR, bar);
+            self.apply_step(step % steps, bar);
             self.last_step = Some(step);
         }
 
-        let idx = (step % STEPS_PER_BAR) as usize;
+        let idx = (step % steps) as usize;
         let window = if step % 2 == 1 {
             // the swung 16th: the attack lands late; the window shifts
             // with it (and may run to the next step's edge)
-            SWING..(SWING + GATE_OPEN).min(1.0)
+            self.score.swing..(self.score.swing + self.score.gate_open).min(1.0)
         } else {
-            0.0..GATE_OPEN
+            0.0..self.score.gate_open
         };
         let on = window.contains(&in_step);
-        self.gate_voice(3, BASS_LINE[idx].is_some() && on);
-        self.gate_voice(4, LEAD_LINE[idx].is_some() && on);
+        self.gate_voice(3, self.score.bass.notes[idx].is_some() && on);
+        self.gate_voice(4, self.score.lead.notes[idx].is_some() && on);
     }
 
     /// Write one sequenced voice's mute (`on` = audible).
@@ -547,8 +552,8 @@ impl MusicDirector {
 
     /// Write the bar's chord onto the harmonic slots (pad/bell/sub).
     fn apply_bar(&mut self, bar: u64) {
-        let p = stage_params(self.stage);
-        let offset = chord_offset(self.stage, bar);
+        let p = self.score.stage_params(self.stage);
+        let offset = self.score.chord_offset(self.stage, bar);
         for (i, slot) in SLOTS.iter().enumerate() {
             if slot.chord {
                 self.tracks[i]
@@ -559,26 +564,35 @@ impl MusicDirector {
         }
     }
 
-    /// Write the 16th step's bass/lead note (rests gate with `mute`).
+    /// Write the step's bass/lead note (rests gate with `mute`).
     fn apply_step(&mut self, step: u64, bar: u64) {
-        let p = stage_params(self.stage);
-        let offset = chord_offset(self.stage, bar);
-        let idx = (step % STEPS_PER_BAR) as usize;
+        let p = self.score.stage_params(self.stage);
+        let offset = self.score.chord_offset(self.stage, bar);
+        let idx = (step % self.score.steps_per_bar as u64) as usize;
 
-        // Bass (slot 3): the chord root/fifth/octave line, gated per step.
+        // Bass (slot 3): the chord root/fifth/octave line, gated per
+        // step. The octave is data (`bass.octave_shift`: -1 in the
+        // default score — the legacy `root * 0.5`): `2^octave_shift`.
         let bass = &self.tracks[3].params;
-        if let Some(note) = BASS_LINE[idx] {
-            bass.freq
-                .set_value(p.root() * 0.5 * semitone_ratio(offset + note));
+        if let Some(note) = self.score.bass.notes[idx] {
+            bass.freq.set_value(
+                p.root()
+                    * 2.0_f32.powf(self.score.bass.octave_shift as f32)
+                    * semitone_ratio(offset + note),
+            );
             bass.mute.set_value(0.0);
         } else {
             bass.mute.set_value(1.0);
         }
 
-        // Lead (slot 4): the fixed A-minor motif on the key root.
+        // Lead (slot 4): the fixed motif on the key root, one octave up
+        // (`lead.octave_shift`: +1 — the legacy `root * 2.0`),
+        // deliberately NOT chord-following.
         let lead = &self.tracks[4].params;
-        if let Some(note) = LEAD_LINE[idx] {
-            lead.freq.set_value(p.root() * 2.0 * semitone_ratio(note));
+        if let Some(note) = self.score.lead.notes[idx] {
+            lead.freq.set_value(
+                p.root() * 2.0_f32.powf(self.score.lead.octave_shift as f32) * semitone_ratio(note),
+            );
             lead.mute.set_value(0.0);
         } else {
             lead.mute.set_value(1.0);
@@ -641,7 +655,11 @@ impl MusicDirector {
                 handle
                     .global
                     .scale_mode
-                    .set_value(scale_mode_for_stage(self.stage));
+                    .set_value(if self.score.minor_for_stage(self.stage) {
+                        1.0
+                    } else {
+                        0.0
+                    });
                 handle.global.master_gain.set_value(self.master_gain());
                 self.live = Some(handle);
                 self.last_bar = None;
@@ -666,6 +684,7 @@ mod tests {
     use rust_synth::audio::engine::IN_MEMORY_SAMPLE_RATE;
 
     use super::*;
+    use crate::score::{Score, SlotGain};
     use rust_synth::audio::engine::MAX_TRACKS;
 
     #[test]
@@ -789,6 +808,68 @@ mod tests {
         assert!(d.tracks[4].params.freq.value() > lead0);
     }
 
+    /// The 10a fix-pass OCTAVE contract (issue 10a report, FIX PASS 1):
+    /// the director's bass/lead step writes keep the legacy octaves —
+    /// bass `root * 2^(-1)` over the bar's chord offset (the legacy
+    /// `root * 0.5 * semitone(offset + note)`), lead `root * 2^(1)` on
+    /// the key root with NO chord offset (the legacy `root * 2.0 *
+    /// semitone(note)`) — driven through a real fallback director:
+    /// set the stage, tick to a known bar/step, read `tracks[3]`/
+    /// `tracks[4]`'s `params.freq`/`mute`.
+    #[test]
+    fn the_bass_and_lead_write_the_legacy_octaves() {
+        let score = Score::default();
+        assert_eq!(score.bass.octave_shift, -1, "the baked bass octave");
+        assert_eq!(score.lead.octave_shift, 1, "the baked lead octave");
+
+        let stage = 3u32; // fourths = 1: the root a fourth above A2
+        let p = stage_params(stage);
+        let root = ROOT_A2_HZ * ROOT_SHIFT.powi(p.fourths as i32);
+        let step0_bass_note = 0i32; // BASS_LINE[0]
+        let step0_lead_note = 12i32; // LEAD_LINE[0]
+        let bar0_offset = 0i32; // CHORD_MAJOR[0] (I)
+        let bar1_offset = 9i32; // CHORD_MAJOR[1] (vi)
+
+        let mut d = MusicDirector::new_fallback();
+        d.set_stage(stage);
+        d.tick(0.01); // bar 0, step 0 — an even step, in-step < GATE_OPEN
+        let bass0 = root * 2.0_f32.powi(-1) * semitone_ratio(bar0_offset + step0_bass_note);
+        let lead0 = root * 2.0_f32.powi(1) * semitone_ratio(step0_lead_note);
+        assert_eq!(d.tracks[3].params.mute.value(), 0.0, "bass step 0 is on");
+        assert!(
+            (d.tracks[3].params.freq.value() - bass0).abs() < 1e-4,
+            "bass writes root * 2^(-1) * semitone(offset + note): got {}, want {bass0}",
+            d.tracks[3].params.freq.value()
+        );
+        assert_eq!(d.tracks[4].params.mute.value(), 0.0, "lead step 0 is on");
+        assert!(
+            (d.tracks[4].params.freq.value() - lead0).abs() < 1e-4,
+            "lead writes root * 2^(1) * semitone(note) (no chord offset): got {}, want {lead0}",
+            d.tracks[4].params.freq.value()
+        );
+
+        // Bar 1, step 0: the bass follows the chord (vi: +9 semitones),
+        // the lead stays on the key root (the same freq as bar 0).
+        let step_len = 60.0 / p.bpm / 4.0;
+        d.tick(16.0 * step_len + 0.3 * step_len - 0.01); // t lands at bar 1, in-step 0.3
+        let bass1 = root * 2.0_f32.powi(-1) * semitone_ratio(bar1_offset + step0_bass_note);
+        assert_eq!(
+            d.tracks[3].params.mute.value(),
+            0.0,
+            "bass step 0 of bar 1 is on"
+        );
+        assert!(
+            (d.tracks[3].params.freq.value() - bass1).abs() < 1e-4,
+            "the bass follows the bar's chord: got {}, want {bass1}",
+            d.tracks[3].params.freq.value()
+        );
+        assert!(
+            (d.tracks[4].params.freq.value() - lead0).abs() < 1e-4,
+            "the lead ignores the chord (still {lead0}, got {})",
+            d.tracks[4].params.freq.value()
+        );
+    }
+
     #[test]
     fn the_gate_releases_between_notes() {
         // The staccato: within one even step the note mutes at GATE_OPEN.
@@ -846,6 +927,130 @@ mod tests {
         assert!((d.master_gain() - expected).abs() < 1e-6);
         d.tick(10.0);
         assert!((d.master_gain() - MASTER_GAIN).abs() < 1e-6);
+    }
+
+    /// The score lab's LIVE path (10a): a `set_score` swap takes effect
+    /// on the next tick with no graph rebuild — a rest swapped into the
+    /// bass's step 0 gates the bass, and a moved `swing` moves the
+    /// swung-note window's timing.
+    #[test]
+    fn set_score_takes_effect_live() {
+        // Rest half: the default score's step-0 bass note plays...
+        let mut d = MusicDirector::new_fallback();
+        d.tick(0.01); // step 0: the default bass's note 0 is on
+        assert_eq!(d.tracks[3].params.mute.value(), 0.0);
+        // ...until the swapped-in score makes step 0 a rest (and swings
+        // the odd 16ths much later — the window-timing half below).
+        let mut score = Score::default();
+        score.bass.notes[0] = None;
+        d.set_score(Score {
+            swing: 0.5,
+            ..score
+        });
+        d.tick(0.001); // still step 0, re-applied from the new score
+        assert_eq!(
+            d.tracks[3].params.mute.value(),
+            1.0,
+            "the swapped rest gates the bass on the next tick"
+        );
+
+        // Swing half: a fresh default director against a fresh
+        // swapped-score (swing 0.5) director, identical ticks — both
+        // reach t ≈ 0.325: step 3 (odd, swung; the default bass's note
+        // 12) at in-step ≈ 0.25. The default swing's window
+        // (0.15..0.85) is open there; the 0.5 swing's (0.5..1.0) is
+        // still closed.
+        let mut def = MusicDirector::new_fallback();
+        let mut sw = MusicDirector::new_fallback();
+        let swapped = Score {
+            swing: 0.5,
+            ..Score::default()
+        };
+        sw.set_score(swapped);
+        def.tick(0.30);
+        sw.tick(0.30);
+        def.tick(0.025);
+        sw.tick(0.025);
+        assert_eq!(
+            def.tracks[3].params.mute.value(),
+            0.0,
+            "the default swing's window (0.15..0.85) is open at in-step 0.25"
+        );
+        assert_eq!(
+            sw.tracks[3].params.mute.value(),
+            1.0,
+            "the swapped 0.5 swing's window (0.5..1.0) is still closed"
+        );
+    }
+
+    /// A non-default score's SLOTS gains take effect through
+    /// `set_score` (the 8-slot mix is data, not just the lines).
+    #[test]
+    fn set_score_rewrites_the_slot_gains() {
+        let mut d = MusicDirector::new_fallback();
+        let before = d.tracks[0].params.gain.value();
+        let mut score = Score::default();
+        score.slots[0] = SlotGain { gain: 0.3 };
+        d.set_score(score);
+        assert_eq!(d.tracks[0].params.gain.value(), 0.3);
+        assert!(before > 0.3);
+        // The drum patterns re-apply too: an all-off kick tier.
+        score = Score::default();
+        score.kick.tiers[0].pattern = ".".repeat(score.steps_per_bar as usize);
+        d.set_score(score);
+        assert_eq!(
+            d.tracks[0].params.pattern_bits.load(Ordering::Relaxed),
+            0,
+            "the swapped-in silent kick pattern lands in the atomics"
+        );
+    }
+
+    /// The `set_score` re-arm pair (the review's uncovered lines): the
+    /// cleared `last_bar`/`last_step` are what make the next tick
+    /// re-write the current bar's chord frequencies (`apply_bar`) and
+    /// the current step's note frequencies (`apply_step`). The mutes
+    /// cannot pin this — `sequence()`'s gate_voice rewrites them every
+    /// tick, masking a missed re-apply. Driven through a real fallback
+    /// director: tick to step 0 (the default bass's note 0 is on),
+    /// swap in a score that moved that note AND the bar's chord, and
+    /// within the SAME step (a tiny dt — the step index does not
+    /// advance) both freqs must already be the new values; without the
+    /// re-arm the already-visited bar/step are skipped and both stay
+    /// stale.
+    #[test]
+    fn set_score_reapplies_the_current_step_and_bar() {
+        let mut d = MusicDirector::new_fallback();
+        d.tick(0.01); // bar 0, step 0: the default bass's note 0, chord I
+        let root = stage_params(0).root();
+        assert!(
+            (d.tracks[3].params.freq.value() - root * 2.0_f32.powi(-1)).abs() < 1e-4,
+            "the pre-swap bass is the default score's step-0 note"
+        );
+        assert!(
+            (d.tracks[5].params.freq.value() - root).abs() < 1e-4,
+            "the pre-swap pad is the bar-0 chord (I, offset 0)"
+        );
+
+        // A moved step note (0 → +5) and a moved bar-0 chord (0 → +7):
+        // the same score otherwise.
+        let mut score = Score::default();
+        score.bass.notes[0] = Some(5);
+        score.chords.major[0] = 7;
+        d.set_score(score);
+
+        d.tick(0.001); // still step 0 — the step index does not advance
+        let new_bass = root * 2.0_f32.powi(-1) * semitone_ratio(7 + 5);
+        assert!(
+            (d.tracks[3].params.freq.value() - new_bass).abs() < 1e-4,
+            "the step's note freq re-applies within the same step (got {}, want {new_bass})",
+            d.tracks[3].params.freq.value()
+        );
+        let new_pad = root * semitone_ratio(7);
+        assert!(
+            (d.tracks[5].params.freq.value() - new_pad).abs() < 1e-4,
+            "the bar's chord freq re-applies within the same bar (got {}, want {new_pad})",
+            d.tracks[5].params.freq.value()
+        );
     }
 
     #[test]

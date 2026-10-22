@@ -67,3 +67,23 @@ pub fn status() -> String {
 pub fn resume_audio() {
     th_app::tiny::web_request_audio_unlock();
 }
+
+/// The score lab's read (plan 002 issue 10a, the frozen interface): the
+/// director's current chiptune score as the canonical pretty JSON —
+/// the `?scorelab=1` overlay's grid source and the "Copy JSON" button's
+/// bake text. `""` before the web boot installed the director.
+#[wasm_bindgen(js_name = "getScore")]
+pub fn get_score() -> String {
+    th_app::tiny::web_get_score()
+}
+
+/// The score lab's write (plan 002 issue 10a, the frozen interface):
+/// parse `json` and hot-swap the director's score in place (no graph
+/// rebuild — effective within one frame). Returns `""` on success; the
+/// human-facing parse/validation error text otherwise (the overlay's
+/// status line shows it verbatim — the `?score=` hot-reload's error
+/// log).
+#[wasm_bindgen(js_name = "setScore")]
+pub fn set_score(json: &str) -> String {
+    th_app::tiny::web_set_score(json)
+}

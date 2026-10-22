@@ -5,6 +5,11 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+# The chiptune score as data (plan 002 issue 10a): the `Score` type's
+# serde (de)serialization — `assets/score.json` (the baked default) +
+# the lab's live JSON. Workspace pins (serde with `derive`).
+serde = { workspace = true }
+serde_json = { workspace = true }
 # The live modular synth (MIT, `audio` + `math` modules only). 05b: the
 # registry crate unconditionally builds its TUI/recording modules, which
 # fail on wasm32-unknown-emscripten (crossterm/mio + vorbis's C build);
