@@ -318,6 +318,11 @@ if (scorelabProbe) {
     const r = await send('Runtime.evaluate', { expression, returnByValue: true });
     return r.result?.result?.value ?? null;
   };
+  // The shipped score, captured BEFORE any of these checks mutate it —
+  // the end-of-block restore puts the engine back on it (the Load check
+  // changes the bpm, and a later assertion must not inherit that).
+  const canonicalScore = await pageEval('typeof window.ohMod.getScore === "function" ? window.ohMod.getScore() : ""');
+
   const overlayOk = await pageEval('document.getElementById("scorelab") !== null');
   scorelabChecks.push(['scorelab: the overlay exists (#scorelab rendered into the DOM with ?scorelab=1)', overlayOk === true]);
   const roundTrip = await pageEval(
@@ -328,6 +333,62 @@ if (scorelabProbe) {
   scorelabChecks.push(['scorelab: a broken score returns an error (mod.setScore("{ not json") !== "")', typeof brokenErr === 'string' && brokenErr !== '']);
   const spanText = await pageEval('(() => { const s = document.getElementById("scorelab-status"); return s ? s.textContent : ""; })()');
   scorelabChecks.push(['scorelab: the status span reflects the error (non-empty, not "ok")', typeof spanText === 'string' && spanText !== '' && spanText !== 'ok']);
+
+  // The JSON read/write surface (the bake + load). These exist because
+  // the ORIGINAL Copy JSON only called navigator.clipboard.writeText,
+  // which is SECURE-CONTEXT ONLY: on a plain-http origin (the LAN /
+  // phone case — 192.168.x.x is not secure) it is `undefined` and the
+  // click threw "Cannot read properties of undefined (reading
+  // 'writeText')". This probe run is the regression guard. NOTE: the
+  // local probe origin (127.0.0.1) IS a secure context, so a
+  // server-side run cannot see the insecure path — the assertions here
+  // are presencen + behaviour (the box, the buttons, Load actually
+  // applying), which hold on BOTH; the insecure-Copy fallback is
+  // verified by hand on the LAN origin (see the report).
+  const jsonPresent = await pageEval(
+    'JSON.stringify(["scorelab-json","scorelab-copy","scorelab-download","scorelab-load","scorelab-file"].map((i) => [i, !!document.getElementById(i)]))',
+  );
+  const jsonOk = typeof jsonPresent === 'string'
+    && jsonPresent.includes('["scorelab-json",true]')
+    && jsonPresent.includes('["scorelab-copy",true]')
+    && jsonPresent.includes('["scorelab-download",true]')
+    && jsonPresent.includes('["scorelab-load",true]')
+    && jsonPresent.includes('["scorelab-file",true]');
+  scorelabChecks.push(['scorelab: the JSON box + Copy/Download/Load/Choose File controls exist', jsonOk]);
+
+  const boxHasScore = await pageEval(
+    '(document.getElementById("scorelab-json")?.value || "").includes("steps_per_bar")',
+  );
+  scorelabChecks.push(['scorelab: the JSON box holds the canonical score (getScore text)', boxHasScore === true]);
+
+  // Load must APPLY: paste an edited score, click Load, and see the
+  // engine take it (getScore reflects it) while the span says ok.
+  const loadErr = await pageEval(`(() => {
+    const m = window.ohMod;
+    const o = JSON.parse(m.getScore());
+    o.bpm.base = 187;
+    const box = document.getElementById("scorelab-json");
+    box.value = JSON.stringify(o, null, 2);
+    document.getElementById("scorelab-load").click();
+    return String(m.getScore()).includes('"base": 187');
+  })()`);
+  scorelabChecks.push(['scorelab: Load applies an edited score to the engine (bpm 187 reachable via getScore)', loadErr === true]);
+
+  // Broken JSON through Load must be rejected with the span painted.
+  const loadBad = await pageEval(`(() => {
+    const box = document.getElementById("scorelab-json");
+    box.value = "{ not json";
+    document.getElementById("scorelab-load").click();
+    const s = document.getElementById("scorelab-status");
+    return s ? s.textContent : "";
+  })()`);
+  scorelabChecks.push(['scorelab: Load rejects broken JSON and paints the span', typeof loadBad === 'string' && loadBad !== '' && loadBad !== 'ok']);
+
+  // Leave the engine on the SHIPPED score (the Load check above changed
+  // the bpm — do not leak state into the rest of the run). The canonical
+  // text is the one captured BEFORE the mutations; a re-read of
+  // getScore() here would just re-send the mutated score.
+  await pageEval(`window.ohSetScore(${JSON.stringify(canonicalScore)})`);
 }
 
 // The DOM / status contract.
@@ -360,7 +421,16 @@ chrome.kill('SIGKILL');
 // device resumes itself on the first gesture; the synth's fallback
 // clock covers the gap).
 const TOLERATED = /(favicon|AudioContext.*not allowed to start|AudioCtx.*not allowed to start|autoplay)/i;
-const realErrors = errors.filter((e) => !TOLERATED.test(e));
+// The score lab's DELIBERATE rejections (OH_SCORELAB=1): the probe feeds
+// bad JSON on purpose to prove it is rejected gracefully, and the page
+// logs the rejection to the console while ALSO painting it in the status
+// span (checked right above). That is the designed path — a defect would
+// be a silent failure or a crash, both of which still fail. Scoped to
+// exactly these two messages so any OTHER scorelab error still counts.
+const SCORELAB_REJECT = /\[scorelab\] (load rejected|setScore rejected):/;
+const realErrors = errors.filter(
+  (e) => !TOLERATED.test(e) && !(scorelabProbe && SCORELAB_REJECT.test(e)),
+);
 const realBad = bad.filter((b) => !/favicon/.test(b));
 const realFailed = failed
   .filter((f) => !/favicon/i.test(f.url))
