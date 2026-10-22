@@ -48,6 +48,21 @@
 //! `mod legacy` (verbatim copies) — asserting through these shorthands
 //! would make it vacuous (they are `Score::default()` lookups).
 //!
+//! # The plan 11c role-based timing grid + the FM bake
+//!
+//! Issue 11c moved `pattern_bits` OUT of `apply_slot`'s Heartbeat arm
+//! (where only the drum slots got it) into the ROLE logic: slots 0-2
+//! always get their stage-tiered drum patterns (regardless of kind),
+//! slots 3/4 (bass/lead) get their OWN note lines (bit i iff the line's
+//! step i has a note), and the harmony slots keep the 4-hit Euclidean
+//! default. That fixes the melodic slots' `step_is_active`-driven
+//! envelopes (PluckSaw's pluck, and now the FM voices') firing on the
+//! 4-hit Euclidean default instead of their own notes. The shipped
+//! `assets/score.json` re-timbres the roles to the vendor's new FM kit
+//! (`fm_kick`/`fm_snare`/`fm_hat`/`fm_bass`/`fm_lead` — the
+//! `SLOTS` built-ins stay Heartbeat/BassPulse/PluckSaw, the
+//! backwards-compat path for scores without `kind` fields).
+//!
 //! # The plan 11 effective-mute fold (mute/solo + the instrument kinds)
 //!
 //! A slot's role (fixed by index) and its timbre (selectable — the
@@ -405,6 +420,43 @@ impl MusicDirector {
             .set_value(0.85 + 0.15 * (s / (score.bpm.cap as f32)));
         pms.freq.set_value(p.root() * slot.ratio);
 
+        // The timing grid (`pattern_bits`) is a ROLE property, not a
+        // kind's (issue 11c's fix — the old code set it only inside the
+        // Heartbeat arm, so a melodic slot's `step_is_active`-driven
+        // envelope fired on `default_for`'s 4-hit Euclidean pattern,
+        // unrelated to that line's notes): the drum slots (0-2) ALWAYS
+        // get their stage-tiered pattern (any preset on a drum slot
+        // keeps the role's grid), the bass/lead (3-4) get their OWN
+        // note lines (bit i iff the line's step i has a note), and the
+        // harmony slots (5-7) keep the 4-hit Euclidean default (they
+        // follow the chord, not the steps). Note lines longer than 32
+        // steps: indices >= 32 do not fit the u32 grid (`Score::
+        // drum_pattern`'s documented convention).
+        match index {
+            0..=2 => {
+                let bits = match index {
+                    0 => score.drum_pattern(&score.kick, stage),
+                    1 => score.drum_pattern(&score.snare, stage),
+                    _ => score.drum_pattern(&score.hat, stage),
+                };
+                pms.pattern_hits.set_value(bits.count_ones() as f32);
+                pms.pattern_rotation.set_value(0.0);
+                pms.pattern_bits.store(bits, Ordering::Relaxed);
+            }
+            3 | 4 => {
+                let notes = if index == 3 {
+                    &score.bass.notes
+                } else {
+                    &score.lead.notes
+                };
+                let bits = Self::note_line_bits(notes);
+                pms.pattern_hits.set_value(bits.count_ones() as f32);
+                pms.pattern_rotation.set_value(0.0);
+                pms.pattern_bits.store(bits, Ordering::Relaxed);
+            }
+            _ => {} // harmony: the `default_for` Euclidean default stands
+        }
+
         // The per-preset parameters key on the slot's RESOLVED kind
         // (the plan 11 role/timbre split: a swapped instrument keeps the
         // role's driver — the tiered drum pattern / the step line / the
@@ -412,22 +464,11 @@ impl MusicDirector {
         // values).
         match Self::resolved_kind(score, index) {
             PresetKind::Heartbeat => {
-                // The drum-role slots (0..3) read their stage-tiered
-                // patterns; a Heartbeat swapped INTO another slot is a
-                // chord-following drum (the plan 11 role/timbre split —
-                // the role's `apply_bar` freq writes drive it) on the
-                // 4-hit Euclidean DEFAULT `pattern_bits` (the
-                // `TrackParams::default_for` value — never overwritten
-                // here).
-                let bits = if index < 3 {
-                    match index {
-                        0 => score.drum_pattern(&score.kick, stage),
-                        1 => score.drum_pattern(&score.snare, stage),
-                        _ => score.drum_pattern(&score.hat, stage),
-                    }
-                } else {
-                    0
-                };
+                // The drum-role slots' character is the slot's tuning
+                // (kick soft, snare clicky, hat snappy); a Heartbeat
+                // swapped INTO another slot takes the neutral value. Its
+                // `pattern_bits` come from the ROLE block above — never
+                // from this arm (the issue 11c fix).
                 pms.pulse_depth.set_value(0.0);
                 pms.lfo_depth.set_value(0.0);
                 pms.character.set_value(match index {
@@ -437,13 +478,6 @@ impl MusicDirector {
                     _ => 0.5, // the swapped-in Heartbeat: the neutral character
                 });
                 pms.reverb_mix.set_value(0.05);
-                if index < 3 {
-                    pms.pattern_hits.set_value(bits.count_ones() as f32);
-                    pms.pattern_rotation.set_value(0.0);
-                    pms.pattern_bits.store(bits, Ordering::Relaxed);
-                } else {
-                    pms.pattern_hits.set_value(4.0); // the euclidean_bits(4, 0) default
-                }
             }
             PresetKind::BassPulse => {
                 pms.pulse_depth.set_value(0.0);
@@ -489,7 +523,80 @@ impl MusicDirector {
                 pms.character.set_value(0.5);
                 pms.reverb_mix.set_value(0.5);
             }
+            // Plan 002 issue 11c — the FM kit (the auditioned values;
+            // the `audition_render` example's table is how they were
+            // chosen). `resonance` is the FM depth (the modulation
+            // index's scale); `character` 0.5 = each voice's tuned
+            // ratio. NB: `reverb_mix` is the voice's LEVEL TRIM in this
+            // codebase (`stereo_reverb_mix` multiplies the whole voice
+            // — dry AND the fixed reverb tail — by it), so a "dry"
+            // drum is a modest tail inside the voice + a healthy trim,
+            // NOT a 0.05 trim (which would be a −26 dB voice). Each of
+            // these slots' `pattern_bits` comes from the ROLE block
+            // above (the tiered drum patterns, the bass/lead note
+            // lines) — the step-gated FM envelope needs it.
+            PresetKind::FmKick => {
+                pms.pulse_depth.set_value(0.0);
+                pms.lfo_depth.set_value(0.0);
+                pms.character.set_value(0.50);
+                pms.resonance.set_value(0.50);
+                pms.reverb_mix.set_value(0.90);
+            }
+            PresetKind::FmSnare => {
+                pms.pulse_depth.set_value(0.0);
+                pms.lfo_depth.set_value(0.0);
+                pms.character.set_value(0.60); // a touch more noise in the balance
+                pms.resonance.set_value(0.50);
+                pms.reverb_mix.set_value(0.90);
+            }
+            PresetKind::FmHat => {
+                pms.pulse_depth.set_value(0.0);
+                pms.lfo_depth.set_value(0.0);
+                pms.character.set_value(0.50);
+                pms.resonance.set_value(0.35);
+                pms.reverb_mix.set_value(0.80);
+            }
+            PresetKind::FmBass => {
+                pms.pulse_depth.set_value(0.0);
+                pms.lfo_depth.set_value(0.0);
+                pms.character.set_value(0.50);
+                pms.resonance.set_value(0.50);
+                pms.cutoff.set_value(500.0);
+                pms.reverb_mix.set_value(0.90);
+            }
+            PresetKind::FmLead => {
+                pms.pulse_depth.set_value(0.0);
+                pms.lfo_depth.set_value(0.0);
+                pms.character.set_value(0.50);
+                pms.resonance.set_value(0.35);
+                pms.detune.set_value(14.0);
+                pms.reverb_mix.set_value(0.80);
+            }
+            PresetKind::FmBell => {
+                pms.pulse_depth.set_value(0.0);
+                pms.lfo_depth.set_value(0.06);
+                pms.lfo_rate.set_value(0.15);
+                pms.lfo_target.set_value(LFO_FREQ as f32);
+                pms.character.set_value(0.50);
+                pms.resonance.set_value(0.40);
+                pms.reverb_mix.set_value(0.70);
+            }
         }
+    }
+
+    /// The note line's `pattern_bits`: bit i set iff the line's step i
+    /// has a note (issue 11c's role-based grid for the bass/lead — the
+    /// `step_is_active`-driven envelopes now fire on the line's actual
+    /// notes). Indices >= 32 do not fit the u32 grid (`Score::
+    /// drum_pattern`'s documented convention).
+    fn note_line_bits(notes: &[Option<i32>]) -> u32 {
+        notes.iter().enumerate().fold(0u32, |bits, (i, note)| {
+            if note.is_some() && i < 32 {
+                bits | (1 << i)
+            } else {
+                bits
+            }
+        })
     }
 
     pub fn set_stage(&mut self, stage: u32) {
@@ -658,6 +765,16 @@ impl MusicDirector {
     #[must_use]
     pub fn score(&self) -> &Score {
         &self.score
+    }
+
+    /// The director's 8 `Track`s (the exact resolved kinds + the
+    /// `apply_slot`/role params): the offline audition renderer builds
+    /// the engine's graph from THESE instead of mirroring `apply_slot`
+    ///'s values by hand (`TrackParams`' fields are `Shared` atomics —
+    /// the values read here are the ones the live graph reads).
+    #[must_use]
+    pub fn tracks(&self) -> &[Track] {
+        &self.tracks
     }
 
     /// The count of `rebuild_graph()` calls `apply_kinds` actually ran
@@ -974,6 +1091,92 @@ mod tests {
         assert_eq!(
             d.tracks[2].params.pattern_bits.load(Ordering::Relaxed),
             hat_bits(6)
+        );
+    }
+
+    /// Issue 11c's role-based grid: with the shipped score, slot 4
+    /// (lead)'s `pattern_bits` equals the LEAD line's set steps — not
+    /// the 4-hit Euclidean default the old Heartbeat-only writer left
+    /// melodic slots with — slot 3's equals the bass line's, slot 0's
+    /// equals the stage-0 kick tier, and the grid is a ROLE property:
+    /// swapping a slot's KIND does not move its grid (the mutation
+    /// check — reverting to the old only-in-Heartbeat-arm behaviour
+    /// fails slot 4's first assert: the lead line's bits vs the
+    /// Euclidean default).
+    #[test]
+    fn the_pattern_bits_follow_the_role_not_the_kind() {
+        use rust_synth::math::rhythm::euclidean_bits;
+        let score = Score::default();
+        // The lines' set steps, computed INDEPENDENTLY (not through
+        // `note_line_bits` — the test must fail if that helper drifts).
+        let line_bits = |notes: &[Option<i32>]| -> u32 {
+            notes.iter().enumerate().fold(
+                0u32,
+                |b, (i, n)| {
+                    if n.is_some() {
+                        b | (1 << i)
+                    } else {
+                        b
+                    }
+                },
+            )
+        };
+        let lead_bits = line_bits(&score.lead.notes);
+        let bass_bits = line_bits(&score.bass.notes);
+        // The shipped lead line has notes on steps 0,2,4,5,7,8,10,12,
+        // 13,15 — unmistakably not the 4-hit Euclidean default.
+        assert_eq!(lead_bits, 0b1011_0101_1011_0101);
+        assert_ne!(
+            lead_bits,
+            euclidean_bits(4, 0),
+            "the lead line is NOT the Euclidean default"
+        );
+
+        let mut d = MusicDirector::new_fallback(); // stage 0, the shipped score
+        assert_eq!(
+            d.tracks[4].params.pattern_bits.load(Ordering::Relaxed),
+            lead_bits,
+            "slot 4 (lead) gets the lead line's set steps"
+        );
+        assert_eq!(
+            d.tracks[3].params.pattern_bits.load(Ordering::Relaxed),
+            bass_bits,
+            "slot 3 (bass) gets the bass line's set steps"
+        );
+        assert_eq!(
+            d.tracks[0].params.pattern_bits.load(Ordering::Relaxed),
+            (1 << 0) | (1 << 7) | (1 << 10),
+            "slot 0 gets the stage-0 kick tier"
+        );
+        // The harmony slots keep the Euclidean default (untouched).
+        for i in 5..8 {
+            assert_eq!(
+                d.tracks[i].params.pattern_bits.load(Ordering::Relaxed),
+                euclidean_bits(4, 0),
+                "slot {i} (harmony) keeps the 4-hit Euclidean default"
+            );
+        }
+
+        // ROLE, not kind: a Heartbeat swapped into the lead slot keeps
+        // the lead line's grid (the old code's Heartbeat arm only wrote
+        // slots 0-2, so a swapped-in Heartbeat got the Euclidean
+        // default — the bug this test pins).
+        let mut swapped = Score::default();
+        swapped.slots[4].kind = Some("heartbeat".to_string());
+        d.set_score(swapped);
+        assert_eq!(
+            d.tracks[4].params.pattern_bits.load(Ordering::Relaxed),
+            lead_bits,
+            "a Heartbeat swapped into the lead slot keeps the lead line's grid"
+        );
+        // And a PluckSaw swapped into the kick slot keeps the kick tier.
+        let mut swapped = Score::default();
+        swapped.slots[0].kind = Some("pluck_saw".to_string());
+        d.set_score(swapped);
+        assert_eq!(
+            d.tracks[0].params.pattern_bits.load(Ordering::Relaxed),
+            (1 << 0) | (1 << 7) | (1 << 10),
+            "a PluckSaw swapped into the kick slot keeps the kick tier's grid"
         );
     }
 
@@ -1520,7 +1723,10 @@ mod tests {
             .collect();
         let handle = AudioEngine::start_in_memory(tracks).expect("in-memory start");
         d.live = Some(handle);
-        let builtin: Vec<PresetKind> = SLOTS.iter().map(|s| s.kind).collect();
+        // The construction snapshot (the resolved kinds — since 11c the
+        // shipped bake's FM kinds for the drum/bass/lead roles, not the
+        // `SLOTS` built-ins): a gain-only edit must leave these UNTOUCHED.
+        let construction: Vec<PresetKind> = d.tracks.iter().map(|t| t.kind).collect();
         let engine_kinds = |d: &MusicDirector| -> Vec<PresetKind> {
             d.live
                 .as_ref()
@@ -1553,7 +1759,7 @@ mod tests {
         );
         assert_eq!(
             engine_kinds(&d),
-            builtin,
+            construction,
             "a gain-only edit touches no kind (no rebuild)"
         );
         assert_eq!(
@@ -1562,7 +1768,8 @@ mod tests {
             "the gain itself applied (Shared write, no rebuild)"
         );
 
-        // 2. The swap: the bass (slot 3, BassPulse) → SuperSaw. The
+        // 2. The swap: the bass (slot 3 — the shipped bake's FmBass)
+        //    → SuperSaw. The
         //    engine's track kind AND label actually change (the graph
         //    rebuilds from the mutated tracks — the vendor's path) —
         //    and the rebuild is counted exactly once.
@@ -1599,11 +1806,11 @@ mod tests {
         score.slots[3].kind = Some("pluck_saw".to_string());
         d.set_score(score);
         let swapped = vec![
-            PresetKind::Heartbeat,
-            PresetKind::Heartbeat,
-            PresetKind::Heartbeat,
+            PresetKind::FmKick,
+            PresetKind::FmSnare,
+            PresetKind::FmHat,
             PresetKind::PluckSaw,
-            PresetKind::PluckSaw,
+            PresetKind::FmLead,
             PresetKind::PadZimmer,
             PresetKind::Bell,
             PresetKind::DroneSub,

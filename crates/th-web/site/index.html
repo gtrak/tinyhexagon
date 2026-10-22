@@ -25,7 +25,7 @@
       "" = ok in green, the error in red). Then the tracks: one
       header per slot (the ROLE name — kick/snare/hat/bass/lead/
       pad/bell/sub — the M/S toggles (muted = dimmed row, soloed =
-      highlighted row), an instrument <select> over the 8 kind ids
+      highlighted row), an instrument <select> over the 14 kind ids
       (timbre only — the role's driver stays), the slot's gain
       slider), and the lane: the 3 drum rows + the shared step ruler
       grouped as ONE rack (a click toggles the step in the CURRENT
@@ -632,6 +632,8 @@
           const KIND_IDS = [
             "pad_zimmer", "bass_pulse", "heartbeat", "drone_sub",
             "shimmer", "bell", "super_saw", "pluck_saw",
+            "fm_kick", "fm_snare", "fm_hat", "fm_bass",
+            "fm_lead", "fm_bell",
           ];
           const CHORD_RATIO = [1.0, 2.0, 0.25];
 

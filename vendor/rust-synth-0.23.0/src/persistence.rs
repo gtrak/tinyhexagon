@@ -195,5 +195,12 @@ fn kind_to_str(k: PresetKind) -> &'static str {
         PresetKind::Bell => "Bell",
         PresetKind::SuperSaw => "SuperSaw",
         PresetKind::PluckSaw => "PluckSaw",
+        // Plan 002 issue 11c — the FM kit (append-only kinds).
+        PresetKind::FmKick => "FmKick",
+        PresetKind::FmSnare => "FmSnare",
+        PresetKind::FmHat => "FmHat",
+        PresetKind::FmBass => "FmBass",
+        PresetKind::FmLead => "FmLead",
+        PresetKind::FmBell => "FmBell",
     }
 }

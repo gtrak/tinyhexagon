@@ -99,7 +99,25 @@ cpal = { path = "vendor/cpal-0.15.3", version = "0.15.3" }
 #     (CMakeLists.txt:353-366), so keeping it OFF is also the faithful mirror.
 #   * NO `strip` / `codegen-units` / `panic` overrides: the C++ release build
 #     sets none of them, and they are not part of the test-verified baseline.
+#   The DEV-profile override below (plan 002 issue 11c) is a separate matter:
+#   it touches ONLY the dev-profile compilation of the DSP crates (fundsp +
+#   the vendored rust-synth), never the release profile.
 [profile.release]
 opt-level = 3
 debug-assertions = false
+
+# Plan 002 issue 11c: the offline WAV audition renderer
+# (`crates/th-synth/examples/audition_render.rs`) renders the full 8-voice
+# graph (long Valhalla-style reverbs, chorus, Moog) for a per-slot peak/RMS
+# table. In the default (dev, unoptimized) build that DSP runs ~20× slower
+# than realtime, so a 4-bar (6.4 s) render is a ~20-minute gate. Optimizing
+# just the DSP crates in the dev profile makes `cargo run --example
+# audition_render` finish in seconds; every other crate (and the entire
+# release profile) stays exactly as before. The render is a measurement
+# tool — it never ships in the game build (release).
+[profile.dev.package.fundsp]
+opt-level = 3
+
+[profile.dev.package.rust-synth]
+opt-level = 3
 

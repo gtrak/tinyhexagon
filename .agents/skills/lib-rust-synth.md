@@ -53,9 +53,34 @@ gate below).
 
 ## Presets (`src/audio/preset.rs`)
 
-- `PresetKind` — exactly 8 variants: `PadZimmer, DroneSub, Shimmer,
-  Heartbeat, BassPulse, Bell, SuperSaw, PluckSaw` (+ `label()`: "Pad",
-  "Drone", "Shimmer", "Heartbeat", "Bass", "Bell", "SuperSaw", "Pluck").
+- `PresetKind` — 14 variants: `PadZimmer, DroneSub, Shimmer,
+  Heartbeat, BassPulse, Bell, SuperSaw, PluckSaw` (the original 8) +
+  `FmKick, FmSnare, FmHat, FmBass, FmLead, FmBell` (plan 002 issue 11c,
+  appended at the end — the enum is append-only; `ALL_KINDS` is
+  `[PresetKind; 14]`) (+ `label()`: "Pad", "Drone", "Shimmer", "Heartbeat",
+  "Bass", "Bell", "SuperSaw", "Pluck", "FM Kick", "FM Snare", "FM Hat",
+  "FM Bass", "FM Lead", "FM Bell").
+- The six FM voices (11c) share one core, `fm_voice(p, g, cfg)` — the
+  YM2612/Sonic idiom in this codebase's shape (modeled on `bell_preset`):
+  a sine CARRIER whose phase is modulated by a second sine, with a
+  DECAYING MODULATION INDEX (`(carrier_freq + modulator * index) >>
+  sine()`, both frequencies from `lfo` closures reading the `Shared`
+  params, `freq_mod` for pitch, `follow(0.08)` after the frequency
+  closures, the `stereo_gate_voiced` tail). The amplitude AND index
+  envelopes are step-gated from `p.pattern_bits` via
+  `rhythm::step_is_active` (the per-voice decay constants in the `FmVoice`
+  cfg: `index_decay`, `amp_decay`, plus a kick-style `sweep` pitch-drop
+  on the carrier). `character` morphs the ratio via `lerp3` (0.5 = the
+  voice's tuned ratio), `resonance` scales the index (clamped ≤ 0.65,
+  mirroring `bell_preset`). Voice cfgs: kick ratio 6 + 4×→1× sweep, snare
+  ratio 2 + a high-passed white-noise burst (character balances noise vs
+  tone), hat ratio 9 with a 20-40 ms decay, bass ratio 1.5 low-passed
+  through the `bass_pulse` moog idiom, lead ratio 2 with a slight carrier
+  detune, bell ratio 3.5 percussive. NOTE: `reverb_mix` in this codebase
+  is a whole-voice LEVEL TRIM (`stereo_reverb_mix` multiplies dry AND the
+  fixed reverb tail by it — `stereo_reverb_mix` sits after `supermass`),
+  so a "dry" FM drum is a modest in-voice tail + a healthy trim, not a
+  0.05 trim (a −26 dB voice).
 - `GlobalParams` (cloned into the build-time `lfo` closures as `Shared`s):
   | field | default |
   |---|---|

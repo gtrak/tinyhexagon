@@ -112,6 +112,35 @@ fn describe(kind: PresetKind, s: &TrackSnapshot) -> (Color, String) {
             Color::Yellow,
             format!("2-saw · detune {:+.0} ct", s.detune),
         ),
+        // Plan 002 issue 11c — the FM kit: the shared 2-op core's six
+        // voices (the table-row ratios mirrored here for the label).
+        PresetKind::FmKick
+        | PresetKind::FmSnare
+        | PresetKind::FmHat
+        | PresetKind::FmBass
+        | PresetKind::FmLead
+        | PresetKind::FmBell => {
+            let ratio = match kind {
+                PresetKind::FmKick => lerp3(4.0, 6.0, 10.0, c),
+                PresetKind::FmSnare => lerp3(1.5, 2.0, 2.8, c),
+                PresetKind::FmHat => lerp3(7.0, 9.0, 11.0, c),
+                PresetKind::FmBass => lerp3(1.0, 1.5, 2.0, c),
+                PresetKind::FmLead => lerp3(1.5, 2.0, 3.0, c),
+                _ => lerp3(3.0, 3.5, 4.2, c),
+            };
+            let color = match kind {
+                PresetKind::FmKick => Color::Rgb(220, 80, 60),
+                PresetKind::FmSnare => Color::Rgb(240, 160, 60),
+                PresetKind::FmHat => Color::Rgb(240, 220, 120),
+                PresetKind::FmBass => Color::Rgb(80, 200, 120),
+                PresetKind::FmLead => Color::Rgb(120, 140, 240),
+                _ => Color::Rgb(200, 120, 220),
+            };
+            (
+                color,
+                format!("2-op FM · ratio {ratio:.2} · depth {:.2}", s.resonance.min(0.65)),
+            )
+        }
     }
 }
 
@@ -205,6 +234,28 @@ fn sample(kind: PresetKind, s: &TrackSnapshot, phase: f64) -> f64 {
             let xb = phase * ratio_b;
             let sb = 2.0 * (xb - (xb + 0.5).floor());
             0.5 * sa + 0.5 * sb
+        }
+        // Plan 002 issue 11c — the FM kit: the shared 2-op core's shape
+        // (the table-row ratio, the resonance-scaled index, a short
+        // env — the live graph's step gating is not visible in this
+        // two-cycles display, so a fixed decay stands in for it).
+        PresetKind::FmKick
+        | PresetKind::FmSnare
+        | PresetKind::FmHat
+        | PresetKind::FmBass
+        | PresetKind::FmLead
+        | PresetKind::FmBell => {
+            let ratio = match kind {
+                PresetKind::FmKick => lerp3(4.0, 6.0, 10.0, c),
+                PresetKind::FmSnare => lerp3(1.5, 2.0, 2.8, c),
+                PresetKind::FmHat => lerp3(7.0, 9.0, 11.0, c),
+                PresetKind::FmBass => lerp3(1.0, 1.5, 2.0, c),
+                PresetKind::FmLead => lerp3(1.5, 2.0, 3.0, c),
+                _ => lerp3(3.0, 3.5, 4.2, c),
+            };
+            let depth = s.resonance.min(0.65) as f64;
+            let modulator = (p * ratio).sin() * (depth * 3.5);
+            (p + modulator).sin() * (-phase * 2.5).exp()
         }
     }
 }

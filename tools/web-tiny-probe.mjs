@@ -403,7 +403,7 @@ if (scorelabProbe) {
   // none of these mutations leak into the rest of the run.
 
   // The track-header column: 8 headers, each with M + S + an
-  // instrument <select> over the 8 kinds.
+  // instrument <select> over the 14 kinds.
   const headerCount = await pageEval(`(() => {
     let n = 0;
     for (let i = 0; i < 8; i++) {
@@ -411,7 +411,7 @@ if (scorelabProbe) {
       const m = document.getElementById("scorelab-mute-" + i);
       const s = document.getElementById("scorelab-solo-" + i);
       const k = document.getElementById("scorelab-kind-" + i);
-      if (r && m && s && k && k.tagName === "SELECT" && k.options.length === 8) n++;
+      if (r && m && s && k && k.tagName === "SELECT" && k.options.length === 14) n++;
     }
     return n;
   })()`);

@@ -23,10 +23,20 @@ pub enum PresetKind {
     Bell,
     SuperSaw,
     PluckSaw,
+    // Plan 002 issue 11c — the Sonic-style YM2612 FM kit (append-only:
+    // the six FM voices go LAST so the original cycle order and the
+    // shipped scores' ids are untouched — see the Cargo.toml
+    // provenance block).
+    FmKick,
+    FmSnare,
+    FmHat,
+    FmBass,
+    FmLead,
+    FmBell,
 }
 
 /// All preset kinds in cycle order. Used by the TUI `t` / `T` keys.
-pub const ALL_KINDS: [PresetKind; 8] = [
+pub const ALL_KINDS: [PresetKind; 14] = [
     PresetKind::PadZimmer,
     PresetKind::BassPulse,
     PresetKind::Heartbeat,
@@ -35,6 +45,12 @@ pub const ALL_KINDS: [PresetKind; 8] = [
     PresetKind::Bell,
     PresetKind::SuperSaw,
     PresetKind::PluckSaw,
+    PresetKind::FmKick,
+    PresetKind::FmSnare,
+    PresetKind::FmHat,
+    PresetKind::FmBass,
+    PresetKind::FmLead,
+    PresetKind::FmBell,
 ];
 
 impl PresetKind {
@@ -48,6 +64,12 @@ impl PresetKind {
             PresetKind::Bell => "Bell",
             PresetKind::SuperSaw => "SuperSaw",
             PresetKind::PluckSaw => "Pluck",
+            PresetKind::FmKick => "FM Kick",
+            PresetKind::FmSnare => "FM Snare",
+            PresetKind::FmHat => "FM Hat",
+            PresetKind::FmBass => "FM Bass",
+            PresetKind::FmLead => "FM Lead",
+            PresetKind::FmBell => "FM Bell",
         }
     }
 
@@ -164,6 +186,128 @@ impl Preset {
             PresetKind::Bell => bell_preset(p, g),
             PresetKind::SuperSaw => super_saw(p, g),
             PresetKind::PluckSaw => pluck_saw(p, g),
+            // Plan 002 issue 11c — the YM2612 FM kit: one shared core
+            // (`fm_voice`), each voice a table row.
+            PresetKind::FmKick => fm_voice(
+                p,
+                g,
+                FmVoice {
+                    ratio: 6.0,
+                    ratio_lo: 4.0,
+                    ratio_hi: 10.0,
+                    index: 900.0,
+                    index_decay: 28.0,
+                    amp_decay: 3.0,
+                    sweep: 4.0,
+                    sweep_decay: 10.0,
+                    noise_hp: 0.0,
+                    noise_decay: 0.0,
+                    filter_cap: 0.0,
+                    detune_carrier: false,
+                    haas: 0.008,
+                    reverb: (10.0, 1.5, 0.88),
+                },
+            ),
+            PresetKind::FmSnare => fm_voice(
+                p,
+                g,
+                FmVoice {
+                    ratio: 2.0,
+                    ratio_lo: 1.5,
+                    ratio_hi: 2.8,
+                    index: 600.0,
+                    index_decay: 12.0,
+                    amp_decay: 8.0,
+                    sweep: 1.0,
+                    sweep_decay: 1.0,
+                    noise_hp: 1500.0,
+                    noise_decay: 14.0,
+                    filter_cap: 0.0,
+                    detune_carrier: false,
+                    haas: 0.006,
+                    reverb: (12.0, 2.0, 0.88),
+                },
+            ),
+            PresetKind::FmHat => fm_voice(
+                p,
+                g,
+                FmVoice {
+                    ratio: 9.0,
+                    ratio_lo: 7.0,
+                    ratio_hi: 11.0,
+                    index: 800.0,
+                    index_decay: 20.0,
+                    amp_decay: 14.0,
+                    sweep: 1.0,
+                    sweep_decay: 1.0,
+                    noise_hp: 0.0,
+                    noise_decay: 0.0,
+                    filter_cap: 0.0,
+                    detune_carrier: false,
+                    haas: 0.0,
+                    reverb: (10.0, 1.5, 0.88),
+                },
+            ),
+            PresetKind::FmBass => fm_voice(
+                p,
+                g,
+                FmVoice {
+                    ratio: 1.5,
+                    ratio_lo: 1.0,
+                    ratio_hi: 2.0,
+                    index: 600.0,
+                    index_decay: 6.0,
+                    amp_decay: 4.0,
+                    sweep: 1.0,
+                    sweep_decay: 1.0,
+                    noise_hp: 0.0,
+                    noise_decay: 0.0,
+                    filter_cap: 900.0,
+                    detune_carrier: false,
+                    haas: 0.014,
+                    reverb: (14.0, 2.5, 0.88),
+                },
+            ),
+            PresetKind::FmLead => fm_voice(
+                p,
+                g,
+                FmVoice {
+                    ratio: 2.0,
+                    ratio_lo: 1.5,
+                    ratio_hi: 3.0,
+                    index: 350.0,
+                    index_decay: 3.0,
+                    amp_decay: 4.5,
+                    sweep: 1.0,
+                    sweep_decay: 1.0,
+                    noise_hp: 0.0,
+                    noise_decay: 0.0,
+                    filter_cap: 0.0,
+                    detune_carrier: true,
+                    haas: 0.0,
+                    reverb: (18.0, 3.5, 0.88),
+                },
+            ),
+            PresetKind::FmBell => fm_voice(
+                p,
+                g,
+                FmVoice {
+                    ratio: 3.5,
+                    ratio_lo: 3.0,
+                    ratio_hi: 4.2,
+                    index: 450.0,
+                    index_decay: 8.0,
+                    amp_decay: 5.0,
+                    sweep: 1.0,
+                    sweep_decay: 1.0,
+                    noise_hp: 0.0,
+                    noise_decay: 0.0,
+                    filter_cap: 0.0,
+                    detune_carrier: false,
+                    haas: 0.0,
+                    reverb: (25.0, 8.0, 0.85),
+                },
+            ),
         }
     }
 }
@@ -339,6 +483,246 @@ fn stereo_gate_voiced(
         g * (1.0 - depth + depth * pulse) * life_scaled
     });
     Net::wrap(Box::new(raw >> follow(0.4) >> split::<U2>()))
+}
+
+// ── FM (plan 002 issue 11c): the shared YM2612-style 2-op core ──────
+// The Genesis idiom `bell_preset` proved in this graph: a sine carrier
+// whose PHASE is modulated by another sine, with a DECAYING modulation
+// index — the envelope, not the ratio, is what makes it sound like FM.
+// A voice that is really a saw/square with a filter is not FM; these
+// six voices are `(carrier_freq + modulator·index_env) >> sine()` with
+// the index env decaying on every hit of the pattern grid. Every voice:
+//   * drives its amplitude envelope from `pattern_bits`
+//     (`rhythm::step_is_active`, the pluck_saw/heartbeat idiom) so the
+//     grid times the hits,
+//   * morphs the modulator:carrier ratio with `character` via `lerp3`
+//     (0.5 = the tuned default),
+//   * scales the modulation index with `resonance` (bell_preset's
+//     `resonance.min(0.65)` idiom),
+//   * clamps everything (no panic on any parameter value),
+//   * tails through the SAME `stereo_reverb_mix` / `supermass_send` /
+//     `stereo_gate_voiced` as its siblings (the fold keeps working).
+#[derive(Clone, Copy)]
+struct FmVoice {
+    /// Modulator:carrier frequency ratio at `character` 0.5.
+    ratio: f64,
+    /// The ratio at `character` 0.0 / 1.0 (the `lerp3` extremes; 0.5
+    /// reproduces `ratio` exactly).
+    ratio_lo: f64,
+    ratio_hi: f64,
+    /// The modulation index (Hz) at `resonance` 0.65 (bell_preset's
+    /// `resonance.min(0.65) * 450.0` idiom, per-voice scale).
+    index: f64,
+    /// The index's per-step decay rate (`exp(-phi·k)` — the FM
+    /// envelope; the hit's "click").
+    index_decay: f64,
+    /// The amplitude envelope's per-step decay rate (step-gated by
+    /// `pattern_bits`).
+    amp_decay: f64,
+    /// The carrier's start multiplier on a hit (the kick's ×4 → ×1
+    /// downward sweep; 1.0 = no sweep).
+    sweep: f64,
+    /// The sweep's per-step decay rate (10.0 ≈ 60 ms at the shipped
+    /// 150 bpm).
+    sweep_decay: f64,
+    /// The noise burst's high-pass (Hz; 0.0 = no noise).
+    noise_hp: f32,
+    /// The noise burst's per-step decay rate.
+    noise_decay: f64,
+    /// The Moog low-pass ceiling (Hz; 0.0 = no filter — the bass's
+    /// `bass_pulse` idiom).
+    filter_cap: f32,
+    /// A second, slightly detuned carrier (the lead's width; honours
+    /// `p.detune` like pluck_saw).
+    detune_carrier: bool,
+    /// The Haas L/R delay (s; 0.0 = none).
+    haas: f32,
+    /// The reverb tail (RT60 L, RT60 R, damping).
+    reverb: (f32, f32, f32),
+}
+
+/// The hit's pitch-sweep multiplier (the heartbeat `body_osc` idiom):
+/// `sweep` at the step's start, decaying to 1.0; 1.0 off-step (the osc
+/// holds its base so there is no phase pop when the next step arrives).
+#[inline]
+fn fm_sweep_mult(bits: u32, t: f64, bpm: f64, sweep: f64, sweep_decay: f64) -> f64 {
+    if sweep <= 1.0 {
+        return 1.0;
+    }
+    let (active, phi) = rhythm::step_is_active(bits, t, bpm);
+    if active {
+        let drop = (-phi * sweep_decay).exp();
+        1.0 + (sweep - 1.0) * drop
+    } else {
+        1.0
+    }
+}
+
+/// A step-gated exponential envelope (`pattern_bits` via
+/// `rhythm::step_is_active`): 1.0 at the hit, `exp(-phi·decay)` within
+/// the step, 0.0 off-step (the pluck_saw/heartbeat idiom).
+fn fm_step_env(p: &TrackParams, g: &GlobalParams, decay: f64) -> Net {
+    let bpm = g.bpm.clone();
+    let bits = p.pattern_bits.clone();
+    Net::wrap(Box::new(lfo(move |t: f64| {
+        let (active, phi) =
+            rhythm::step_is_active(bits.load(Ordering::Relaxed), t, bpm.value() as f64);
+        if active {
+            (-phi * decay).exp()
+        } else {
+            0.0
+        }
+    })))
+}
+
+fn fm_voice(p: &TrackParams, g: &GlobalParams, cfg: FmVoice) -> Net {
+    let lb = LfoBundle::from_params(p);
+    let fm = FreqMod::new(p, g);
+
+    // ── The carrier: `p.freq` through arp + LFO-FREQ (`FreqMod`),
+    // with the voice's hit sweep on top (the heartbeat `body_osc`
+    // idiom — the sweep only applies on an active pattern step).
+    let fc = p.freq.clone();
+    let fc_d = p.freq.clone();
+    let fcm = p.freq.clone();
+    let fcm_d = p.freq.clone();
+    let bpm_c = g.bpm.clone();
+    let bpm_c_d = g.bpm.clone();
+    let bpm_m = g.bpm.clone();
+    let bpm_m_d = g.bpm.clone();
+    let bits_c = p.pattern_bits.clone();
+    let bits_c_d = p.pattern_bits.clone();
+    let bits_m = p.pattern_bits.clone();
+    let bits_m_d = p.pattern_bits.clone();
+    let det_d = p.detune.clone();
+    let det_d_m = p.detune.clone();
+    let char_m = p.character.clone();
+    let char_d = p.character.clone();
+    let fm_c = fm.clone();
+    let fm_c_d = fm.clone();
+    let fm_m = fm.clone();
+    let fm_m_d = fm.clone();
+
+    let carrier_freq = lfo(move |t: f64| {
+        let bits = bits_c.load(Ordering::Relaxed);
+        let bpm = bpm_c.value() as f64;
+        let base = fm_c.apply(fc.value() as f64, t);
+        base * fm_sweep_mult(bits, t, bpm, cfg.sweep, cfg.sweep_decay)
+    }) >> follow(0.08);
+
+    // ── The modulator: `character`-morphed ratio (the lerp3 idiom —
+    // 0.5 = the tuned default), locked to the carrier (the same base,
+    // so the ratio holds even while the kick's sweep decays).
+    let mod_freq = lfo(move |t: f64| {
+        let c = char_m.value() as f64;
+        let ratio = lerp3(cfg.ratio_lo, cfg.ratio, cfg.ratio_hi, c);
+        let bits = bits_m.load(Ordering::Relaxed);
+        let bpm = bpm_m.value() as f64;
+        let base = fm_m.apply(fcm.value() as f64, t);
+        base * fm_sweep_mult(bits, t, bpm, cfg.sweep, cfg.sweep_decay) * ratio
+    }) >> follow(0.08);
+    let modulator = mod_freq >> sine();
+
+    // ── The modulation index: `resonance`-scaled (the bell_preset
+    // idiom) and decaying with the hit — THE FM envelope.
+    let res_i = p.resonance.clone();
+    let bits_i = p.pattern_bits.clone();
+    let bpm_i = g.bpm.clone();
+    let index_env = Net::wrap(Box::new(lfo(move |t: f64| {
+        let (active, phi) =
+            rhythm::step_is_active(bits_i.load(Ordering::Relaxed), t, bpm_i.value() as f64);
+        let depth = res_i.value().clamp(0.0, 0.65) as f64 * cfg.index;
+        if active {
+            depth * (-phi * cfg.index_decay).exp()
+        } else {
+            0.0
+        }
+    })));
+    let index_env_d = index_env.clone();
+    let modulator_scaled = modulator * index_env;
+    let sig = (carrier_freq + modulator_scaled) >> sine();
+
+    // ── The voice: the FM signal, the optional detuned second carrier
+    // (the pluck_saw two-voice idiom — blended in only for voices that
+    // have it), the optional noise burst (the snare's `character`
+    // noise/tone balance).
+    let voice = if cfg.detune_carrier {
+        let carrier2 = lfo(move |t: f64| {
+            let cents = det_d.value() as f64 * 0.5;
+            let bits = bits_c_d.load(Ordering::Relaxed);
+            let bpm = bpm_c_d.value() as f64;
+            let base =
+                fm_c_d.apply(fc_d.value() as f64 * 2.0_f64.powf(cents / 1200.0), t);
+            base * fm_sweep_mult(bits, t, bpm, cfg.sweep, cfg.sweep_decay)
+        }) >> follow(0.08);
+        let mod2 = lfo(move |t: f64| {
+            let c = char_d.value() as f64;
+            let ratio = lerp3(cfg.ratio_lo, cfg.ratio, cfg.ratio_hi, c);
+            let cents = det_d_m.value() as f64 * 0.5;
+            let bits = bits_m_d.load(Ordering::Relaxed);
+            let bpm = bpm_m_d.value() as f64;
+            let base = fm_m_d
+                .apply(fcm_d.value() as f64 * 2.0_f64.powf(cents / 1200.0), t);
+            base * fm_sweep_mult(bits, t, bpm, cfg.sweep, cfg.sweep_decay) * ratio
+        }) >> follow(0.08);
+        let sig2 = (carrier2 + (mod2 >> sine()) * index_env_d) >> sine();
+        (sig + sig2) * 0.5
+    } else {
+        sig
+    };
+
+    let mut body = voice;
+    if cfg.noise_hp > 0.0 {
+        let char_n = p.character.clone();
+        let noise_env = fm_step_env(p, g, cfg.noise_decay) * lfo(move |_t: f64| {
+            let c = char_n.value().clamp(0.0, 1.0) as f64;
+            // `character` = the noise/tone balance: 0.0 → an almost
+            // pure tonal snare, 1.0 → the rattle carries the hit.
+            lerp3(0.1, 0.5, 0.9, c)
+        });
+        let noise = (white() >> highpass_hz(cfg.noise_hp, 0.7)) * noise_env;
+        body = body + noise;
+    }
+
+    // ── The optional Moog low-pass (the bass's `bass_pulse` idiom).
+    let body = if cfg.filter_cap > 0.0 {
+        let lb_c = lb.clone();
+        let cut = p.cutoff.clone();
+        let res_s = p.resonance.clone();
+        let cut_mod = lfo(move |t: f64| {
+            let b = cut.value().min(cfg.filter_cap) as f64;
+            lb_c.apply(b, LFO_CUTOFF, t, |b, m| b * 2.0_f64.powf(m))
+        }) >> follow(0.08);
+        let res_mod = lfo(move |_t: f64| res_s.value().min(0.65) as f64) >> follow(0.08);
+        (body | cut_mod | res_mod) >> moog()
+    } else {
+        body
+    };
+
+    // ── The amplitude envelope: step-gated by `pattern_bits` (the
+    // grid times the hits), then the siblings' exact tail — Haas
+    // widening (when set), the voice's reverb, the supermass send, the
+    // reverb mix and the voiced gate (so the fold keeps working).
+    let gated = body * fm_step_env(p, g, cfg.amp_decay);
+    let widen: Net = if cfg.haas > 0.0 {
+        Net::wrap(Box::new(pass() | delay(cfg.haas)))
+    } else {
+        Net::wrap(Box::new(pass() | pass()))
+    };
+    let (rt60_l, rt60_r, damp) = cfg.reverb;
+    let stereo = gated >> split::<U2>() >> widen >> reverb_stereo(rt60_l, rt60_r, damp);
+
+    let with_super = Net::wrap(Box::new(stereo)) >> supermass_send(p.supermass.clone());
+    let voiced = with_super * stereo_reverb_mix(p.reverb_mix.clone(), lb.clone());
+    voiced
+        * stereo_gate_voiced(
+            p.gain.clone(),
+            p.mute.clone(),
+            p.pulse_depth.clone(),
+            g.bpm.clone(),
+            p.life_mod.clone(),
+            lb,
+        )
 }
 
 // ── Pad ──

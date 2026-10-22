@@ -24,10 +24,11 @@ use rust_synth::audio::preset::PresetKind;
 /// The shipped score: the bake artifact (`assets/score.json`).
 pub const SCORE_JSON: &str = include_str!("../assets/score.json");
 
-/// The 8 instrument ids, in `PresetKind`'s ALL_KINDS order (stable JSON
+/// The 14 instrument ids, in `PresetKind`'s ALL_KINDS order (stable JSON
 /// ids — the DAW's kind cycler walks this order, so it must match the
-/// vendor's `ALL_KINDS` cycle order EXACTLY).
-pub const ALL_KIND_IDS: [&str; 8] = [
+/// vendor's `ALL_KINDS` cycle order EXACTLY). The six FM ids are plan
+/// 002 issue 11c's append-only addition (the last six entries).
+pub const ALL_KIND_IDS: [&str; 14] = [
     "pad_zimmer",
     "bass_pulse",
     "heartbeat",
@@ -36,6 +37,12 @@ pub const ALL_KIND_IDS: [&str; 8] = [
     "bell",
     "super_saw",
     "pluck_saw",
+    "fm_kick",
+    "fm_snare",
+    "fm_hat",
+    "fm_bass",
+    "fm_lead",
+    "fm_bell",
 ];
 
 /// The stable JSON id of a preset kind (the `ALL_KIND_IDS` entry in
@@ -51,6 +58,12 @@ pub fn kind_id(kind: PresetKind) -> &'static str {
         PresetKind::Bell => "bell",
         PresetKind::SuperSaw => "super_saw",
         PresetKind::PluckSaw => "pluck_saw",
+        PresetKind::FmKick => "fm_kick",
+        PresetKind::FmSnare => "fm_snare",
+        PresetKind::FmHat => "fm_hat",
+        PresetKind::FmBass => "fm_bass",
+        PresetKind::FmLead => "fm_lead",
+        PresetKind::FmBell => "fm_bell",
     }
 }
 
@@ -67,6 +80,12 @@ pub fn kind_from_id(id: &str) -> Option<PresetKind> {
         "bell" => PresetKind::Bell,
         "super_saw" => PresetKind::SuperSaw,
         "pluck_saw" => PresetKind::PluckSaw,
+        "fm_kick" => PresetKind::FmKick,
+        "fm_snare" => PresetKind::FmSnare,
+        "fm_hat" => PresetKind::FmHat,
+        "fm_bass" => PresetKind::FmBass,
+        "fm_lead" => PresetKind::FmLead,
+        "fm_bell" => PresetKind::FmBell,
         _ => return None,
     })
 }

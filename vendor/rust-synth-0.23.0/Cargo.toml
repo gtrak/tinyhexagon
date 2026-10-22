@@ -30,6 +30,22 @@
 #     (`src/audio/preset.rs`, `src/math`) still byte-identical.
 #   * both `[[bin]]`s gained `required-features` so the TUI/render
 #     binaries only build with their features.
+#   * `src/audio/preset.rs` (plan 002 issue 11c, the FM kit): the first
+#     deliberate change to the DSP/presets — the `PresetKind` enum grew
+#     six append-only variants at the end (`FmKick, FmSnare, FmHat,
+#     FmBass, FmLead, FmBell`; `ALL_KINDS` is now `[PresetKind; 14]`), a
+#     shared `fm_voice` core (the YM2612/Sonic idiom: a sine carrier
+#     whose phase is modulated by a second sine with a DECAYING
+#     modulation index, in `bell_preset`'s shape: `(carrier_freq +
+#     modulator * index) >> sine()`, `lfo` closures reading `Shared`
+#     params, `freq_mod` for pitch, `follow(0.08)` after the frequency
+#     closures, the `stereo_gate_voiced` tail), and the six voice
+#     configs. Every FM voice step-gates its amplitude (and index)
+#     envelope from `pattern_bits` via `rhythm::step_is_active`.
+#     Everything else in `src/audio` / `src/math` is untouched.
+#     `src/persistence.rs` + `src/tui/{life,formula,waveshape}.rs`: the
+#     exhaustive matches over `PresetKind` grew with the six variants
+#     (no behavior change).
 # Reason: the wasm32-unknown-emscripten cross-target spike (05b) —
 # crossterm 0.28's mio does not support the emscripten target and
 # vorbis_rs 0.5's ogg_next_sys build script needs a C compiler (emcc).

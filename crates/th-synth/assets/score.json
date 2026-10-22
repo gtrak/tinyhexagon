@@ -123,22 +123,27 @@
   "slots": [
     {
       "gain": 0.9,
+      "kind": "fm_kick",
+      "muted": false
+    },
+    {
+      "gain": 0.9,
+      "kind": "fm_snare",
+      "muted": false
+    },
+    {
+      "gain": 0.4,
+      "kind": "fm_hat",
+      "muted": false
+    },
+    {
+      "gain": 0.95,
+      "kind": "fm_bass",
       "muted": false
     },
     {
       "gain": 0.6,
-      "muted": false
-    },
-    {
-      "gain": 0.26,
-      "muted": false
-    },
-    {
-      "gain": 0.8,
-      "muted": false
-    },
-    {
-      "gain": 0.5,
+      "kind": "fm_lead",
       "muted": false
     },
     {

@@ -241,6 +241,38 @@ fn lines_for(kind: PresetKind, s: &crate::audio::track::TrackSnapshot, bpm: f32)
                 Span::styled(format!("{:.2}", s.gain), key),
             ]));
         }
+        // Plan 002 issue 11c — the FM kit: one shared 2-op core
+        // (`fm_voice`), the six voices only differ in their table row
+        // (ratio/index/decay/sweep/noise/filter/detune). The display is
+        // the shared formula with the voice's own knobs substituted.
+        PresetKind::FmKick
+        | PresetKind::FmSnare
+        | PresetKind::FmHat
+        | PresetKind::FmBass
+        | PresetKind::FmLead
+        | PresetKind::FmBell => {
+            out.push(Line::from(Span::styled("2-operator FM (YM2612 idiom):", hi)));
+            out.push(Line::from(Span::styled(
+                "  mod(t) = sin(2π·f·ratio·t) · (q·idx) · e^(−k_idx·φ)",
+                hi,
+            )));
+            out.push(Line::from(Span::styled(
+                "  y = sin(2π·(f + mod(t))·t) · e^(−k_amp·φ)   on active step",
+                hi,
+            )));
+            out.push(Line::from(Span::styled(
+                "  ratio = lerp3(ratio_lo, ratio, ratio_hi, character)",
+                dim,
+            )));
+            out.push(Line::from(vec![
+                Span::styled("  FM depth (q) = ", dim),
+                Span::styled(format!("{:.2}", s.resonance.min(0.65)), key),
+                Span::styled("  char = ", dim),
+                Span::styled(format!("{:.2}", s.character), key),
+                Span::styled("  gain = ", dim),
+                Span::styled(format!("{:.2}", s.gain), key),
+            ]));
+        }
     }
 
     // Universal supermassive tail line.
