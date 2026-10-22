@@ -13,19 +13,29 @@
   button (two fullscreen buttons confused the kid; the get-or-create
   now stays inert).
 
-  plan 002 issue 10b adds the SCORE LAB (query-gated — the default page
-  is unchanged in DOM, network, and behaviour):
-    * `?scorelab=1` — the grid overlay: a semi-transparent panel OVER
+  plan 002 issue 10b adds the SCORE LAB backend (query-gated — the
+  default page is unchanged in DOM, network, and behaviour), and issue
+  11b reshapes the `?scorelab=1` panel into the FL-studio-shaped DAW:
+    * `?scorelab=1` — the DAW overlay: a semi-transparent panel OVER
       the running game (the game stays audible: hear the edit as it
-      lands). A drum grid (kick/snare/hat x the steps-per-bar: a click
-      toggles the step in the CURRENT stage's effective tier), a
-      melodic grid (bass/lead: a click cycles the step's note through
-      the palette rest->0->7->10->12->15->17->19->3), a gain row (the 8
-      `slots[i].gain` sliders), a BPM slider (`bpm.base` — the ramp's
-      `per_stage`/`cap` untouched), the gate_open/swing pair, the
-      "Copy JSON" button (the canonical `getScore()` text — the bake),
-      and the setScore status span ("" = ok in green, the error in
-      red). Every edit pushes through the issue-10a exports:
+      lands). The transport row (a stage read, a BPM slider
+      (`bpm.base` — the ramp's `per_stage`/`cap` untouched), the
+      gate_open/swing pair, the "Clear solo" escape hatch — a baked
+      solo would silence the game — and the setScore status span,
+      "" = ok in green, the error in red). Then the tracks: one
+      header per slot (the ROLE name — kick/snare/hat/bass/lead/
+      pad/bell/sub — the M/S toggles (muted = dimmed row, soloed =
+      highlighted row), an instrument <select> over the 8 kind ids
+      (timbre only — the role's driver stays), the slot's gain
+      slider), and the lane: the 3 drum rows + the shared step ruler
+      grouped as ONE rack (a click toggles the step in the CURRENT
+      stage's effective tier; the beats — every 4th step —
+      emphasized), the bass/lead PIANO ROLLS (Y = pitch, X = step —
+      a click sets the pitch at the step, the note's own cell clears
+      to rest, a drag across steps draws the same pitch), and the
+      read-only chord display for pad/bell/sub (they follow the
+      bar's chord; the schema has no per-step data for them). Every
+      edit pushes through the issue-10a exports:
       `mod.setScore(JSON.stringify(score))`; the panel's source is
       `mod.getScore()` (the truth the engine is playing).
     * `?score=<url>` — the hot reload (the editor-driven loop): poll
@@ -33,7 +43,7 @@
       changed, `mod.setScore(text)`; the outcome + the error log
       `[scorelab] reload: ...` to the console and paint the status
       span (when the overlay exists).
-  The two compose (`?scorelab=1&score=<url>`: the grid over the running
+  The two compose (`?scorelab=1&score=<url>`: the DAW over the running
   game + the file's live reload); both are inert without their query
   string. The overlay's DOM is BUILT by the module script's scorelab
   branch (without the flag it never exists — the page stays text-free
@@ -108,37 +118,141 @@
          contract are unchanged). */
       #status { display: none; position: fixed; top: 4px; right: 8px;
                 font-size: 11px; opacity: 0.7; z-index: 11; }
-      /* 10b — the score lab overlay (?scorelab=1 only): a
+      /* 10b+11b — the score lab / DAW overlay (?scorelab=1 only): a
          semi-transparent panel OVER the running game (the game stays
          audible — the lab's point: hear the edit as it lands). The
          #scorelab element is created only by the module script's
          scorelab branch, so without the flag these rules are inert
-         (the default page stays text-free and exactly as before). */
+         (the default page stays text-free and exactly as before).
+         11b reshapes the panel FL-studio: the transport (bpm/gate/
+         swing + the stage read + Clear solo + the status), the track
+         rows (the header column — the role name, the M/S toggles,
+         the instrument <select>, the gain slider — then the lane:
+         the grouped drum rack, the bass/lead piano rolls, the
+         read-only chord lanes). */
       #scorelab { position: fixed; top: 4px; left: 4px; z-index: 12;
-                  max-width: min(94vw, 620px); max-height: 94vh; overflow: auto;
-                  background: rgba(17, 17, 17, 0.82); border: 1px solid #3a3a3a;
-                  padding: 8px 10px; font-size: 12px; line-height: 1.4; }
+                  max-width: min(96vw, 720px); max-height: 94vh; overflow: auto;
+                  background: rgba(17, 17, 17, 0.88); border: 1px solid #3a3a3a;
+                  padding: 8px 10px; font-size: 12px; line-height: 1.4;
+                  /* the DAW's shared step geometry: every step column
+                     (the drum rack, the rolls, the ruler) is --cellw
+                     wide, so the same step has the same x in every
+                     row (--pitchw is the roll's pitch-label column,
+                     kept as a gutter in the drum rows so the step
+                     columns align across the panel). */
+                  --cellw: 23px; --thw: 276px; --pitchw: 34px; }
       #scorelab .title { color: #888; margin: 2px 0; }
       #scorelab .row { display: flex; align-items: center; gap: 5px;
                        margin: 3px 0; flex-wrap: wrap; }
       #scorelab .lbl { display: inline-block; width: 42px; color: #999; }
-      #scorelab .cell { display: inline-block; width: 1.5em; height: 1.5em;
-                       line-height: 1.5em; text-align: center;
-                       border: 1px solid #2c2c2c; color: #777;
-                       cursor: pointer; user-select: none; }
-      #scorelab .cell.on { background: #1e7a46; border-color: #2fa065; color: #fff; }
-      #scorelab .cell.note { background: #7a4a1e; border-color: #a0652f; color: #fff; }
       #scorelab input[type="range"] { width: 110px; }
       #scorelab .val { display: inline-block; width: 3.4em; color: #999; }
-      #scorelab .gain input[type="range"] { width: 42px; }
-      #scorelab .gain .val { width: 3em; }
-      #scorelab .gnum { width: 1.2em; color: #999; }
       #scorelab button { padding: 2px 8px; font-family: inherit; }
       #scorelab textarea { width: 100%; height: 88px; box-sizing: border-box;
         font-family: inherit; font-size: 11px; background: #0a0a0a;
         color: #bbb; border: 1px solid #444; margin-top: 3px; }
       #scorelab .jsonrow { display: block; margin-top: 4px; }
-      #scorelab .status { display: inline-block; min-width: 200px; }
+      #scorelab .status { display: inline-block; min-width: 160px; }
+      #scorelab .stageread { color: #d8a017; font-size: 11px; }
+      /* the track rows: the header column + the lane (the header
+         stays at the row's top — the roll's lane is much taller
+         than its header) */
+      #scorelab .track { display: flex; margin: 1px 0; }
+      #scorelab .track.gap { margin-top: 9px; }
+      /* the drum rows sit gapless (the rack's ONE-block contract) */
+      #scorelab .drumrow { margin: 0; }
+      #scorelab .th { width: var(--thw); flex: none; align-self: flex-start;
+                      display: flex; align-items: center; gap: 4px;
+                      background: #141414; border: 1px solid #2c2c2c;
+                      padding: 3px 5px; box-sizing: border-box; }
+      #scorelab .tname { display: inline-block; width: 38px; color: #ccc;
+                         font-size: 11px; }
+      #scorelab .msbtn { width: 17px; padding: 1px 0; font-size: 10px;
+                         line-height: 1.3; background: #222; color: #999;
+                         border: 1px solid #3a3a3a; cursor: pointer;
+                         font-family: inherit; }
+      /* the M/S state VISIBILITY (a hidden mute is indistinguishable
+         from a bug when the operator cannot hear the lane): the
+         active state changes the button's fill AND the row's
+         appearance (.track.muted dims, .track.solo highlights) */
+      #scorelab .msbtn.on-m { background: #7a1e1e; color: #fff;
+                              border-color: #a04040; }
+      #scorelab .msbtn.on-s { background: #7a5a1e; color: #fff;
+                              border-color: #a0802f; }
+      #scorelab .kindsel { max-width: 88px; font-size: 11px;
+                           font-family: inherit; background: #1a1a1a;
+                           color: #bbb; border: 1px solid #3a3a3a; }
+      #scorelab .gain input[type="range"] { width: 52px; }
+      #scorelab .gain .val { width: 2.6em; }
+      #scorelab .track.muted .lane { opacity: 0.35; }
+      #scorelab .track.muted .tname { color: #666; }
+      #scorelab .track.solo { outline: 1px solid #d8a017; }
+      /* the lanes: the gutter (the roll's pitch-label column) keeps
+         the step columns at the same x in the rack and the rolls */
+      #scorelab .lane { flex: 1; min-width: 0; display: flex;
+                        box-sizing: border-box; }
+      #scorelab .gutter { width: var(--pitchw); flex: none; }
+      /* the step columns: one 16-cell grid per row; the beat lines
+         (every 4th column's left edge — the beats) run through the
+         whole block that carries them */
+      #scorelab .cells { display: grid;
+                         grid-template-columns: repeat(16, var(--cellw));
+                         grid-auto-rows: 1fr;
+                         background-color: #0d1418;
+                         background-image: repeating-linear-gradient(to right,
+                           rgba(130, 170, 180, 0.22) 0 1px,
+                           transparent 1px calc(4 * var(--cellw))); }
+      #scorelab .cell { box-sizing: border-box; text-align: center;
+                        font-size: 11px; color: #777; cursor: pointer;
+                        user-select: none; border-right: 1px solid #162026; }
+      #scorelab .cell.on { background: #1e7a46; color: #fff; }
+      /* the drum rack: the ruler + the 3 rows read as ONE grouped
+         block — no gaps between the rows, one continuous grid
+         background, the beat lines the rack's full height */
+      #scorelab .rackruler { display: flex; margin: 0; }
+      #scorelab .rackruler .th { align-self: stretch; height: 15px;
+                                 padding: 0 5px; line-height: 15px;
+                                 font-size: 10px; color: #888; }
+      #scorelab .rackruler .lane { height: 15px; border-bottom: 1px solid #2a3a40; }
+      #scorelab .rackruler .cells { background-color: #10181c; }
+      #scorelab .rackruler .cell { line-height: 14px; font-size: 10px;
+                                   cursor: default; }
+      #scorelab .rackruler .cell.beat { color: #d8a017; font-weight: bold; }
+      #scorelab .drumrow .cell { display: flex; align-items: center;
+                                 justify-content: center; }
+      #scorelab .drumrow + .drumrow .lane { border-top: 1px solid #1c262c; }
+      #scorelab .rackend .lane { border-bottom: 1px solid #2a3a40; }
+      /* the piano rolls (Y = pitch, X = step): the semitone-offset
+         row labels (the schema's values — the root row 0 and the
+         octave rows ±12 marked distinctly), the note cells filled */
+      #scorelab .lane.rollbass, #scorelab .lane.rolllead { display: block; }
+      #scorelab .rollhead { font-size: 10px; color: #888; margin: 0 0 2px 0;
+                            padding-left: var(--pitchw); }
+      #scorelab .rollrow { display: flex; align-items: center; }
+      #scorelab .pth { width: var(--pitchw); flex: none; text-align: right;
+                       padding-right: 4px; font-size: 9px; color: #666;
+                       user-select: none; }
+      #scorelab .pth.root { color: #6fb3e0; font-weight: bold; }
+      #scorelab .pth.oct { color: #b06fd8; }
+      #scorelab .rcells { display: grid;
+                          grid-template-columns: repeat(16, var(--cellw));
+                          background-color: #101010;
+                          background-image: repeating-linear-gradient(to right,
+                            rgba(130, 170, 180, 0.18) 0 1px,
+                            transparent 1px calc(4 * var(--cellw))); }
+      #scorelab .rcell { height: 15px; box-sizing: border-box;
+                         border-right: 1px solid #191919;
+                         border-bottom: 1px solid #191919;
+                         cursor: pointer; }
+      #scorelab .rcell.root { background: rgba(111, 179, 224, 0.07); }
+      #scorelab .rcell.on { background: #2f7fb5; }
+      #scorelab .rcell.on.root { background: #3d84c4; }
+      /* the harmony lanes (pad/bell/sub): the read-only chord
+         display (the schema has no per-step data for these — the
+         engine ignores it; the bar chord is what they follow) */
+      #scorelab .chordlane { display: block; font-size: 11px; color: #999;
+                             padding: 5px 6px 5px calc(var(--pitchw) + 6px);
+                             background: #101010; border: 1px solid #2c2c2c; }
     </style>
   </head>
   <body>
@@ -336,8 +450,8 @@
         // — synced from getScore() at boot, after a rejected push, and
         // after a hot reload, so the panel always shows what the
         // engine is playing) + the last status line's stage + the
-        // overlay's DOM refs (scorelab-only; null without the flag).
-        const lab = { score: null, stage: -1, statusEl: null, els: {}, grid: null, paintAll: null };
+        // DAW's structure refs (scorelab-only; null without the flag).
+        const lab = { score: null, stage: -1, statusEl: null, els: {}, daw: null, paintAll: null };
 
         // The setScore result's paint ("" = ok in green, the error in
         // red; the span exists only with the overlay — a no-op
@@ -464,9 +578,21 @@
         }
 
         if (scorelab) {
-          // ---- the overlay: built ONLY here (the default page's DOM
-          // has no trace of it) — a fixed, semi-transparent panel over
-          // the canvas; the game keeps running and audible behind it.
+          // ---- the DAW overlay (11b): built ONLY here (the default
+          // page's DOM has no trace of it) — a fixed, semi-transparent
+          // panel over the canvas; the game keeps running and audible
+          // behind it. The FL-studio shape the operator asked for:
+          // the transport row (bpm/gate/swing + the stage read +
+          // Clear solo + the status), then the track rows — a header
+          // per slot (the ROLE name, the M/S toggles, the instrument
+          // <select> over ALL_KIND_IDS, the gain slider) and the
+          // lane: the 3 drum rows + the shared step ruler grouped as
+          // ONE rack, the bass/lead PIANO ROLLS (Y = pitch, X = step;
+          // click sets the pitch, the note's own cell clears to rest,
+          // drag draws across steps), and the read-only chord display
+          // for pad/bell/sub. Every edit pushes through the
+          // issue-10a exports (pushScore); the panel's source is
+          // mod.getScore() (the truth the engine is playing).
           const mk = (tag, text, cls) => {
             const e = document.createElement(tag);
             if (text !== undefined) e.textContent = text;
@@ -477,15 +603,45 @@
           const panel = mk("div");
           panel.id = "scorelab";
 
-          // The title carries the stage (the #status line is hidden by
-          // the text-free design — this is where the operator sees
-          // which tier's patterns the drum grid shows).
-          const titleEl = mk("div", "score lab", "title");
+          // The title (the #status line is hidden by the text-free
+          // design — the transport's stage read is the operator's
+          // other view of the current tier).
+          const titleEl = mk("div", "score lab — daw", "title");
           lab.els.title = titleEl;
 
-          // The transport row: the BPM slider (score.bpm.base — the
-          // ramp's per_stage/cap stay untouched), gate_open + swing,
-          // the "Copy JSON" bake button, the setScore status span.
+          // The 8 slots (engine/director::SLOTS order): the ROLE
+          // (fixed by the index — the driver that sequences the slot:
+          // the drum tiers, the bass/lead lines, the bar chord) + the
+          // BUILT-IN kind (the timbre when the score leaves
+          // slots[i].kind absent — issue-10 scores and the shipped
+          // bake) + the lane's kind. KIND_IDS must match th-synth's
+          // ALL_KIND_IDS exactly (the probe pins the select ->
+          // getScore round trip); CHORD_RATIO mirrors
+          // director::SLOTS[5..7].ratio (display-only — the ratios
+          // are engine constants, not score data).
+          const SLOTS_META = [
+            { name: "KICK", builtin: "heartbeat", lane: "drum" },
+            { name: "SNARE", builtin: "heartbeat", lane: "drum" },
+            { name: "HAT", builtin: "heartbeat", lane: "drum" },
+            { name: "BASS", builtin: "bass_pulse", lane: "roll" },
+            { name: "LEAD", builtin: "pluck_saw", lane: "roll" },
+            { name: "PAD", builtin: "pad_zimmer", lane: "chord" },
+            { name: "BELL", builtin: "bell", lane: "chord" },
+            { name: "SUB", builtin: "drone_sub", lane: "chord" },
+          ];
+          const KIND_IDS = [
+            "pad_zimmer", "bass_pulse", "heartbeat", "drone_sub",
+            "shimmer", "bell", "super_saw", "pluck_saw",
+          ];
+          const CHORD_RATIO = [1.0, 2.0, 0.25];
+
+          // The transport row: the stage read (the drum rack shows the
+          // CURRENT stage's effective tier — re-read from the status
+          // line by the 1 s poll), the BPM slider (score.bpm.base —
+          // the ramp's per_stage/cap stay untouched) + the
+          // gate_open/swing pair (10b), the Clear-solo escape hatch
+          // (a baked solo would silence every non-soloed slot — the
+          // game goes quiet), and the setScore status span.
           const transport = mk("div", null, "row");
           const slider = (label, min, max, step, onInput) => {
             const s = mk("input");
@@ -507,27 +663,104 @@
           // leaves headroom; the schema itself takes any non-negative
           // fraction).
           lab.els.swing = slider("swing", 0, 0.5, 0.01, (v) => { lab.score.swing = v; pushScore(); });
+          const stageRead = mk("span", "stage ?", "stageread");
+          stageRead.id = "scorelab-stage";
+          transport.append(stageRead);
+          const clearSoloBtn = mk("button", "Clear solo");
+          clearSoloBtn.id = "scorelab-clear-solo";
+          clearSoloBtn.title = "score.solo = null — the explicit escape hatch (a baked solo silences the game)";
+          clearSoloBtn.addEventListener("click", () => {
+            if (!lab.score) return;
+            lab.score.solo = null;
+            pushScore();
+            paintMix();
+          });
+          transport.append(clearSoloBtn);
           lab.statusEl = mk("span", "", "status");
           lab.statusEl.id = "scorelab-status";
           transport.append(lab.statusEl);
 
-          // The grids: the drum rows (a click toggles the step in the
-          // CURRENT stage's effective tier) + the melodic rows (a click
-          // cycles the step's note through the palette). The cell count
-          // follows score.steps_per_bar (16 shipped; a reloaded score
-          // with a different count rebuilds the cells).
-          const DRUMS = ["kick", "snare", "hat"];
-          const LINES = ["bass", "lead"];
-          // The note palette (issue 10b, frozen): rest -> 0 -> 7 -> 10
-          // -> 12 -> 15 -> 17 -> 19 -> 3 -> rest. Semitone offsets (the
-          // schema's note values); the bass's octave_shift -1 and the
-          // lead's +1 are NOT editable here.
-          const NOTE_PALETTE = [null, 0, 7, 10, 12, 15, 17, 19, 3];
-          const gridHost = mk("div", null, "grid");
+          // The track rows: one per slot. The header (the role name,
+          // M, S, the instrument <select>, the gain slider — the 10b
+          // gain row's slider moved INTO the header: one control set
+          // per slot). The lane's content is built by buildDrumDom /
+          // buildRoll (the structure rebuilds only when steps_per_bar
+          // or a roll's pitch range changes).
+          const tracks = mk("div", null, "tracks");
+          const trackEls = [];
+          for (let i = 0; i < 8; i++) {
+            const meta = SLOTS_META[i];
+            const root = mk("div", null,
+              "track" + (i < 3 ? " drumrow" : "") + (i === 2 ? " rackend" : "")
+              + (i === 3 || i === 5 ? " gap" : ""));
+            root.id = "scorelab-track-" + i;
+            const th = mk("div", null, "th");
+            th.append(mk("span", meta.name, "tname"));
+            const mBtn = mk("button", "M", "msbtn");
+            mBtn.id = "scorelab-mute-" + i;
+            mBtn.title = "mute: slots[" + i + "].muted (the row dims while muted)";
+            mBtn.addEventListener("click", () => {
+              if (!lab.score) return;
+              lab.score.slots[i].muted = !lab.score.slots[i].muted;
+              pushScore();
+              paintMix();
+            });
+            const sBtn = mk("button", "S", "msbtn");
+            sBtn.id = "scorelab-solo-" + i;
+            sBtn.title = "solo: score.solo = " + i + " (click again — or Clear solo — to clear)";
+            sBtn.addEventListener("click", () => {
+              if (!lab.score) return;
+              lab.score.solo = lab.score.solo === i ? null : i;
+              pushScore();
+              paintMix();
+            });
+            const sel = mk("select", null, "kindsel");
+            sel.id = "scorelab-kind-" + i;
+            sel.title = "instrument: the TIMBRE only — the role (and its driver) stays";
+            for (const id of KIND_IDS) {
+              const o = mk("option", id);
+              o.value = id;
+              sel.append(o);
+            }
+            sel.addEventListener("change", () => {
+              if (!lab.score) return;
+              lab.score.slots[i].kind = sel.value;
+              pushScore();
+              paintMix();
+            });
+            const gainWrap = mk("span", null, "gain");
+            const gain = mk("input");
+            gain.type = "range"; gain.min = "0"; gain.max = "1"; gain.step = "0.01";
+            gain.title = "slots[" + i + "].gain";
+            const gainRead = mk("span", "", "val");
+            gain.addEventListener("input", () => {
+              if (!lab.score) return;
+              const v = Number(gain.value);
+              gainRead.textContent = v.toFixed(2);
+              lab.score.slots[i].gain = v;
+              pushScore();
+            });
+            gainWrap.append(gain, gainRead);
+            th.append(mBtn, sBtn, sel, gainWrap);
+            const lane = mk("div", null,
+              "lane" + (meta.lane === "drum" ? " drumlane" : meta.lane === "chord" ? " chordlane" : ""));
+            root.append(th, lane);
+            tracks.append(root);
+            trackEls.push({ root, mBtn, sBtn, sel, gain, gainRead, lane });
+          }
 
-          // The director's tier resolution: the last tier with
-          // `stage <= stage` (the tiers ascend; a valid score's
-          // tiers[0].stage is 0, so this always resolves).
+          // The shared step ruler (the drum rack's top edge): the
+          // step numbers 1..16 (the beats — every 4th — emphasized),
+          // on the rack's grid background, so the ruler + the 3 rows
+          // read as ONE grouped block.
+          const ruler = mk("div", null, "rackruler");
+          ruler.append(mk("div", "step", "th"), mk("div", null, "lane drumlane"));
+          tracks.prepend(ruler);
+
+          // The director's tier resolution (the 10b logic, unchanged):
+          // the last tier with `stage <= stage` (the tiers ascend; a
+          // valid score's tiers[0].stage is 0, so this always
+          // resolves).
           const tierAtOrBelow = (tiered, stage) => {
             let best = null;
             for (const t of tiered.tiers) if (t.stage <= stage) best = t;
@@ -535,14 +768,189 @@
           };
           const stageNow = () => (lab.stage < 0 ? 0 : lab.stage);
 
+          // The piano-roll drag state (the FL basic interaction): a
+          // mousedown sets the cell's pitch at its step; dragging
+          // across steps with the button held writes the SAME pitch
+          // to each step passed over (the mouseenter-while-down
+          // pattern; the mouseup on window ends it). null = not
+          // painting.
+          let rollDrag = null;
+          window.addEventListener("touchend", () => { rollDrag = null; });
+
+          // A roll cell's write: clicking sets that pitch at the step
+          // (notes[i] = the offset); clicking the note's OWN cell
+          // again clears it to rest (null). This REPLACES the 10b
+          // palette-cycle — the grid IS the pitch picker now.
+          const setRollNote = (line, pitch, step) => {
+            if (!lab.score) return;
+            const notes = lab.score[line].notes;
+            if (step < 0 || step >= notes.length) return;
+            notes[step] = notes[step] === pitch ? null : pitch;
+          };
+          const paintRollCell = (line, pitch, step) => {
+            setRollNote(line, pitch, step);
+            pushScore();
+            paintRolls();
+          };
+          const startRollPaint = (line, pitch, step) => {
+            rollDrag = { line, pitch };
+            paintRollCell(line, pitch, step);
+            const up = () => {
+              rollDrag = null;
+              window.removeEventListener("mouseup", up);
+            };
+            window.addEventListener("mouseup", up);
+          };
+
+          // The pitch range: the union of the line's notes + its root
+          // (offset 0), padded one octave either way — a typical line
+          // is fully visible. The rows are labelled with the
+          // semitone offset (the schema's value); the root row (0)
+          // and the octave rows (±12) are marked distinctly.
+          // The roll's visible pitch span: the notes' own range rounded
+          // OUT to octave boundaries. The spec's "pad one octave either
+          // way" produced a 37-row grid for a line that uses 10 notes
+          // (the bass reached -12..+24), which buried the LEAD roll
+          // below a screen of empty rows. Rounding to octaves keeps the
+          // grid compact AND every visible row musically meaningful
+          // (a pitch you can actually hear a relation to).
+          const pitchRange = (line) => {
+            let lo = 0, hi = 0;
+            for (const n of lab.score[line].notes) {
+              if (n !== null) {
+                if (n < lo) lo = n;
+                if (n > hi) hi = n;
+              }
+            }
+            const floorOct = (v) => Math.floor(v / 12) * 12;
+            const ceilOct = (v) => Math.ceil(v / 12) * 12;
+            const outLo = floorOct(lo);
+            let outHi = ceilOct(hi);
+            if (outHi - outLo < 12) outHi = outLo + 12; // at least one octave
+            return [outLo, outHi];
+          };
+
+          // Build one roll's DOM into the track's lane: the header
+          // note (the octave_shift readout + the chord-following
+          // note — the bass follows the bar's chord, the lead does
+          // not) + the pitch rows (Y = pitch, X = step).
+          const buildRoll = (line) => {
+            const lane = trackEls[line === "bass" ? 3 : 4].lane;
+            lane.classList.add(line === "bass" ? "rollbass" : "rolllead");
+            lane.id = "scorelab-roll-" + line;
+            lane.replaceChildren();
+            lane.append(mk("div",
+              line === "bass"
+                ? "octave " + lab.score.bass.octave_shift + " — the bass follows the bar's chord"
+                : "octave " + lab.score.lead.octave_shift + " — the lead stays on the key root (ignores the chord)",
+              "rollhead"));
+            const [lo, hi] = pitchRange(line);
+            const rows = [];
+            for (let p = lo; p <= hi; p++) {
+              const rowEl = mk("div", null, "rollrow");
+              const pth = mk("span", p > 0 ? "+" + p : String(p), "pth"
+                + (p === 0 ? " root" : p % 12 === 0 ? " oct" : ""));
+              const cells = mk("div", null, "rcells");
+              const stepCells = [];
+              for (let s = 0; s < lab.score.steps_per_bar; s++) {
+                const c = mk("div", null, "rcell" + (p === 0 ? " root" : ""));
+                c.dataset.line = line;
+                c.dataset.pitch = String(p);
+                c.dataset.step = String(s);
+                c.addEventListener("mousedown", (e) => {
+                  e.preventDefault(); // no text selection while painting
+                  startRollPaint(line, p, s);
+                });
+                c.addEventListener("mouseenter", (e) => {
+                  // The drag-to-draw: entering a cell while painting
+                  // (a button held) writes the SAME pitch.
+                  if (rollDrag && rollDrag.line === line && (e.buttons & 1)) {
+                    paintRollCell(line, p, s);
+                  }
+                });
+                // Touch (optional but preferred): resolve the cell
+                // under the finger.
+                c.addEventListener("touchstart", (e) => {
+                  e.preventDefault();
+                  startRollPaint(line, p, s);
+                }, { passive: false });
+                c.addEventListener("touchmove", (e) => {
+                  e.preventDefault();
+                  const t = e.touches[0];
+                  if (!t) return;
+                  const el = document.elementFromPoint(t.clientX, t.clientY);
+                  if (el && el.classList.contains("rcell") && el.dataset.line === line) {
+                    paintRollCell(line, Number(el.dataset.pitch), Number(el.dataset.step));
+                  }
+                }, { passive: false });
+                cells.append(c);
+                stepCells.push(c);
+              }
+              rowEl.append(pth, cells);
+              lane.append(rowEl);
+              rows.push(stepCells);
+            }
+            lab.daw.rolls[line] = { lo, hi, steps: lab.score.steps_per_bar, rows };
+          };
+
+          // The rolls' cell repaint (no DOM rebuild — the cells are
+          // built once per pitch range; moving a note only flips the
+          // on/off class).
+          const paintRolls = () => {
+            if (!lab.score || !lab.daw) return;
+            for (const line of ["bass", "lead"]) {
+              const r = lab.daw.rolls[line];
+              if (!r) continue;
+              const notes = lab.score[line].notes;
+              r.rows.forEach((cells, ri) => {
+                const p = r.lo + ri;
+                cells.forEach((c, s) => {
+                  c.classList.toggle("on", s < notes.length && notes[s] === p);
+                });
+              });
+            }
+          };
+
+          // The drum rack's DOM (rebuilds only when steps_per_bar
+          // changes): the ruler's step cells + the 3 rows' cells. The
+          // rows share the rack's grid background + beat lines and
+          // sit adjacent (no gaps between the rows) — one block.
+          const buildDrumDom = (steps) => {
+            const rulerCells = mk("div", null, "cells");
+            for (let i = 0; i < steps; i++) {
+              rulerCells.append(mk("span", String(i + 1),
+                "cell" + (i % 4 === 0 ? " beat" : "")));
+            }
+            ruler.children[1].replaceChildren(mk("div", null, "gutter"), rulerCells);
+            const drumCells = {};
+            for (let i = 0; i < 3; i++) {
+              const drum = ["kick", "snare", "hat"][i];
+              const lane = trackEls[i].lane;
+              const row = mk("div", null, "cells");
+              const cells = [];
+              for (let s = 0; s < steps; s++) {
+                const c = mk("span", null, "cell");
+                c.addEventListener("click", () => toggleDrum(drum, s));
+                cells.push(c);
+                row.append(c);
+              }
+              lane.replaceChildren(mk("div", null, "gutter"), row);
+              drumCells[drum] = cells;
+            }
+            return drumCells;
+          };
+
+          // The drum rows' repaint: the CURRENT stage's effective
+          // tier (the hit chars minus the tier's `exclude` — the
+          // engine's rule).
           const paintDrums = () => {
-            if (!lab.grid || !lab.score) return;
+            if (!lab.daw || !lab.score) return;
             const stage = stageNow();
-            for (const drum of DRUMS) {
+            for (const drum of ["kick", "snare", "hat"]) {
               const tier = tierAtOrBelow(lab.score[drum], stage);
-              const pattern = tier ? tier.pattern : ".".repeat(lab.grid.steps);
+              const pattern = tier ? tier.pattern : ".".repeat(lab.daw.steps);
               const exclude = tier && tier.exclude ? tier.exclude : [];
-              lab.grid.drumCells[drum].forEach((cell, i) => {
+              lab.daw.drumCells[drum].forEach((cell, i) => {
                 // The EFFECTIVE state: a hit char, unless the tier's
                 // `exclude` forces the step off (the engine's rule).
                 const on = (pattern[i] === "x" || pattern[i] === "X") && !exclude.includes(i);
@@ -552,24 +960,13 @@
             }
           };
 
-          const paintNotes = () => {
-            if (!lab.grid || !lab.score) return;
-            for (const line of LINES) {
-              const notes = lab.score[line].notes;
-              lab.grid.noteCells[line].forEach((cell, i) => {
-                const n = i < notes.length ? notes[i] : null;
-                cell.textContent = n === null ? "" : String(n);
-                cell.className = n === null ? "cell" : "cell note";
-              });
-            }
-          };
-
           // A drum cell toggles its step's EFFECTIVE state in the
-          // current stage's effective tier: a hit char turns to a rest
-          // char; a rest char turns to a hit; a hit forced off by
-          // `exclude` turns on by clearing the exclusion (and the
-          // reverse — so the toggle always lands on the inverted
-          // state, whatever the tier's exclude list says).
+          // current stage's effective tier (the 10b toggleDrum,
+          // unchanged): a hit char turns to a rest char; a rest char
+          // turns to a hit; a hit forced off by `exclude` turns on by
+          // clearing the exclusion (and the reverse — so the toggle
+          // always lands on the inverted state, whatever the tier's
+          // exclude list says).
           const toggleDrum = (drum, i) => {
             if (!lab.score) return;
             const tiered = lab.score[drum];
@@ -578,7 +975,7 @@
               // Defensive only: Score::from_json validates a stage-0
               // tier, so a valid score always resolves one. The schema
               // still REQUIRES a stage-0 tier — create it (all rest)
-              // if a hand-built score somehow lacks it.
+              // if a hand-built score somehow lacks one.
               tier = { stage: 0, pattern: ".".repeat(lab.score.steps_per_bar) };
               tiered.tiers.unshift(tier);
             }
@@ -601,71 +998,60 @@
             paintDrums();
           };
 
-          // A melodic cell cycles its step's note through the palette
-          // (a note NOT in the palette cycles to rest next — a
-          // hand-edited score's foreign note is still reachable).
-          const cycleNote = (line, i) => {
+          // The harmony lanes (pad/bell/sub): the read-only chord
+          // display. The status line has NO bar counter (only
+          // stage=), so the live bar's offset is not available
+          // client-side: the display shows the stage's chord table
+          // (major/minor by the minor window — what each bar's root
+          // resolves to as the bars advance) + the slot's engine
+          // ratio. There is no editable per-step data for these
+          // lanes — the schema has none and the engine ignores it.
+          const paintChords = () => {
             if (!lab.score) return;
-            const notes = lab.score[line].notes;
-            const at = NOTE_PALETTE.indexOf(notes[i]);
-            notes[i] = NOTE_PALETTE[(at + 1) % NOTE_PALETTE.length];
-            pushScore();
-            paintNotes();
-          };
-
-          const buildGrid = (steps) => {
-            if (lab.grid && lab.grid.steps === steps) return;
-            gridHost.replaceChildren();
-            const drumCells = {};
-            const noteCells = {};
-            for (const name of [...DRUMS, ...LINES]) {
-              const row = mk("div", null, "row");
-              row.append(mk("span", name, "lbl"));
-              const cells = [];
-              for (let i = 0; i < steps; i++) {
-                const c = mk("span", null, "cell");
-                c.addEventListener("click", () => {
-                  if (DRUMS.includes(name)) toggleDrum(name, i);
-                  else cycleNote(name, i);
-                });
-                cells.push(c);
-                row.append(c);
-              }
-              if (DRUMS.includes(name)) drumCells[name] = cells;
-              else noteCells[name] = cells;
-              gridHost.append(row);
+            const sc = lab.score;
+            const stage = stageNow();
+            const minor = sc.minor_from <= stage && stage < sc.minor_until;
+            const table = minor ? sc.chords.minor : sc.chords.major;
+            for (let k = 0; k < 3; k++) {
+              const i = 5 + k;
+              trackEls[i].lane.textContent =
+                "bar chord " + (minor ? "minor" : "major") + " [" + table.join(" ")
+                + "] · ratio " + CHORD_RATIO[k].toFixed(2) + " · stage " + stage;
             }
-            lab.grid = { steps, drumCells, noteCells };
           };
 
-          // The gain row: one small slider per slots[i].gain (the
-          // engine/SLOTS order, labelled 1..8).
-          const gainRow = mk("div", null, "row gain");
-          gainRow.append(mk("span", "gain", "lbl"));
-          const gainCtrls = [];
-          for (let i = 0; i < 8; i++) {
-            const s = mk("input");
-            s.type = "range"; s.min = "0"; s.max = "1"; s.step = "0.01";
-            const read = mk("span", "", "val");
-            s.addEventListener("input", () => {
-              if (!lab.score) return;
-              const v = Number(s.value);
-              read.textContent = v.toFixed(2);
-              lab.score.slots[i].gain = v;
-              pushScore();
-            });
-            gainCtrls.push({ input: s, read });
-            gainRow.append(mk("span", String(i + 1), "gnum"), s, read);
-          }
+          // The mix state's paint (the critical-correctness half of
+          // 11b): the M/S buttons and the rows VISIBLELY reflect the
+          // state — a muted row dims (a hidden mute is
+          // indistinguishable from a bug when the operator cannot
+          // hear the lane), a soloed row highlights — plus the kind
+          // selects' and the gains' values re-set to the engine's
+          // truth.
+          const paintMix = () => {
+            if (!lab.score) return;
+            for (let i = 0; i < 8; i++) {
+              const t = trackEls[i];
+              const muted = lab.score.slots[i].muted === true;
+              const soloed = lab.score.solo === i;
+              t.mBtn.classList.toggle("on-m", muted);
+              t.sBtn.classList.toggle("on-s", soloed);
+              t.root.classList.toggle("muted", muted);
+              t.root.classList.toggle("solo", soloed);
+              t.sel.value = lab.score.slots[i].kind || SLOTS_META[i].builtin;
+              const g = lab.score.slots[i].gain;
+              t.gain.value = String(g);
+              t.gainRead.textContent = Number(g).toFixed(2);
+            }
+          };
 
-          // ---- the JSON row: the bake's read/write surface. The box
-          // holds the canonical JSON (refreshed from the engine's truth
-          // on every sync/paint); Load pushes it back through setScore,
-          // so pasting a score and applying it is one click. Download
-          // saves it as score.json — the bake that needs no clipboard at
-          // all (the reliable path on an insecure origin). Doing the
-          // bake = Load/Download then paste-or-save over
-          // crates/th-synth/assets/score.json.
+          // ---- the JSON row: the bake's read/write surface (10b,
+          // unchanged). The box holds the canonical JSON (refreshed
+          // from the engine's truth on every sync/paint); Load pushes
+          // it back through setScore, so pasting a score and applying
+          // it is one click. Download saves it as score.json — the
+          // bake that needs no clipboard at all (the reliable path on
+          // an insecure origin). Doing the bake = Load/Download then
+          // paste-or-save over crates/th-synth/assets/score.json.
           const jsonRow = mk("div", null, "jsonrow");
           const jsonBox = mk("textarea");
           jsonBox.id = "scorelab-json";
@@ -741,15 +1127,27 @@
           jsonRow.append(jsonBtns, jsonBox);
 
           // The full repaint from the engine's truth (the boot sync,
-          // the hot-reload sync, and the rejected-push re-sync all land
-          // here): the grids (rebuilt only if steps_per_bar changed)
-          // + the transport/gain rows' values re-set to what the
-          // engine actually has.
+          // the hot-reload sync, and the rejected-push re-sync all
+          // land here): the DAW DOM (rebuilt only when the structure
+          // changed — steps_per_bar, or a roll's pitch range) + the
+          // drum/roll/chord cells + the transport/mix state + the
+          // JSON box (mirrors the engine unless the operator is
+          // mid-edit in it and it is focused — their text wins until
+          // they Load or re-sync).
           lab.paintAll = () => {
             if (!lab.score) return;
-            buildGrid(lab.score.steps_per_bar);
+            const steps = lab.score.steps_per_bar;
+            if (!lab.daw || lab.daw.steps !== steps) {
+              lab.daw = { steps, drumCells: buildDrumDom(steps), rolls: {} };
+            }
+            for (const line of ["bass", "lead"]) {
+              const [lo, hi] = pitchRange(line);
+              const r = lab.daw.rolls[line];
+              if (!r || r.lo !== lo || r.hi !== hi || r.steps !== steps) buildRoll(line);
+            }
             paintDrums();
-            paintNotes();
+            paintRolls();
+            paintChords();
             const set = (ctrl, v) => {
               ctrl.input.value = String(v);
               ctrl.read.textContent = ctrl.fmt(v);
@@ -757,20 +1155,13 @@
             set(lab.els.bpm, lab.score.bpm.base);
             set(lab.els.gate, lab.score.gate_open);
             set(lab.els.swing, lab.score.swing);
-            gainCtrls.forEach((c, i) => {
-              const g = lab.score.slots[i] ? lab.score.slots[i].gain : 0;
-              c.input.value = String(g);
-              c.read.textContent = g.toFixed(2);
-            });
-            // The JSON box mirrors the engine's truth (unless the
-            // operator is mid-edit in it and it is focused — their text
-            // wins until they Load or re-sync).
+            paintMix();
             if (document.activeElement !== jsonBox) {
               jsonBox.value = mod.getScore ? mod.getScore() : "";
             }
           };
 
-          panel.append(titleEl, transport, gridHost, gainRow, jsonRow);
+          panel.append(titleEl, transport, tracks, jsonRow);
           document.body.append(panel);
 
           // The probe's entry (tools/web-tiny-probe.mjs's OH_SCORELAB
@@ -787,17 +1178,19 @@
           };
 
           // The 1 s poll's hook (assigned here; the poll's tail calls
-          // it when non-null): the stage re-read (the drum grid's
-          // effective tier is the CURRENT stage's — repaint only on a
-          // change) + the first sync (getScore() is "" until the
-          // director installs).
+          // it when non-null): the stage re-read (the drum rack's
+          // effective tier + the chord table's major/minor selection
+          // are the CURRENT stage's — repaint only on a change) + the
+          // first sync (getScore() is "" until the director installs).
           scorelabTick = (s) => {
             const m = /(^|;)stage=(\d+)/.exec(s);
             const st = m ? Number(m[2]) : -1;
             if (st !== lab.stage) {
               lab.stage = st;
-              titleEl.textContent = st >= 0 ? `score lab (stage ${st})` : "score lab";
+              titleEl.textContent = st >= 0 ? "score lab — daw (stage " + st + ")" : "score lab — daw";
+              stageRead.textContent = st >= 0 ? "stage " + st : "stage ?";
               paintDrums();
+              paintChords();
             }
             if (!lab.score) syncFromEngine();
           };
