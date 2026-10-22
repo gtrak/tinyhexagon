@@ -47,6 +47,14 @@
 // --timeout — the boot wait in seconds (default 120: the `.data` is the
 //             22 MB `--preload-file` package + the engine's boot —
 //             assets, config, Luau, the first frame).
+// OH_SCORELAB=1 — the score lab's OPT-IN half (plan 002 issue 10b):
+//             the default CI probe stays fast — without the flag the
+//             probe is the pre-10b behaviour (the plain URL, no
+//             scorelab checks). With it, the probe navigates with
+//             ?scorelab=1 (appended when absent) and adds the
+//             overlay's DOM + the frozen getScore/setScore contract's
+//             checks (via the page's window.ohMod / window.ohSetScore
+//             hooks).
 //
 // Assertions (exit 0 only when ALL pass):
 //   * the game boots + starts: `#status` reaches
@@ -70,6 +78,12 @@
 //   * `document.title` contains `tinyhexagon`; a `<canvas>` exists
 //     with non-zero width / height; `window.ohStatus()` + `#status`
 //     both contain `tinyhexagon` + `booted=true`
+//   * (OH_SCORELAB=1 only) the score lab: the `#scorelab` overlay
+//     exists, the canonical round-trip
+//     `mod.setScore(mod.getScore()) === ""`, a deliberately broken
+//     score returns a non-empty error (through the page's ohSetScore
+//     push path — the same mod.setScore call + the status paint), and
+//     the `#scorelab-status` span reflects that error
 //   * clean console: no errors / exceptions (a `/favicon.ico` 404 +
 //     the boot's autoplay "AudioContext was not allowed to start"
 //     warning are tolerated — the OpenAL SFX device's pre-gesture
@@ -86,6 +100,15 @@ const argv = process.argv.slice(2);
 const url = argv.find((a) => !a.startsWith('--')) || 'http://127.0.0.1:8080/';
 const shotPath = (argv.find((a) => a.startsWith('--shot=')) || '').slice(7) || 'target/web-tiny.png';
 const timeoutSecs = Number((argv.find((a) => a.startsWith('--timeout=')) || '').slice(10) || 120);
+// plan 002 issue 10b — the score lab's OPT-IN half (OH_SCORELAB=1):
+// the default CI probe stays fast — without the flag the probe is the
+// pre-10b behaviour (the plain URL, no scorelab checks). With it, the
+// probe navigates with ?scorelab=1 (appended when absent) and adds the
+// overlay's DOM + the frozen getScore/setScore contract's checks.
+const scorelabProbe = process.env.OH_SCORELAB === '1' || process.env.OH_SCORELAB === 'true';
+const probeUrl = scorelabProbe && !/[?&]scorelab=1(?:\b|$)/.test(url)
+  ? url + (url.includes('?') ? '&' : '?') + 'scorelab=1'
+  : url;
 
 const CHROME = process.env.OH_CHROME
   || ['/home/gary/.agent-browser/browsers/chrome-148.0.7778.97/chrome',
@@ -114,7 +137,7 @@ let up = false;
 for (let i = 0; i < 60 && !up; i++) { try { await http('/json/version'); up = true; } catch { await sleep(500); } }
 if (!up) { chrome.kill('SIGKILL'); console.error('web-tiny-probe: chrome never opened its debug port'); process.exit(1); }
 
-const target = await http(`/json/new?${encodeURIComponent(url)}`, { method: 'PUT' });
+const target = await http(`/json/new?${encodeURIComponent(probeUrl)}`, { method: 'PUT' });
 const ws = new WebSocket(target.webSocketDebuggerUrl);
 let id = 0; const pending = new Map();
 const logs = []; const errors = []; const bad = [];
@@ -154,7 +177,7 @@ await send('Network.setCacheDisabled', { cacheDisabled: true });
 // Re-navigate with the domains enabled: the `/json/new` target already
 // started loading before this connection existed, so the second
 // navigate is what the Network / Runtime capture actually sees.
-await send('Page.navigate', { url });
+await send('Page.navigate', { url: probeUrl });
 
 // The status line (the `#status` poll's text, parsed into fields):
 // `tinyhexagon web: booted=true;ticks=...;stage=...;started=...;angle=...;audio=...;energy=...;help=...`
@@ -277,6 +300,36 @@ const inputChecks = [
     logs.some((l) => /\[shell\] audio (unlocked|unlock requested)/.test(l))],
 ];
 
+// plan 002 issue 10b — the score lab's checks (the OH_SCORELAB=1
+// opt-in only; the default CI probe runs none of this). `window.ohMod`
+// is the page's module instance (the 08a exposure — the probe's
+// `mod.setScore(mod.getScore())` checks are the frozen exports called
+// through it). The broken-score check goes through `window.ohSetScore`
+// — the page's own push path (the SAME mod.setScore call + the status
+// paint + the re-sync): a raw export call can't paint the page's UI,
+// and the fourth check is precisely that the span reflects the error.
+const scorelabChecks = [];
+if (scorelabProbe) {
+  const pageEval = async (expression) => {
+    // returnByValue hands back the RAW value (a primitive — `true`, the
+    // error string, the span's text): no JSON.parse (the error strings
+    // are not JSON — parsing them would turn a non-empty error into a
+    // parse-fail null).
+    const r = await send('Runtime.evaluate', { expression, returnByValue: true });
+    return r.result?.result?.value ?? null;
+  };
+  const overlayOk = await pageEval('document.getElementById("scorelab") !== null');
+  scorelabChecks.push(['scorelab: the overlay exists (#scorelab rendered into the DOM with ?scorelab=1)', overlayOk === true]);
+  const roundTrip = await pageEval(
+    'typeof window.ohMod.getScore === "function" && typeof window.ohMod.setScore === "function" && window.ohMod.setScore(window.ohMod.getScore()) === ""',
+  );
+  scorelabChecks.push(['scorelab: the canonical round-trip is accepted (mod.setScore(mod.getScore()) === "")', roundTrip === true]);
+  const brokenErr = await pageEval('typeof window.ohSetScore === "function" ? window.ohSetScore("{ not json") : ""');
+  scorelabChecks.push(['scorelab: a broken score returns an error (mod.setScore("{ not json") !== "")', typeof brokenErr === 'string' && brokenErr !== '']);
+  const spanText = await pageEval('(() => { const s = document.getElementById("scorelab-status"); return s ? s.textContent : ""; })()');
+  scorelabChecks.push(['scorelab: the status span reflects the error (non-empty, not "ok")', typeof spanText === 'string' && spanText !== '' && spanText !== 'ok']);
+}
+
 // The DOM / status contract.
 const page = post || {};
 const titleOk = /tinyhexagon/.test(page.title || '');
@@ -317,6 +370,7 @@ const checks = [
   ['the game booted + started (status line reached booted=true;started=true)', baseline.f.booted === 'true' && baseline.f.started === 'true'],
   ...baseChecks,
   ...inputChecks,
+  ...scorelabChecks,
   ['document.title contains "tinyhexagon"', titleOk],
   ['a <canvas> exists with non-zero width/height', canvasOk],
   ['window.ohStatus() contains "tinyhexagon" + "booted=true"', ohOk],
@@ -327,7 +381,7 @@ const checks = [
   [`screenshot captured (${shotPath})`, shotOk],
 ];
 const pass = checks.every(([, ok]) => ok);
-console.log(`web-tiny-probe: ${url}`);
+console.log(`web-tiny-probe: ${probeUrl}`);
 console.log(`  baseline : ${baseline.line}`);
 console.log(`  post     : ${post?.statusText || post?.oh || '(unreachable)'}`);
 for (const [name, ok] of checks) console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${name}`);

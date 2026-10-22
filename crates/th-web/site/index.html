@@ -13,6 +13,32 @@
   button (two fullscreen buttons confused the kid; the get-or-create
   now stays inert).
 
+  plan 002 issue 10b adds the SCORE LAB (query-gated — the default page
+  is unchanged in DOM, network, and behaviour):
+    * `?scorelab=1` — the grid overlay: a semi-transparent panel OVER
+      the running game (the game stays audible: hear the edit as it
+      lands). A drum grid (kick/snare/hat x the steps-per-bar: a click
+      toggles the step in the CURRENT stage's effective tier), a
+      melodic grid (bass/lead: a click cycles the step's note through
+      the palette rest->0->7->10->12->15->17->19->3), a gain row (the 8
+      `slots[i].gain` sliders), a BPM slider (`bpm.base` — the ramp's
+      `per_stage`/`cap` untouched), the gate_open/swing pair, the
+      "Copy JSON" button (the canonical `getScore()` text — the bake),
+      and the setScore status span ("" = ok in green, the error in
+      red). Every edit pushes through the issue-10a exports:
+      `mod.setScore(JSON.stringify(score))`; the panel's source is
+      `mod.getScore()` (the truth the engine is playing).
+    * `?score=<url>` — the hot reload (the editor-driven loop): poll
+      `fetch(url, {cache:"no-store"})` every 500 ms; when the text
+      changed, `mod.setScore(text)`; the outcome + the error log
+      `[scorelab] reload: ...` to the console and paint the status
+      span (when the overlay exists).
+  The two compose (`?scorelab=1&score=<url>`: the grid over the running
+  game + the file's live reload); both are inert without their query
+  string. The overlay's DOM is BUILT by the module script's scorelab
+  branch (without the flag it never exists — the page stays text-free
+  by default); tools/web-tiny-probe.mjs covers it under OH_SCORELAB=1.
+
   SERVE (static, no build step): the THREE build artifacts (the loader
   `tinyhexagon.js` — MODULARIZE + EXPORT_ES6, the factory default-
   export — + `tinyhexagon.wasm` + the preloaded `tinyhexagon.data`)
@@ -82,6 +108,33 @@
          contract are unchanged). */
       #status { display: none; position: fixed; top: 4px; right: 8px;
                 font-size: 11px; opacity: 0.7; z-index: 11; }
+      /* 10b — the score lab overlay (?scorelab=1 only): a
+         semi-transparent panel OVER the running game (the game stays
+         audible — the lab's point: hear the edit as it lands). The
+         #scorelab element is created only by the module script's
+         scorelab branch, so without the flag these rules are inert
+         (the default page stays text-free and exactly as before). */
+      #scorelab { position: fixed; top: 4px; left: 4px; z-index: 12;
+                  max-width: min(94vw, 620px); max-height: 94vh; overflow: auto;
+                  background: rgba(17, 17, 17, 0.82); border: 1px solid #3a3a3a;
+                  padding: 8px 10px; font-size: 12px; line-height: 1.4; }
+      #scorelab .title { color: #888; margin: 2px 0; }
+      #scorelab .row { display: flex; align-items: center; gap: 5px;
+                       margin: 3px 0; flex-wrap: wrap; }
+      #scorelab .lbl { display: inline-block; width: 42px; color: #999; }
+      #scorelab .cell { display: inline-block; width: 1.5em; height: 1.5em;
+                       line-height: 1.5em; text-align: center;
+                       border: 1px solid #2c2c2c; color: #777;
+                       cursor: pointer; user-select: none; }
+      #scorelab .cell.on { background: #1e7a46; border-color: #2fa065; color: #fff; }
+      #scorelab .cell.note { background: #7a4a1e; border-color: #a0652f; color: #fff; }
+      #scorelab input[type="range"] { width: 110px; }
+      #scorelab .val { display: inline-block; width: 3.4em; color: #999; }
+      #scorelab .gain input[type="range"] { width: 42px; }
+      #scorelab .gain .val { width: 3em; }
+      #scorelab .gnum { width: 1.2em; color: #999; }
+      #scorelab button { padding: 2px 8px; font-family: inherit; }
+      #scorelab .status { display: inline-block; min-width: 200px; }
     </style>
   </head>
   <body>
@@ -172,6 +225,11 @@
       // live state — AL.currentCtx — hangs off it; the streaming tests
       // read the shim's own queues to pin the stall).
       window.ohMod = mod;
+      // 10b — the score lab's per-second hook: the scorelab branch
+      // (below) assigns it (the stage re-read + the first getScore
+      // sync); null without ?scorelab=1, so the default page's poll
+      // never calls it (its behaviour stays byte-identical).
+      let scorelabTick = null;
       setInterval(() => {
         let s = mod.status();
         // The on-device buffer stats appended to the status line (the
@@ -197,6 +255,12 @@
           audioLive = true;
           console.log("[shell] audio unlocked (status poll)");
         }
+        // 10b — the score lab's per-second hook (null without
+        // ?scorelab=1): re-read the status line's stage= field (the
+        // grid's drum rows track the CURRENT stage's effective tier)
+        // and do the first getScore sync (getScore() is "" until the
+        // boot's run installs the director).
+        if (scorelabTick) scorelabTick(s);
       }, 1000);
       // plan 002 issue 08a — the FIRST-GESTURE audio unlock, hardened
       // in the 09 pass: EVERY pointerdown / keydown calls the exported
@@ -248,6 +312,389 @@
         if (document.visibilityState !== "visible") return;
         onGesture("visibility -> visible");
       });
+
+      // plan 002 issue 10b — the score lab: the `?scorelab=1` grid
+      // overlay + the `?score=<url>` hot reload, over the issue-10a
+      // exports (`getScore` = the engine's current score as canonical
+      // pretty JSON; `setScore` = the in-place live swap — no graph
+      // rebuild — returning "" or the human-facing error). Query-
+      // gated: with neither flag in location.search this whole block
+      // creates no DOM and does no fetches — the page behaves exactly
+      // as before. The two compose (`?scorelab=1&score=<url>`: the
+      // grid over the running game + the file's live reload); both
+      // stay inert without their query string.
+      const scoreParams = new URLSearchParams(location.search);
+      const scorelab = scoreParams.get("scorelab") === "1";
+      const scoreUrl = scoreParams.get("score");
+
+      if (scorelab || scoreUrl) {
+        // The lab's one state: the in-memory score (the engine's truth
+        // — synced from getScore() at boot, after a rejected push, and
+        // after a hot reload, so the panel always shows what the
+        // engine is playing) + the last status line's stage + the
+        // overlay's DOM refs (scorelab-only; null without the flag).
+        const lab = { score: null, stage: -1, statusEl: null, els: {}, grid: null, paintAll: null };
+
+        // The setScore result's paint ("" = ok in green, the error in
+        // red; the span exists only with the overlay — a no-op
+        // otherwise).
+        const paintScoreStatus = (err) => {
+          if (!lab.statusEl) return;
+          lab.statusEl.textContent = err === "" ? "ok" : err;
+          lab.statusEl.style.color = err === "" ? "#4c4" : "#f55";
+        };
+
+        // Re-read the engine's truth (getScore() = the canonical pretty
+        // JSON; "" until the boot's run installs the director — the 1 s
+        // poll retries until it lands) and repaint the overlay from it.
+        const syncFromEngine = () => {
+          if (typeof mod.getScore !== "function") return;
+          const text = mod.getScore();
+          if (text === "") return; // pre-boot: the next poll retries
+          try {
+            lab.score = JSON.parse(text);
+            if (scorelab && lab.paintAll) lab.paintAll();
+          } catch (err) {
+            console.error("[scorelab] getScore parse failed: " + err);
+          }
+        };
+
+        // EVERY edit's exit: the caller mutated the in-memory score;
+        // push it through the frozen export and paint the return.
+        // A rejected push leaves the engine's score untouched — re-sync
+        // so the UI never shows a change that didn't land.
+        const pushScore = () => {
+          if (typeof mod.setScore !== "function") {
+            paintScoreStatus("setScore export missing (issue 10a not in this build)");
+            return;
+          }
+          const err = mod.setScore(JSON.stringify(lab.score));
+          paintScoreStatus(err);
+          if (err !== "") {
+            console.error("[scorelab] setScore rejected: " + err);
+            syncFromEngine();
+          }
+        };
+
+        // The ?score=<url> hot reload (the editor-driven loop): poll
+        // the operator's file every 500 ms (they save
+        // crates/th-synth/assets/score.json or a copy); when the text
+        // changed, live-swap the engine's score. The outcome AND the
+        // error log `[scorelab] reload: ...` to the console; errors
+        // also paint the status span (when the overlay exists). An
+        // UNAPPLIED text (a parse error, or the pre-boot "no
+        // director") is retried on the next poll: lastText only
+        // advances when the engine accepted the text.
+        if (scoreUrl) {
+          let lastText = "";
+          (async () => {
+            while (true) {
+              let msg = null; // null: this poll has nothing to report
+              let errText = "";
+              try {
+                const res = await fetch(scoreUrl, { cache: "no-store" });
+                if (res.ok) {
+                  const text = await res.text();
+                  if (text !== lastText) {
+                    const err = mod.setScore(text);
+                    if (err === "") {
+                      lastText = text; // applied: track it
+                      msg = "ok";
+                    } else {
+                      msg = "error: " + err; // retry the same text next poll
+                    }
+                    errText = err;
+                  }
+                } else {
+                  msg = "error: http " + res.status;
+                  errText = "http " + res.status;
+                }
+              } catch (err) {
+                msg = "error: " + (err && err.message ? err.message : String(err));
+                errText = err && err.message ? err.message : String(err);
+              }
+              if (msg !== null) {
+                (msg === "ok" ? console.log : console.error)("[scorelab] reload: " + msg);
+                if (msg === "ok") {
+                  paintScoreStatus("");
+                  syncFromEngine(); // the panel tracks the new truth
+                } else {
+                  paintScoreStatus("reload: " + errText);
+                }
+              }
+              await new Promise((r) => setTimeout(r, 500));
+            }
+          })();
+        }
+
+        if (scorelab) {
+          // ---- the overlay: built ONLY here (the default page's DOM
+          // has no trace of it) — a fixed, semi-transparent panel over
+          // the canvas; the game keeps running and audible behind it.
+          const mk = (tag, text, cls) => {
+            const e = document.createElement(tag);
+            if (text !== undefined) e.textContent = text;
+            if (cls) e.className = cls;
+            return e;
+          };
+
+          const panel = mk("div");
+          panel.id = "scorelab";
+
+          // The title carries the stage (the #status line is hidden by
+          // the text-free design — this is where the operator sees
+          // which tier's patterns the drum grid shows).
+          const titleEl = mk("div", "score lab", "title");
+          lab.els.title = titleEl;
+
+          // The transport row: the BPM slider (score.bpm.base — the
+          // ramp's per_stage/cap stay untouched), gate_open + swing,
+          // the "Copy JSON" bake button, the setScore status span.
+          const transport = mk("div", null, "row");
+          const slider = (label, min, max, step, onInput) => {
+            const s = mk("input");
+            s.type = "range"; s.min = String(min); s.max = String(max);
+            s.step = String(step); s.value = "0";
+            const fmt = (v) => v.toFixed(step < 1 ? 2 : 0);
+            const read = mk("span", "0", "val");
+            s.addEventListener("input", () => {
+              const v = Number(s.value);
+              read.textContent = fmt(v);
+              if (lab.score) onInput(v);
+            });
+            transport.append(mk("span", label, "lbl"), s, read);
+            return { input: s, read, fmt };
+          };
+          lab.els.bpm = slider("bpm", 60, 220, 1, (v) => { lab.score.bpm.base = v; pushScore(); });
+          lab.els.gate = slider("gate", 0, 1, 0.01, (v) => { lab.score.gate_open = v; pushScore(); });
+          // swing's sensible range is 0..0.5 (the shipped score's 0.15
+          // leaves headroom; the schema itself takes any non-negative
+          // fraction).
+          lab.els.swing = slider("swing", 0, 0.5, 0.01, (v) => { lab.score.swing = v; pushScore(); });
+          const copyBtn = mk("button", "Copy JSON");
+          copyBtn.id = "scorelab-copy";
+          copyBtn.addEventListener("click", async () => {
+            try {
+              // The bake: the canonical getScore() text (issue 10a's
+              // to_json_pretty — exactly what assets/score.json holds
+              // for the shipped score; THIS text is the bake).
+              await navigator.clipboard.writeText(mod.getScore());
+              const old = copyBtn.textContent;
+              copyBtn.textContent = "copied";
+              setTimeout(() => { copyBtn.textContent = old; }, 900);
+            } catch (err) {
+              console.error("[scorelab] copy failed: " + err);
+              paintScoreStatus("copy: " + (err && err.message ? err.message : String(err)));
+            }
+          });
+          lab.statusEl = mk("span", "", "status");
+          lab.statusEl.id = "scorelab-status";
+          transport.append(copyBtn, lab.statusEl);
+
+          // The grids: the drum rows (a click toggles the step in the
+          // CURRENT stage's effective tier) + the melodic rows (a click
+          // cycles the step's note through the palette). The cell count
+          // follows score.steps_per_bar (16 shipped; a reloaded score
+          // with a different count rebuilds the cells).
+          const DRUMS = ["kick", "snare", "hat"];
+          const LINES = ["bass", "lead"];
+          // The note palette (issue 10b, frozen): rest -> 0 -> 7 -> 10
+          // -> 12 -> 15 -> 17 -> 19 -> 3 -> rest. Semitone offsets (the
+          // schema's note values); the bass's octave_shift -1 and the
+          // lead's +1 are NOT editable here.
+          const NOTE_PALETTE = [null, 0, 7, 10, 12, 15, 17, 19, 3];
+          const gridHost = mk("div", null, "grid");
+
+          // The director's tier resolution: the last tier with
+          // `stage <= stage` (the tiers ascend; a valid score's
+          // tiers[0].stage is 0, so this always resolves).
+          const tierAtOrBelow = (tiered, stage) => {
+            let best = null;
+            for (const t of tiered.tiers) if (t.stage <= stage) best = t;
+            return best;
+          };
+          const stageNow = () => (lab.stage < 0 ? 0 : lab.stage);
+
+          const paintDrums = () => {
+            if (!lab.grid || !lab.score) return;
+            const stage = stageNow();
+            for (const drum of DRUMS) {
+              const tier = tierAtOrBelow(lab.score[drum], stage);
+              const pattern = tier ? tier.pattern : ".".repeat(lab.grid.steps);
+              const exclude = tier && tier.exclude ? tier.exclude : [];
+              lab.grid.drumCells[drum].forEach((cell, i) => {
+                // The EFFECTIVE state: a hit char, unless the tier's
+                // `exclude` forces the step off (the engine's rule).
+                const on = (pattern[i] === "x" || pattern[i] === "X") && !exclude.includes(i);
+                cell.textContent = on ? "x" : "";
+                cell.className = on ? "cell on" : "cell";
+              });
+            }
+          };
+
+          const paintNotes = () => {
+            if (!lab.grid || !lab.score) return;
+            for (const line of LINES) {
+              const notes = lab.score[line].notes;
+              lab.grid.noteCells[line].forEach((cell, i) => {
+                const n = i < notes.length ? notes[i] : null;
+                cell.textContent = n === null ? "" : String(n);
+                cell.className = n === null ? "cell" : "cell note";
+              });
+            }
+          };
+
+          // A drum cell toggles its step's EFFECTIVE state in the
+          // current stage's effective tier: a hit char turns to a rest
+          // char; a rest char turns to a hit; a hit forced off by
+          // `exclude` turns on by clearing the exclusion (and the
+          // reverse — so the toggle always lands on the inverted
+          // state, whatever the tier's exclude list says).
+          const toggleDrum = (drum, i) => {
+            if (!lab.score) return;
+            const tiered = lab.score[drum];
+            let tier = tierAtOrBelow(tiered, stageNow());
+            if (!tier) {
+              // Defensive only: Score::from_json validates a stage-0
+              // tier, so a valid score always resolves one. The schema
+              // still REQUIRES a stage-0 tier — create it (all rest)
+              // if a hand-built score somehow lacks it.
+              tier = { stage: 0, pattern: ".".repeat(lab.score.steps_per_bar) };
+              tiered.tiers.unshift(tier);
+            }
+            const excluded = (tier.exclude || []).includes(i);
+            const hit = tier.pattern[i] === "x" || tier.pattern[i] === "X";
+            if (hit && !excluded) {
+              // ON -> OFF: clear the hit char.
+              tier.pattern = tier.pattern.slice(0, i) + "." + tier.pattern.slice(i + 1);
+            } else if (hit) {
+              // OFF (the exclusion forces it off) -> ON: clear the
+              // exclusion (the char already says hit).
+              tier.exclude = (tier.exclude || []).filter((j) => j !== i);
+            } else {
+              // OFF (rest char) -> ON: set the hit char; drop a
+              // redundant exclusion of the same step if one exists.
+              tier.pattern = tier.pattern.slice(0, i) + "x" + tier.pattern.slice(i + 1);
+              if (excluded) tier.exclude = (tier.exclude || []).filter((j) => j !== i);
+            }
+            pushScore();
+            paintDrums();
+          };
+
+          // A melodic cell cycles its step's note through the palette
+          // (a note NOT in the palette cycles to rest next — a
+          // hand-edited score's foreign note is still reachable).
+          const cycleNote = (line, i) => {
+            if (!lab.score) return;
+            const notes = lab.score[line].notes;
+            const at = NOTE_PALETTE.indexOf(notes[i]);
+            notes[i] = NOTE_PALETTE[(at + 1) % NOTE_PALETTE.length];
+            pushScore();
+            paintNotes();
+          };
+
+          const buildGrid = (steps) => {
+            if (lab.grid && lab.grid.steps === steps) return;
+            gridHost.replaceChildren();
+            const drumCells = {};
+            const noteCells = {};
+            for (const name of [...DRUMS, ...LINES]) {
+              const row = mk("div", null, "row");
+              row.append(mk("span", name, "lbl"));
+              const cells = [];
+              for (let i = 0; i < steps; i++) {
+                const c = mk("span", null, "cell");
+                c.addEventListener("click", () => {
+                  if (DRUMS.includes(name)) toggleDrum(name, i);
+                  else cycleNote(name, i);
+                });
+                cells.push(c);
+                row.append(c);
+              }
+              if (DRUMS.includes(name)) drumCells[name] = cells;
+              else noteCells[name] = cells;
+              gridHost.append(row);
+            }
+            lab.grid = { steps, drumCells, noteCells };
+          };
+
+          // The gain row: one small slider per slots[i].gain (the
+          // engine/SLOTS order, labelled 1..8).
+          const gainRow = mk("div", null, "row gain");
+          gainRow.append(mk("span", "gain", "lbl"));
+          const gainCtrls = [];
+          for (let i = 0; i < 8; i++) {
+            const s = mk("input");
+            s.type = "range"; s.min = "0"; s.max = "1"; s.step = "0.01";
+            const read = mk("span", "", "val");
+            s.addEventListener("input", () => {
+              if (!lab.score) return;
+              const v = Number(s.value);
+              read.textContent = v.toFixed(2);
+              lab.score.slots[i].gain = v;
+              pushScore();
+            });
+            gainCtrls.push({ input: s, read });
+            gainRow.append(mk("span", String(i + 1), "gnum"), s, read);
+          }
+
+          // The full repaint from the engine's truth (the boot sync,
+          // the hot-reload sync, and the rejected-push re-sync all land
+          // here): the grids (rebuilt only if steps_per_bar changed)
+          // + the transport/gain rows' values re-set to what the
+          // engine actually has.
+          lab.paintAll = () => {
+            if (!lab.score) return;
+            buildGrid(lab.score.steps_per_bar);
+            paintDrums();
+            paintNotes();
+            const set = (ctrl, v) => {
+              ctrl.input.value = String(v);
+              ctrl.read.textContent = ctrl.fmt(v);
+            };
+            set(lab.els.bpm, lab.score.bpm.base);
+            set(lab.els.gate, lab.score.gate_open);
+            set(lab.els.swing, lab.score.swing);
+            gainCtrls.forEach((c, i) => {
+              const g = lab.score.slots[i] ? lab.score.slots[i].gain : 0;
+              c.input.value = String(g);
+              c.read.textContent = g.toFixed(2);
+            });
+          };
+
+          panel.append(titleEl, transport, gridHost, gainRow);
+          document.body.append(panel);
+
+          // The probe's entry (tools/web-tiny-probe.mjs's OH_SCORELAB
+          // checks): the same mod.setScore call every edit makes, plus
+          // the status paint (a raw export call can't paint the page's
+          // UI — the probe's error check asserts the SPAN reflects the
+          // error) + the re-sync (a push through this path can change
+          // the engine behind the panel's back).
+          window.ohSetScore = (json) => {
+            const err = mod.setScore(json);
+            paintScoreStatus(err);
+            syncFromEngine();
+            return err;
+          };
+
+          // The 1 s poll's hook (assigned here; the poll's tail calls
+          // it when non-null): the stage re-read (the drum grid's
+          // effective tier is the CURRENT stage's — repaint only on a
+          // change) + the first sync (getScore() is "" until the
+          // director installs).
+          scorelabTick = (s) => {
+            const m = /(^|;)stage=(\d+)/.exec(s);
+            const st = m ? Number(m[2]) : -1;
+            if (st !== lab.stage) {
+              lab.stage = st;
+              titleEl.textContent = st >= 0 ? `score lab (stage ${st})` : "score lab";
+              paintDrums();
+            }
+            if (!lab.score) syncFromEngine();
+          };
+        }
+      }
     </script>
   </body>
 </html>
