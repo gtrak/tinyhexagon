@@ -904,7 +904,9 @@ mod tests {
             legacy_bass_line, legacy_chord_offset, legacy_hat_bits, legacy_kick_bits,
             legacy_lead_line, legacy_minor_for_stage, legacy_snare_bits, legacy_stage_params,
         };
-        let score = Score::default();
+        // The bake is the operator's music now; the frozen constants
+        // are pinned by the LEGACY reference score.
+        let score = crate::director::legacy_score().clone();
         assert_eq!(score.bass.notes, legacy_bass_line(), "bass line");
         assert_eq!(score.lead.notes, legacy_lead_line(), "lead line");
         for stage in 0..=20 {

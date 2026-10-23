@@ -21,7 +21,11 @@
       0,
       9,
       5,
-      7
+      7,
+      5,
+      7,
+      0,
+      9
     ],
     "minor": [
       0,
@@ -512,20 +516,20 @@
     {
       "gain": 0.1626,
       "kind": "fm_comp",
-      "muted": false,
-      "ratio": 2.0
+      "ratio": 2.0,
+      "muted": false
     },
     {
       "gain": 0.2,
-      "muted": false,
       "kind": "fm_comp",
-      "ratio": 2.52
+      "ratio": 2.52,
+      "muted": false
     },
     {
       "gain": 0.0813,
-      "muted": false,
       "kind": "fm_comp",
-      "ratio": 3.0
+      "ratio": 3.0,
+      "muted": false
     }
   ],
   "solo": null

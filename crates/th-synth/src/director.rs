@@ -274,7 +274,7 @@ pub const SWING: f32 = 0.15;
 /// director's live path reads `self.score`.
 #[must_use]
 pub fn stage_params(stage: u32) -> StageParams {
-    Score::default().stage_params(stage)
+    legacy_score().stage_params(stage)
 }
 
 /// `true` for the darker (minor) half: stages 8..16 (the default score's
@@ -282,7 +282,7 @@ pub fn stage_params(stage: u32) -> StageParams {
 /// `self.score.minor_for_stage`.
 #[must_use]
 pub fn minor_for_stage(stage: u32) -> bool {
-    Score::default().minor_for_stage(stage)
+    legacy_score().minor_for_stage(stage)
 }
 
 /// The engine's `scale_mode` (0 major pentatonic, 1 minor pentatonic).
@@ -299,7 +299,7 @@ pub fn scale_mode_for_stage(stage: u32) -> f32 {
 /// DEFAULT-score shorthand: the live path reads `self.score.chord_offset`.
 #[must_use]
 pub fn chord_offset(stage: u32, bar: u64) -> i32 {
-    Score::default().chord_offset(stage, bar)
+    legacy_score().chord_offset(stage, bar)
 }
 
 /// The kick pattern (16-step bitmask) — the DnB syncopation: 1, the
@@ -308,7 +308,7 @@ pub fn chord_offset(stage: u32, bar: u64) -> i32 {
 /// `self.score.drum_pattern(&self.score.kick, stage)`.
 #[must_use]
 pub fn kick_bits(stage: u32) -> u32 {
-    let score = Score::default();
+    let score = legacy_score();
     score.drum_pattern(&score.kick, stage)
 }
 
@@ -317,7 +317,7 @@ pub fn kick_bits(stage: u32) -> u32 {
 /// `self.score.drum_pattern(&self.score.snare, stage)`.
 #[must_use]
 pub fn snare_bits(stage: u32) -> u32 {
-    let score = Score::default();
+    let score = legacy_score();
     score.drum_pattern(&score.snare, stage)
 }
 
@@ -326,7 +326,7 @@ pub fn snare_bits(stage: u32) -> u32 {
 /// `self.score.drum_pattern(&self.score.hat, stage)`.
 #[must_use]
 pub fn hat_bits(stage: u32) -> u32 {
-    let score = Score::default();
+    let score = legacy_score();
     score.drum_pattern(&score.hat, stage)
 }
 
@@ -334,6 +334,106 @@ pub fn hat_bits(stage: u32) -> u32 {
 #[must_use]
 pub fn semitone_ratio(semitones: i32) -> f32 {
     2.0_f32.powf(semitones as f32 / 12.0)
+}
+
+/// The LEGACY reference score (the pre-composition bake): tempo 150,
+/// root A2, the I-vi-IV-V / i-VI-III-VII tables, gate 0.7, swing 0.15.
+///
+/// The free `stage_params` / `*_bits` / `chord_offset` shorthands below
+/// and the engine-semantics tests read THIS, not [`Score::default`]:
+/// `default()` is now the operator's actual music (`assets/score.json`),
+/// which changes whenever they compose. Engine behaviour must not be
+/// re-tested against a moving target.
+#[must_use]
+pub fn legacy_score() -> &'static Score {
+    static LEGACY: std::sync::OnceLock<Score> = std::sync::OnceLock::new();
+    LEGACY.get_or_init(|| {
+        let mut s = Score::default();
+        s.bars.clear();
+        s.bpm.base = BPM_BASE;
+        s.bpm.per_stage = BPM_PER_STAGE;
+        s.bpm.cap = STAGE_RAMP_CAP;
+        s.brightness.base = BRIGHTNESS_BASE;
+        s.brightness.per_stage = BRIGHTNESS_PER_STAGE;
+        s.root_hz = ROOT_A2_HZ;
+        s.root_shift = ROOT_SHIFT;
+        s.bars_per_chord = 1;
+        s.minor_from = 8;
+        s.minor_until = 16;
+        s.chords.major = vec![0, 9, 5, 7];
+        s.chords.minor = vec![0, 8, 3, 10];
+        s.gate_open = GATE_OPEN;
+        s.swing = SWING;
+        // The legacy musical CONTENT too (the frozen pre-composition
+        // figures): the bake is now the operator's tune, so inheriting
+        // it here would make every semantics test depend on their edits.
+        let tier = |stage: u32, pattern: &str| crate::score::DrumTier {
+            stage,
+            pattern: pattern.to_string(),
+            exclude: Vec::new(),
+        };
+        s.kick.tiers = vec![
+            tier(0, "x......x..x....."),
+            tier(10, "x..x...x..x....."),
+            tier(16, "x..x...x..x..x.."),
+        ];
+        s.snare.tiers = vec![tier(0, "....x.......x..."), tier(12, "....x.......x.x.")];
+        let mut late_hat = tier(14, "xxxxxxxxxxxxxxxx");
+        late_hat.exclude = vec![4, 12];
+        s.hat.tiers = vec![
+            tier(0, "..x...x...x...x."),
+            tier(6, ".x.x.x.x.x.x.x.x"),
+            late_hat,
+        ];
+        s.bass.notes = vec![
+            Some(0),
+            None,
+            None,
+            Some(12),
+            Some(0),
+            None,
+            Some(7),
+            None,
+            Some(0),
+            None,
+            Some(10),
+            Some(12),
+            Some(0),
+            Some(10),
+            Some(3),
+            None,
+        ];
+        s.bass.octave_shift = -1;
+        s.lead.notes = vec![
+            Some(12),
+            None,
+            Some(15),
+            None,
+            Some(19),
+            Some(17),
+            None,
+            Some(15),
+            Some(12),
+            None,
+            Some(10),
+            None,
+            Some(7),
+            Some(10),
+            None,
+            Some(12),
+        ];
+        s.lead.octave_shift = 1;
+        s.comp = Some(crate::score::COMP_DEFAULT_PATTERN.to_string());
+        // The slots' instrument/intervallic overrides belong to the
+        // operator's arrangement, not the reference: clear them so the
+        // built-in SLOTS kinds (Bell, DroneSub, ...) apply again.
+        for slot in &mut s.slots {
+            slot.kind = None;
+            slot.ratio = None;
+            slot.muted = false;
+        }
+        s
+    })
 }
 
 pub struct MusicDirector {
@@ -1197,9 +1297,8 @@ mod tests {
     /// shipped composition, so they must not break when the operator
     /// rewrites `assets/score.json`'s phrase.
     fn single_bar_score() -> Score {
-        let mut s = Score::default();
-        s.bars.clear();
-        s
+        // The legacy reference (fixed constants), NOT the operator's bake.
+        legacy_score().clone()
     }
 
     /// A fallback director playing exactly `score`.
@@ -1295,13 +1394,13 @@ mod tests {
             ]
         );
         assert_eq!(SLOTS.len(), MAX_TRACKS);
-        assert_eq!(MusicDirector::new_fallback().tracks.len(), MAX_TRACKS);
+        assert_eq!(director_for(single_bar_score()).tracks.len(), MAX_TRACKS);
     }
 
     #[test]
     fn slots_unlock_per_stage() {
         for stage in 0..=18 {
-            let mut d = MusicDirector::new_fallback();
+            let mut d = director_for(single_bar_score());
             d.set_stage(stage);
             for (i, slot) in SLOTS.iter().enumerate() {
                 let mute = d.tracks[i].params.mute.value();
@@ -1316,7 +1415,7 @@ mod tests {
 
     #[test]
     fn root_shift_retunes_the_harmony() {
-        let mut d = MusicDirector::new_fallback();
+        let mut d = director_for(single_bar_score());
         d.set_stage(3);
         // Slot 5 (the comp — issue 11f replaced the pad here) follows
         // the root shift exactly like the harmony slots do. Its RATIO is
@@ -1348,7 +1447,7 @@ mod tests {
         assert_eq!(kick_bits(0), (1 << 0) | (1 << 7) | (1 << 10));
         assert!(kick_bits(16).count_ones() > kick_bits(0).count_ones());
         assert!(snare_bits(12).count_ones() > snare_bits(11).count_ones());
-        let mut d = MusicDirector::new_fallback();
+        let mut d = director_for(single_bar_score());
         d.set_stage(6);
         assert_eq!(
             d.tracks[2].params.pattern_bits.load(Ordering::Relaxed),
@@ -1371,7 +1470,7 @@ mod tests {
     #[test]
     fn the_pattern_bits_follow_the_role_not_the_kind() {
         use rust_synth::math::rhythm::euclidean_bits;
-        let score = Score::default();
+        let score = single_bar_score();
         // The lines' set steps, computed INDEPENDENTLY (not through
         // `note_line_bits` — the test must fail if that helper drifts).
         let line_bits = |notes: &[Option<i32>]| -> u32 {
@@ -1397,7 +1496,7 @@ mod tests {
             "the lead line is NOT the Euclidean default"
         );
 
-        let mut d = MusicDirector::new_fallback(); // stage 0, the shipped score
+        let mut d = director_for(single_bar_score()); // stage 0, the shipped score
         assert_eq!(
             d.tracks[4].params.pattern_bits.load(Ordering::Relaxed),
             lead_bits,
@@ -1427,7 +1526,7 @@ mod tests {
         // the lead line's grid (the old code's Heartbeat arm only wrote
         // slots 0-2, so a swapped-in Heartbeat got the Euclidean
         // default — the bug this test pins).
-        let mut swapped = Score::default();
+        let mut swapped = single_bar_score();
         swapped.slots[4].kind = Some("heartbeat".to_string());
         d.set_score(swapped);
         assert_eq!(
@@ -1436,7 +1535,7 @@ mod tests {
             "a Heartbeat swapped into the lead slot keeps the lead line's grid"
         );
         // And a PluckSaw swapped into the kick slot keeps the kick tier.
-        let mut swapped = Score::default();
+        let mut swapped = single_bar_score();
         swapped.slots[0].kind = Some("pluck_saw".to_string());
         d.set_score(swapped);
         assert_eq!(
@@ -1459,7 +1558,7 @@ mod tests {
     #[test]
     fn the_comp_role_follows_the_chord_and_takes_the_pattern() {
         use rust_synth::math::rhythm::euclidean_bits;
-        let score = Score::default();
+        let score = single_bar_score();
         // The comp pattern's set steps, computed INDEPENDENTLY from
         // the shipped score's `comp` chars (never through
         // `comp_pattern_bits` — the test must fail if that helper
@@ -1486,7 +1585,7 @@ mod tests {
             "the comp pattern is NOT the Euclidean default"
         );
 
-        let mut d = MusicDirector::new_fallback(); // stage 0, the shipped score
+        let mut d = director_for(single_bar_score()); // stage 0, the shipped score
         assert_eq!(
             d.tracks[5].params.pattern_bits.load(Ordering::Relaxed),
             comp_bits,
@@ -1535,7 +1634,7 @@ mod tests {
     #[test]
     fn existing_roles_are_unchanged() {
         use rust_synth::math::rhythm::euclidean_bits;
-        let score = Score::default();
+        let score = single_bar_score();
         // The tier/line bits, computed INDEPENDENTLY (the char-level
         // parse and the note-line fold — not through the director's
         // helpers, so a drift in them is caught).
@@ -1584,7 +1683,7 @@ mod tests {
             "the lead line is NOT the Euclidean default"
         );
 
-        let d = MusicDirector::new_fallback(); // stage 0, the shipped score
+        let d = director_for(single_bar_score()); // stage 0, the shipped score
         assert_eq!(
             d.tracks[0].params.pattern_bits.load(Ordering::Relaxed),
             kick,
@@ -1631,7 +1730,7 @@ mod tests {
         use crate::score::COMP_DEFAULT_PATTERN;
         // The pre-11f shape: the canonical JSON minus the `comp`
         // field (what the 11e bake emitted).
-        let mut value = serde_json::to_value(Score::default()).expect("default serializes");
+        let mut value = serde_json::to_value(single_bar_score()).expect("default serializes");
         value
             .as_object_mut()
             .expect("the score is an object")
@@ -1652,7 +1751,7 @@ mod tests {
                     bits
                 }
             });
-        let mut d = MusicDirector::new_fallback();
+        let mut d = director_for(single_bar_score());
         d.set_score(score);
         assert_eq!(
             d.tracks[5].params.pattern_bits.load(Ordering::Relaxed),
@@ -1681,12 +1780,12 @@ mod tests {
     /// the soloed comp follows its own program (live — unlock 0).
     #[test]
     fn the_mute_solo_fold_silences_the_comp() {
-        let step_len = 60.0 / BPM_BASE / 4.0;
+        let step_len = 60.0 / single_bar_score().stage_params(0).bpm / 4.0;
         // The mute half: the user-muted comp stays muted on every
         // step of the bar — its pattern's hit steps (the off-beat
         // 8ths: 2/6/10/14) included.
-        let mut d = MusicDirector::new_fallback();
-        let mut score = Score::default();
+        let mut d = director_for(single_bar_score());
+        let mut score = single_bar_score();
         score.slots[5].muted = true; // the comp
         d.set_score(score);
         assert_eq!(
@@ -1713,7 +1812,7 @@ mod tests {
         // The solo half: soloing the comp silences the other seven;
         // the comp itself follows its program (unlock 0 → live on
         // every step).
-        let mut d = MusicDirector::new_fallback();
+        let mut d = director_for(single_bar_score());
         let score = Score {
             solo: Some(5),
             ..Default::default()
@@ -1738,7 +1837,7 @@ mod tests {
         // state. The comp's program half is the unlock state, not the
         // pattern — it is live on a cleared solo (the bell stays
         // stage-locked, as before 11f).
-        d.set_score(Score::default());
+        d.set_score(single_bar_score());
         d.tick(step_len);
         assert_eq!(
             d.tracks[5].params.mute.value(),
@@ -1798,7 +1897,7 @@ mod tests {
     /// `tracks[4]`'s `params.freq`/`mute`.
     #[test]
     fn the_bass_and_lead_write_the_legacy_octaves() {
-        let score = Score::default();
+        let score = single_bar_score();
         assert_eq!(score.bass.octave_shift, -1, "the baked bass octave");
         assert_eq!(score.lead.octave_shift, 1, "the baked lead octave");
 
@@ -1856,7 +1955,7 @@ mod tests {
     fn the_gate_releases_between_notes() {
         // The staccato: within one even step the note mutes at GATE_OPEN.
         let step_len = 60.0 / BPM_BASE / 4.0;
-        let mut d = MusicDirector::new_fallback();
+        let mut d = director_for(single_bar_score());
         d.tick(0.01); // step 0: note on
         assert_eq!(d.tracks[3].params.mute.value(), 0.0);
         d.tick(step_len * GATE_OPEN);
@@ -1870,7 +1969,7 @@ mod tests {
     #[test]
     fn the_bar_chord_moves_the_harmony_only() {
         let bar = 4.0 * 60.0 / BPM_BASE;
-        let mut d = MusicDirector::new_fallback();
+        let mut d = director_for(single_bar_score());
         let comp0 = d.tracks[5].params.freq.value();
         let lead0 = d.tracks[4].params.freq.value();
         d.tick(0.01);
@@ -1887,12 +1986,14 @@ mod tests {
 
     #[test]
     fn beat_and_bar_phases_at_known_times() {
-        let beat = 60.0 / BPM_BASE;
-        let mut d = MusicDirector::new_fallback();
+        // The shipped score's tempo (140 now — BPM_BASE is the legacy
+        // 150 default constant, which the bake no longer uses).
+        let beat = 60.0 / single_bar_score().bpm.base;
+        let mut d = director_for(single_bar_score());
         let v = d.tick(beat * 0.5);
         assert!((v.beat_phase - 0.5).abs() < 1e-3);
         assert!((v.bar_phase - 0.125).abs() < 1e-3);
-        let mut d = MusicDirector::new_fallback();
+        let mut d = director_for(single_bar_score());
         let v = d.tick(4.0 * beat);
         assert!(v.bar_phase.abs() < 1e-6);
         assert!(!v.playing);
@@ -1900,7 +2001,7 @@ mod tests {
 
     #[test]
     fn duck_lowers_and_recovers_over_0_6s() {
-        let mut d = MusicDirector::new_fallback();
+        let mut d = director_for(single_bar_score());
         assert!((d.master_gain() - MASTER_GAIN).abs() < 1e-6);
         d.bump();
         assert!((d.master_gain() - DUCK_GAIN).abs() < 1e-6);
@@ -1975,9 +2076,9 @@ mod tests {
     /// `set_score` (the 8-slot mix is data, not just the lines).
     #[test]
     fn set_score_rewrites_the_slot_gains() {
-        let mut d = MusicDirector::new_fallback();
+        let mut d = director_for(single_bar_score());
         let before = d.tracks[0].params.gain.value();
-        let mut score = Score::default();
+        let mut score = single_bar_score();
         score.slots[0] = SlotGain {
             gain: 0.3,
             kind: None,
@@ -1988,7 +2089,7 @@ mod tests {
         assert_eq!(d.tracks[0].params.gain.value(), 0.3);
         assert!(before > 0.3);
         // The drum patterns re-apply too: an all-off kick tier.
-        score = Score::default();
+        score = single_bar_score();
         score.kick.tiers[0].pattern = ".".repeat(score.steps_per_bar as usize);
         d.set_score(score);
         assert_eq!(
@@ -2013,8 +2114,8 @@ mod tests {
     fn user_mute_survives_the_gate() {
         // The drum half: the user-muted kick stays muted across a full
         // bar of ticks (its tier's hit steps 0/7/10 included).
-        let mut d = MusicDirector::new_fallback();
-        let mut score = Score::default();
+        let mut d = director_for(single_bar_score());
+        let mut score = single_bar_score();
         score.slots[0].muted = true; // the kick
         d.set_score(score);
         assert_eq!(
@@ -2042,8 +2143,8 @@ mod tests {
         // The gate half: the user-muted BASS (the gated voice) stays
         // muted while its window is OPEN on a note step — pre-fold,
         // `sequence`'s gate wrote mute 0.0 on exactly these ticks.
-        let mut d = MusicDirector::new_fallback();
-        let mut score = Score::default();
+        let mut d = director_for(single_bar_score());
+        let mut score = single_bar_score();
         score.slots[3].muted = true; // the bass
         d.set_score(score);
         // Step 0 carries the default bass's note 0; the even-step
@@ -2069,7 +2170,7 @@ mod tests {
     /// program OR solo, not just the solo's absence).
     #[test]
     fn solo_isolates_one_slot() {
-        let mut d = MusicDirector::new_fallback();
+        let mut d = director_for(single_bar_score());
         let step_len = 60.0 / BPM_BASE / 4.0;
         // Solo the kick (slot 0).
         let score = Score {
@@ -2098,7 +2199,7 @@ mod tests {
         // note on step 4) — the gated voices come back through their
         // gate; the unlocked drums/harmony/comp are live; the bell is
         // still stage-locked (program, not solo).
-        d.set_score(Score::default());
+        d.set_score(single_bar_score());
         d.tick(step_len * 0.5);
         for i in [1usize, 2, 5, 7] {
             assert_eq!(
@@ -2133,7 +2234,7 @@ mod tests {
     fn slots_without_kind_use_the_builtin() {
         // Simulate an issue-10 file: strip the 11a fields from the
         // canonical JSON (what issue-10's `to_json_pretty` emitted).
-        let mut value = serde_json::to_value(Score::default()).expect("default serializes");
+        let mut value = serde_json::to_value(single_bar_score()).expect("default serializes");
         for slot in value["slots"].as_array_mut().expect("slots is an array") {
             let slot = slot.as_object_mut().expect("a slot is an object");
             slot.remove("kind");
@@ -2356,7 +2457,7 @@ mod tests {
                 }
             })
         };
-        let mut score = Score::default();
+        let mut score = single_bar_score();
         let top_bass_bits = line_bits(&score.bass.notes);
         let top_lead_bits = line_bits(&score.lead.notes);
         let top_comp_bits = char_bits(
@@ -2431,9 +2532,11 @@ mod tests {
 
         // The DIRECTOR half: the per-bar grids follow the resolution
         // (the `apply_bar` refresh — a stale grid is the subtle bug
-        // that would make the phrase sound like one bar).
-        let step_len = 60.0 / BPM_BASE / 4.0;
-        let mut d = MusicDirector::new_fallback();
+        // that would make the phrase sound like one bar). The step
+        // length comes from the SCORE's tempo (the bake is 140 now;
+        // BPM_BASE is the legacy 150 constant).
+        let step_len = 60.0 / score.stage_params(0).bpm / 4.0;
+        let mut d = director_for(single_bar_score());
         d.set_score(score);
         let expected = [
             (1u32, top_lead_bits, char_bits(bar0_comp)),
@@ -2478,7 +2581,7 @@ mod tests {
     #[test]
     fn the_phrase_actually_changes_what_plays() {
         use crate::score::{Bar, NoteLine};
-        let mut score = Score::default();
+        let mut score = single_bar_score();
         // bar 0: a bass line with a note ONLY at step 0 (+0, the bar's
         // chord root); bar 1: a bass line with a note ONLY at step 4
         // (+7, a fifth up). Different grid, different pitch.
@@ -2511,7 +2614,7 @@ mod tests {
         // exactly on the target bar/step, in-step ≈0.15 — the even-step
         // window open, well inside the step).
         let state_at = |bar: u64, step: u64| -> (u32, f32) {
-            let mut d = MusicDirector::new_fallback();
+            let mut d = director_for(single_bar_score());
             d.set_score(score.clone());
             d.tick((bar as f32 * 16.0 + step as f32 + 0.25) * step_len - 0.01);
             (
@@ -2565,7 +2668,7 @@ mod tests {
     #[test]
     fn the_gate_reads_the_resolved_bar() {
         use crate::score::{Bar, NoteLine};
-        let mut score = Score::default();
+        let mut score = single_bar_score();
         // bar 1's bass: the default line with step 0 RESTED (and step
         // 1 given a note — so the override's grid is not the default's
         // either).
@@ -2589,7 +2692,7 @@ mod tests {
             },
         ];
         let step_len = 60.0 / BPM_BASE / 4.0;
-        let mut d = MusicDirector::new_fallback();
+        let mut d = director_for(single_bar_score());
         d.set_score(score);
         // bar 0, step 0 (in-step ≈0.25 — the even window 0..0.7 open,
         // and clear of BOTH window edges so float noise cannot land
@@ -2653,7 +2756,7 @@ mod tests {
     /// (the `BeatView`'s time source).
     #[test]
     fn in_memory_engine_renders_the_score() {
-        let mut d = MusicDirector::new_fallback();
+        let mut d = director_for(single_bar_score());
         d.set_stage(2); // unlocks the bell — more voices than stage 0
         let tracks: Vec<Track> = d
             .tracks
@@ -2707,7 +2810,7 @@ mod tests {
     /// redone identically — the report's mutation check proves it).
     #[test]
     fn kind_change_reaches_the_engine() {
-        let mut d = MusicDirector::new_fallback();
+        let mut d = director_for(single_bar_score());
         let tracks: Vec<Track> = d
             .tracks
             .iter()
@@ -2746,7 +2849,7 @@ mod tests {
         //    is mutated and NO rebuild runs. The counter is the
         //    observable (the kind vector unchanged is kept as the
         //    secondary assert; the gain itself DID apply).
-        let mut score = Score::default();
+        let mut score = single_bar_score();
         score.slots[3].gain = 0.3;
         d.set_score(score);
         assert_eq!(
@@ -2770,7 +2873,7 @@ mod tests {
         //    engine's track kind AND label actually change (the graph
         //    rebuilds from the mutated tracks — the vendor's path) —
         //    and the rebuild is counted exactly once.
-        let mut score = Score::default();
+        let mut score = single_bar_score();
         score.slots[3].kind = Some("super_saw".to_string());
         d.set_score(score);
         {
@@ -2799,19 +2902,15 @@ mod tests {
         // 3. The diff tracks the engine's CURRENT kind (not the
         //    built-in): a second swap (SuperSaw → PluckSaw) still
         //    diffs — one more rebuild.
-        let mut score = Score::default();
+        let mut score = single_bar_score();
         score.slots[3].kind = Some("pluck_saw".to_string());
         d.set_score(score);
-        let swapped = vec![
-            PresetKind::FmKick,
-            PresetKind::FmSnare,
-            PresetKind::FmHat,
-            PresetKind::PluckSaw,
-            PresetKind::FmLead,
-            PresetKind::FmComp,
-            PresetKind::Bell,
-            PresetKind::DroneSub,
-        ];
+        // The test runs on the LEGACY score (no slot `kind` overrides), so
+        // the engine's kinds are the built-in SLOTS kinds with slot 3
+        // swapped to PluckSaw — derive them rather than hardcoding the
+        // shipped bake's instrument list.
+        let mut swapped: Vec<PresetKind> = SLOTS.iter().map(|s| s.kind).collect();
+        swapped[3] = PresetKind::PluckSaw;
         assert_eq!(
             engine_kinds(&d),
             swapped,
@@ -2825,7 +2924,7 @@ mod tests {
 
         // 4. Re-applying the SAME kind is a no-op diff: nothing mutates
         //    AND the counter does not advance (no redundant rebuild).
-        let mut same = Score::default();
+        let mut same = single_bar_score();
         same.slots[3].kind = Some("pluck_saw".to_string());
         d.set_score(same);
         assert_eq!(
@@ -2842,7 +2941,7 @@ mod tests {
 
     #[test]
     fn render_stereo_is_false_on_the_fallback_clock() {
-        let d = MusicDirector::new_fallback();
+        let d = director_for(single_bar_score());
         let mut out = vec![0.0f32; 512];
         assert!(
             !d.render_stereo(&mut out),
