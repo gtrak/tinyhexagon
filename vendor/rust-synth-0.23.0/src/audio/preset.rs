@@ -203,7 +203,10 @@ impl Preset {
                     ratio_hi: 10.0,
                     index: 900.0,
                     index_decay: 28.0,
+                    // a kick is a HIT: both floors 0
+                    index_sustain: 0.0,
                     amp_decay: 3.0,
+                    amp_sustain: 0.0,
                     sweep: 4.0,
                     sweep_decay: 10.0,
                     noise_hp: 0.0,
@@ -223,7 +226,9 @@ impl Preset {
                     ratio_hi: 2.8,
                     index: 600.0,
                     index_decay: 12.0,
+                    index_sustain: 0.0, // a snare is a hit
                     amp_decay: 8.0,
+                    amp_sustain: 0.0,
                     sweep: 1.0,
                     sweep_decay: 1.0,
                     noise_hp: 1500.0,
@@ -243,7 +248,9 @@ impl Preset {
                     ratio_hi: 11.0,
                     index: 800.0,
                     index_decay: 20.0,
+                    index_sustain: 0.0, // a hat is a hit
                     amp_decay: 14.0,
+                    amp_sustain: 0.0,
                     sweep: 1.0,
                     sweep_decay: 1.0,
                     noise_hp: 0.0,
@@ -263,7 +270,10 @@ impl Preset {
                     ratio_hi: 2.0,
                     index: 600.0,
                     index_decay: 6.0,
+                    // the bass HOLDS: keep most of the index (the growl)
+                    index_sustain: 0.6,
                     amp_decay: 4.0,
+                    amp_sustain: 0.72,
                     sweep: 1.0,
                     sweep_decay: 1.0,
                     noise_hp: 0.0,
@@ -283,7 +293,9 @@ impl Preset {
                     ratio_hi: 3.0,
                     index: 350.0,
                     index_decay: 3.0,
+                    index_sustain: 0.65, // the lead sings, it does not plink
                     amp_decay: 4.5,
+                    amp_sustain: 0.7,
                     sweep: 1.0,
                     sweep_decay: 1.0,
                     noise_hp: 0.0,
@@ -303,7 +315,9 @@ impl Preset {
                     ratio_hi: 4.2,
                     index: 450.0,
                     index_decay: 8.0,
+                    index_sustain: 0.0, // a struck bell decays
                     amp_decay: 5.0,
+                    amp_sustain: 0.0,
                     sweep: 1.0,
                     sweep_decay: 1.0,
                     noise_hp: 0.0,
@@ -335,7 +349,9 @@ impl Preset {
                     ratio_hi: 2.4,
                     index: 450.0,
                     index_decay: 10.0,
+                    index_sustain: 0.35, // a stab with body, not a click
                     amp_decay: 3.0,
+                    amp_sustain: 0.25,
                     sweep: 1.0,
                     sweep_decay: 1.0,
                     noise_hp: 0.0,
@@ -562,9 +578,21 @@ struct FmVoice {
     /// The index's per-step decay rate (`exp(-phi·k)` — the FM
     /// envelope; the hit's "click").
     index_decay: f64,
+    /// THE INDEX FLOOR (0 = a percussive click, 1 = a static index).
+    /// Without this the index collapsed to nothing within ~10 ms, so
+    /// every held note became a BARE SINE for the rest of its step —
+    /// no harmonics, no character, which is exactly why the sustained
+    /// voices read as thin and lifeless. The decay now runs from 1.0
+    /// down to this floor instead of down to zero.
+    index_sustain: f64,
     /// The amplitude envelope's per-step decay rate (step-gated by
     /// `pattern_bits`).
     amp_decay: f64,
+    /// THE AMPLITUDE FLOOR, same idea as `index_sustain`: 0 = a hit
+    /// that dies (drums), >0 = a note that HOLDS for its step (bass,
+    /// lead, comp). Without a floor every note was a click fading to
+    /// silence, so nothing could sustain.
+    amp_sustain: f64,
     /// The carrier's start multiplier on a hit (the kick's ×4 → ×1
     /// downward sweep; 1.0 = no sweep).
     sweep: f64,
@@ -608,13 +636,23 @@ fn fm_sweep_mult(bits: u32, t: f64, bpm: f64, sweep: f64, sweep_decay: f64) -> f
 /// `rhythm::step_is_active`): 1.0 at the hit, `exp(-phi·decay)` within
 /// the step, 0.0 off-step (the pluck_saw/heartbeat idiom).
 fn fm_step_env(p: &TrackParams, g: &GlobalParams, decay: f64) -> Net {
+    // A percussive hit: decays to silence. Kept for the noise burst.
+    fm_step_env_floor(p, g, decay, 0.0)
+}
+
+/// The amplitude envelope with a SUSTAIN FLOOR: the note holds at
+/// `sustain` of full level for the rest of its step instead of decaying
+/// to nothing. Drums use 0 (a hit), the melodic voices use a real floor
+/// so the note is a NOTE and not a click.
+fn fm_step_env_floor(p: &TrackParams, g: &GlobalParams, decay: f64, sustain: f64) -> Net {
     let bpm = g.bpm.clone();
     let bits = p.pattern_bits.clone();
     Net::wrap(Box::new(lfo(move |t: f64| {
         let (active, phi) =
             rhythm::step_is_active(bits.load(Ordering::Relaxed), t, bpm.value() as f64);
         if active {
-            (-phi * decay).exp()
+            let floor = sustain.clamp(0.0, 1.0);
+            floor + (1.0 - floor) * (-phi * decay).exp()
         } else {
             0.0
         }
@@ -679,7 +717,11 @@ fn fm_voice(p: &TrackParams, g: &GlobalParams, cfg: FmVoice) -> Net {
             rhythm::step_is_active(bits_i.load(Ordering::Relaxed), t, bpm_i.value() as f64);
         let depth = res_i.value().clamp(0.0, 0.65) as f64 * cfg.index;
         if active {
-            depth * (-phi * cfg.index_decay).exp()
+            // 1.0 down to the FLOOR (see `index_sustain`): the harmonic
+            // content persists through the note instead of collapsing to
+            // a pure sine.
+            let floor = cfg.index_sustain.clamp(0.0, 1.0);
+            depth * (floor + (1.0 - floor) * (-phi * cfg.index_decay).exp())
         } else {
             0.0
         }
@@ -749,7 +791,7 @@ fn fm_voice(p: &TrackParams, g: &GlobalParams, cfg: FmVoice) -> Net {
     // grid times the hits), then the siblings' exact tail — Haas
     // widening (when set), the voice's reverb, the supermass send, the
     // reverb mix and the voiced gate (so the fold keeps working).
-    let gated = body * fm_step_env(p, g, cfg.amp_decay);
+    let gated = body * fm_step_env_floor(p, g, cfg.amp_decay, cfg.amp_sustain);
     let widen: Net = if cfg.haas > 0.0 {
         Net::wrap(Box::new(pass() | delay(cfg.haas)))
     } else {
