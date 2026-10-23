@@ -76,11 +76,35 @@ gate below).
   ratio 2 + a high-passed white-noise burst (character balances noise vs
   tone), hat ratio 9 with a 20-40 ms decay, bass ratio 1.5 low-passed
   through the `bass_pulse` moog idiom, lead ratio 2 with a slight carrier
-  detune, bell ratio 3.5 percussive. NOTE: `reverb_mix` in this codebase
-  is a whole-voice LEVEL TRIM (`stereo_reverb_mix` multiplies dry AND the
-  fixed reverb tail by it — `stereo_reverb_mix` sits after `supermass`),
-  so a "dry" FM drum is a modest in-voice tail + a healthy trim, not a
-  0.05 trim (a −26 dB voice).
+  detune, bell ratio 3.5 percussive.
+- **The dry+wet reverb topology (plan 002 issue 11e — the wet-only
+  bug, fixed):** fundsp's `reverb_stereo(room, time, damping)` is a
+  **WET-ONLY tank** — it discards its dry input. Pre-11e every voice
+  ended `… >> split::<U2>() >> [widen] >> reverb_stereo(…)` and used
+  the tank's output as the voice, so every one of the 14 `PresetKind`
+  voices was 100% reverb tail (the dry instrument was never re-added)
+  and `reverb_mix` — sitting after `supermass_send`, multiplying the
+  WHOLE voice — was a level trim whose 0.0 meant SILENCE (the 11c FM
+  arms shipped at 0.80–0.90 "trims"). The fix (9 voice sites: the 8
+  original presets + the shared `fm_voice` core) re-adds the dry per
+  fundsp's own `reverb_stereo` doc idiom (`multipass() & 0.2 *
+  reverb_stereo(10.0, 5.0, 0.5)` — "Add 20% Reverb"; the file's
+  `supermass_send` was already doing `dry & wet_scaled`): each voice is
+  now `multipass::<U2>() & (wet_chain * wet_amount)` — the stereo dry
+  passthrough summed with the existing effect chain (chorus/Haas →
+  reverb) scaled by `stereo_reverb_mix`. **`reverb_mix` is now a true
+  WET AMOUNT in [0, 1] (0 = bone dry)**, clamped in
+  `stereo_reverb_mix`, scaling the WET branch only (LFO-REVERB still
+  modulates it, ±0.4 at depth=1). Every voice keeps its
+  `stereo_gate_voiced` tail (the 11a mute/solo fold) and the FM core
+  stays genuinely FM (decaying index envelope untouched). The th-synth
+  `audition_render` example gained the permanent guard for this bug
+  class: a per-slot **atk/tail** column (the peak in the first ~10 ms
+  after each detected onset over the 50–300 ms tail peak — peak/RMS/
+  brightness all look healthy when a signal is 100% reverb; the
+  pre-11e kit's median atk/tail was 0.58 across onsets where a punchy
+  drum wants 5–20×; a percussive voice below ~2 is a failure, a
+  sustained voice near 1 is legitimate).
 - `GlobalParams` (cloned into the build-time `lfo` closures as `Shared`s):
   | field | default |
   |---|---|

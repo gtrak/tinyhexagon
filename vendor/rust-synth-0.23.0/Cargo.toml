@@ -46,6 +46,36 @@
 #     `src/persistence.rs` + `src/tui/{life,formula,waveshape}.rs`: the
 #     exhaustive matches over `PresetKind` grew with the six variants
 #     (no behavior change).
+#   * `src/audio/preset.rs` (plan 002 issue 11e, the wet-only reverb
+#     fix — the SECOND deliberate DSP change, and a CORRECTNESS fix, not
+#     a taste change): fundsp's `reverb_stereo(room, time, damping)` is
+#     a WET-ONLY tank — it discards its dry input — yet every voice
+#     piped its signal straight through it and used the tank's output
+#     as the voice, so every instrument was 100% reverb tail and never
+#     heard (measured: an impulse through it has no energy for the
+#     first 2546 samples / 53 ms of predelay; pre-11e every soloed
+#     voice's reverb tail was louder than the hit that caused it —
+#     attack/tail median 0.58 across onsets where a punchy drum wants
+#     5–20×). Each of the 9 affected voice sites (the 8 original
+#     presets + the shared `fm_voice` core, i.e. all 14 `PresetKind`
+#     voices) now re-adds the dry per fundsp's OWN doc idiom for
+#     `reverb_stereo` — `multipass() & 0.2 * reverb_stereo(10.0, 5.0,
+#     0.5)` ("Add 20% Reverb") — in the shape this file's own
+#     `supermass_send` already used: `multipass::<U2>() & (wet_chain *
+#     wet_amount)`, the existing effect chain (chorus/Haas → reverb)
+#     kept intact in the wet branch. `reverb_mix` is now a true WET
+#     AMOUNT in [0, 1] (0 = bone dry; pre-11e it was a whole-voice
+#     level trim multiplying the wet-only signal — 0.0 meant SILENCE),
+#     clamped to [0, 1] in `stereo_reverb_mix`, which now scales the
+#     wet branch only (the LFO-REVERB modulation path unchanged, still
+#     ±0.4 at depth=1). Every voice keeps its `stereo_gate_voiced`
+#     tail (the 11a mute/solo fold), the FM core stays genuinely FM
+#     (decaying index envelope untouched), no new dependencies, no
+#     `PresetKind` changes. `supermass_send` itself was already correct
+#     (`dry & wet_scaled`) and is untouched. See
+#     .agents/tasks/plan-002/issue-011e-report.md for the measured
+#     before/after and the re-balanced `reverb_mix` values (they live
+#     in th-synth's `director.rs`, not here).
 # Reason: the wasm32-unknown-emscripten cross-target spike (05b) —
 # crossterm 0.28's mio does not support the emscripten target and
 # vorbis_rs 0.5's ogg_next_sys build script needs a C compiler (emcc).

@@ -527,34 +527,37 @@ impl MusicDirector {
             // the `audition_render` example's table is how they were
             // chosen). `resonance` is the FM depth (the modulation
             // index's scale); `character` 0.5 = each voice's tuned
-            // ratio. NB: `reverb_mix` is the voice's LEVEL TRIM in this
-            // codebase (`stereo_reverb_mix` multiplies the whole voice
-            // — dry AND the fixed reverb tail — by it), so a "dry"
-            // drum is a modest tail inside the voice + a healthy trim,
-            // NOT a 0.05 trim (which would be a −26 dB voice). Each of
-            // these slots' `pattern_bits` comes from the ROLE block
-            // above (the tiered drum patterns, the bass/lead note
-            // lines) — the step-gated FM envelope needs it.
+            // ratio. Issue 11e: `reverb_mix` is now a true WET AMOUNT
+            // in [0, 1] (0 = bone dry) — it scales the voice's reverb
+            // (wet) branch ONLY; the dry signal is re-added by the
+            // preset. The pre-11e "level trim" meaning was the bug
+            // (0.8–0.9 of wet, NO dry at all); re-auditioned after the
+            // fix: drums 0.15–0.30 of wet (the attack must dominate —
+            // the atk/tail column), the bass dry-ish, lead/bell more
+            // air. Each of these slots' `pattern_bits` comes from the
+            // ROLE block above (the tiered drum patterns, the
+            // bass/lead note lines) — the step-gated FM envelope needs
+            // it.
             PresetKind::FmKick => {
                 pms.pulse_depth.set_value(0.0);
                 pms.lfo_depth.set_value(0.0);
                 pms.character.set_value(0.50);
                 pms.resonance.set_value(0.50);
-                pms.reverb_mix.set_value(0.90);
+                pms.reverb_mix.set_value(0.25); // 11e re-audit: a roomy low tail, attack first
             }
             PresetKind::FmSnare => {
                 pms.pulse_depth.set_value(0.0);
                 pms.lfo_depth.set_value(0.0);
                 pms.character.set_value(0.60); // a touch more noise in the balance
                 pms.resonance.set_value(0.50);
-                pms.reverb_mix.set_value(0.90);
+                pms.reverb_mix.set_value(0.20); // 11e re-audit: punch over room
             }
             PresetKind::FmHat => {
                 pms.pulse_depth.set_value(0.0);
                 pms.lfo_depth.set_value(0.0);
                 pms.character.set_value(0.50);
                 pms.resonance.set_value(0.35);
-                pms.reverb_mix.set_value(0.80);
+                pms.reverb_mix.set_value(0.15); // 11e re-audit: tight, almost dry
             }
             PresetKind::FmBass => {
                 pms.pulse_depth.set_value(0.0);
@@ -562,7 +565,7 @@ impl MusicDirector {
                 pms.character.set_value(0.50);
                 pms.resonance.set_value(0.50);
                 pms.cutoff.set_value(500.0);
-                pms.reverb_mix.set_value(0.90);
+                pms.reverb_mix.set_value(0.15); // 11e re-audit: dry bass weight
             }
             PresetKind::FmLead => {
                 pms.pulse_depth.set_value(0.0);
@@ -570,7 +573,7 @@ impl MusicDirector {
                 pms.character.set_value(0.50);
                 pms.resonance.set_value(0.35);
                 pms.detune.set_value(14.0);
-                pms.reverb_mix.set_value(0.80);
+                pms.reverb_mix.set_value(0.30); // 11e re-audit: melodic air
             }
             PresetKind::FmBell => {
                 pms.pulse_depth.set_value(0.0);
@@ -579,7 +582,7 @@ impl MusicDirector {
                 pms.lfo_target.set_value(LFO_FREQ as f32);
                 pms.character.set_value(0.50);
                 pms.resonance.set_value(0.40);
-                pms.reverb_mix.set_value(0.70);
+                pms.reverb_mix.set_value(0.35); // 11e re-audit: marimba room
             }
         }
     }

@@ -437,10 +437,18 @@ impl FreqMod {
 }
 
 /// Reverb-mix signal that respects LFO when target = REV.
-/// Additive ±0.4 at depth=1, clamped to [0, 1].
+///
+/// Issue 11e: this is the WET-AMOUNT of a voice's reverb branch — a true
+/// amount in [0, 1] where 0.0 = bone dry (the pre-11e code fed the
+/// WET-ONLY reverb tank's output through here as a whole-voice
+/// multiplier, so 0.0 meant SILENCE and the voices were 100% reverb
+/// tail). It scales the WET branch only — never the dry signal. The
+/// base is clamped to [0, 1] so an out-of-range editor value cannot
+/// boost the wet branch; LFO-REVERB adds ±0.4 at depth=1 and clamps
+/// again.
 fn stereo_reverb_mix(base: Shared, lb: LfoBundle) -> Net {
     let mono = lfo(move |t: f64| {
-        let v = base.value() as f64;
+        let v = (base.value() as f64).clamp(0.0, 1.0);
         lb.apply(v, LFO_REVERB, t, |b, m| (b + m * 0.4).clamp(0.0, 1.0))
     });
     Net::wrap(Box::new(mono >> split::<U2>()))
@@ -710,10 +718,25 @@ fn fm_voice(p: &TrackParams, g: &GlobalParams, cfg: FmVoice) -> Net {
         Net::wrap(Box::new(pass() | pass()))
     };
     let (rt60_l, rt60_r, damp) = cfg.reverb;
-    let stereo = gated >> split::<U2>() >> widen >> reverb_stereo(rt60_l, rt60_r, damp);
+    // Issue 11e dry+wet: fundsp's `reverb_stereo` is a WET-ONLY tank
+    // (it discards its dry input — pre-11e every FM voice WAS the
+    // tank's output, 100% reverb tail). The dry is re-added here per
+    // fundsp's own doc idiom (`multipass() & 0.2 *
+    // reverb_stereo(...)`; this file's `supermass_send` already did
+    // it). `reverb_mix` is now a true WET AMOUNT (0 = bone dry) scaling
+    // the wet branch only — the Haas widening + the voice's reverb keep
+    // their character in the wet branch.
+    let wet_amount = stereo_reverb_mix(p.reverb_mix.clone(), lb.clone());
+    let stereo = gated
+        >> Net::wrap(Box::new(split::<U2>()))
+        >> Net::wrap(Box::new(
+            multipass::<U2>()
+                & (Net::wrap(Box::new(widen)) >> reverb_stereo(rt60_l, rt60_r, damp)
+                    * wet_amount.clone()),
+        ));
 
     let with_super = Net::wrap(Box::new(stereo)) >> supermass_send(p.supermass.clone());
-    let voiced = with_super * stereo_reverb_mix(p.reverb_mix.clone(), lb.clone());
+    let voiced = with_super; // the wet scaling moved INTO the branch (11e)
     voiced
         * stereo_gate_voiced(
             p.gain.clone(),
@@ -797,13 +820,21 @@ fn pad_zimmer(p: &TrackParams, g: &GlobalParams) -> Net {
     let filtered = (osc | cutoff_mod | res_mod) >> moog()
         >> highshelf_hz(3000.0, 0.7, 0.67);
 
+    // Issue 11e dry+wet: the voice's dry signal is re-added (fundsp's
+    // `reverb_stereo` is a WET-ONLY tank — see `fm_voice`'s comment);
+    // `reverb_mix` is now a true WET AMOUNT (0 = bone dry) scaling the
+    // wet branch only.
+    let wet_amount = stereo_reverb_mix(p.reverb_mix.clone(), lb.clone());
     let stereo = filtered
-        >> split::<U2>()
-        >> (chorus(0, 0.0, 0.015, 0.35) | chorus(1, 0.0, 0.020, 0.35))
-        >> reverb_stereo(18.0, 4.0, 0.9);
+        >> Net::wrap(Box::new(split::<U2>()))
+        >> Net::wrap(Box::new(
+            multipass::<U2>()
+                & ((chorus(0, 0.0, 0.015, 0.35) | chorus(1, 0.0, 0.020, 0.35))
+                    >> reverb_stereo(18.0, 4.0, 0.9))
+                    * wet_amount.clone()),
+        );
 
-    let with_super = Net::wrap(Box::new(stereo)) >> supermass_send(p.supermass.clone());
-    let voiced = with_super * stereo_reverb_mix(p.reverb_mix.clone(), lb.clone());
+    let voiced = stereo >> supermass_send(p.supermass.clone());
     voiced
         * stereo_gate_voiced(
             p.gain.clone(),
@@ -848,13 +879,21 @@ fn drone_sub(p: &TrackParams, g: &GlobalParams) -> Net {
 
     // Stereo widening: chorus L/R with different delays turns the mono
     // body into a real wide stereo image before the reverb.
+    // Issue 11e dry+wet: the voice's dry signal is re-added (fundsp's
+    // `reverb_stereo` is a WET-ONLY tank — see `fm_voice`'s comment);
+    // `reverb_mix` is now a true WET AMOUNT (0 = bone dry) scaling the
+    // wet branch only.
+    let wet_amount = stereo_reverb_mix(p.reverb_mix.clone(), lb.clone());
     let stereo = body
-        >> split::<U2>()
-        >> (chorus(10, 0.0, 0.025, 0.18) | chorus(11, 0.0, 0.031, 0.18))
-        >> reverb_stereo(20.0, 5.0, 0.85);
+        >> Net::wrap(Box::new(split::<U2>()))
+        >> Net::wrap(Box::new(
+            multipass::<U2>()
+                & ((chorus(10, 0.0, 0.025, 0.18) | chorus(11, 0.0, 0.031, 0.18))
+                    >> reverb_stereo(20.0, 5.0, 0.85))
+                    * wet_amount.clone()),
+        );
 
-    let with_super = Net::wrap(Box::new(stereo)) >> supermass_send(p.supermass.clone());
-    let voiced = with_super * stereo_reverb_mix(p.reverb_mix.clone(), lb.clone());
+    let voiced = stereo >> supermass_send(p.supermass.clone());
     voiced
         * stereo_gate_voiced(
             p.gain.clone(),
@@ -905,13 +944,21 @@ fn shimmer(p: &TrackParams, g: &GlobalParams) -> Net {
     let bright = osc >> highpass_hz(400.0, 0.5);
     // Dual chorus gives the shimmer actual stereo spread, not just
     // reverb-ambient stereo from a mono source.
+    // Issue 11e dry+wet: the voice's dry signal is re-added (fundsp's
+    // `reverb_stereo` is a WET-ONLY tank — see `fm_voice`'s comment);
+    // `reverb_mix` is now a true WET AMOUNT (0 = bone dry) scaling the
+    // wet branch only.
+    let wet_amount = stereo_reverb_mix(p.reverb_mix.clone(), lb.clone());
     let stereo = bright
-        >> split::<U2>()
-        >> (chorus(20, 0.0, 0.008, 0.6) | chorus(21, 0.0, 0.011, 0.6))
-        >> reverb_stereo(22.0, 6.0, 0.85);
+        >> Net::wrap(Box::new(split::<U2>()))
+        >> Net::wrap(Box::new(
+            multipass::<U2>()
+                & ((chorus(20, 0.0, 0.008, 0.6) | chorus(21, 0.0, 0.011, 0.6))
+                    >> reverb_stereo(22.0, 6.0, 0.85))
+                    * wet_amount.clone()),
+        );
 
-    let with_super = Net::wrap(Box::new(stereo)) >> supermass_send(p.supermass.clone());
-    let voiced = with_super * stereo_reverb_mix(p.reverb_mix.clone(), lb.clone());
+    let voiced = stereo >> supermass_send(p.supermass.clone());
     voiced
         * stereo_gate_voiced(
             p.gain.clone(),
@@ -1018,15 +1065,23 @@ fn heartbeat(p: &TrackParams, g: &GlobalParams) -> Net {
 
     // Haas-effect stereo: 8 ms L/R delay widens the kick without
     // destroying its punch (subtle enough to avoid phase cancellation
-    // on mono playback).
-    let stereo = kick
-        >> split::<U2>()
-        >> (pass() | delay(0.008))
-        >> reverb_stereo(10.0, 1.5, 0.88);
-
+    // on mono playback). The Haas widening stays in the WET branch —
+    // the dry kick lands mono-compatible (issue 11e).
     let lb = LfoBundle::from_params(p);
-    let with_super = Net::wrap(Box::new(stereo)) >> supermass_send(p.supermass.clone());
-    let voiced = with_super * stereo_reverb_mix(p.reverb_mix.clone(), lb.clone());
+    // Issue 11e dry+wet: the voice's dry signal is re-added (fundsp's
+    // `reverb_stereo` is a WET-ONLY tank — see `fm_voice`'s comment);
+    // `reverb_mix` is now a true WET AMOUNT (0 = bone dry) scaling the
+    // wet branch only.
+    let wet_amount = stereo_reverb_mix(p.reverb_mix.clone(), lb.clone());
+    let stereo = kick
+        >> Net::wrap(Box::new(split::<U2>()))
+        >> Net::wrap(Box::new(
+            multipass::<U2>()
+                & ((pass() | delay(0.008)) >> reverb_stereo(10.0, 1.5, 0.88))
+                    * wet_amount.clone()),
+        );
+
+    let voiced = stereo >> supermass_send(p.supermass.clone());
     voiced
         * stereo_gate_voiced(
             p.gain.clone(),
@@ -1076,14 +1131,19 @@ fn bass_pulse(p: &TrackParams, g: &GlobalParams) -> Net {
     let grooved = filtered * groove;
 
     // Haas 14 ms — widens the bass line but stays mono-compatible so
-    // sub content still sums properly on club systems.
+    // sub content still sums properly on club systems. The Haas
+    // widening stays in the WET branch — the dry bass lands
+    // mono-compatible (issue 11e).
+    let wet_amount = stereo_reverb_mix(p.reverb_mix.clone(), lb.clone());
     let stereo = grooved
-        >> split::<U2>()
-        >> (pass() | delay(0.014))
-        >> reverb_stereo(14.0, 2.5, 0.88);
+        >> Net::wrap(Box::new(split::<U2>()))
+        >> Net::wrap(Box::new(
+            multipass::<U2>()
+                & ((pass() | delay(0.014)) >> reverb_stereo(14.0, 2.5, 0.88))
+                    * wet_amount.clone()),
+        );
 
-    let with_super = Net::wrap(Box::new(stereo)) >> supermass_send(p.supermass.clone());
-    let voiced = with_super * stereo_reverb_mix(p.reverb_mix.clone(), lb.clone());
+    let voiced = stereo >> supermass_send(p.supermass.clone());
     voiced
         * stereo_gate_voiced(
             p.gain.clone(),
@@ -1134,13 +1194,21 @@ fn bell_preset(p: &TrackParams, g: &GlobalParams) -> Net {
     let body = bell_sig * am * 0.30;
 
     // Dual chorus gives the FM tone true stereo movement — bells need it.
+    // The chorus stays in the WET branch; the dry bell tone is re-added
+    // (issue 11e — fundsp's `reverb_stereo` is a WET-ONLY tank; see
+    // `fm_voice`'s comment). `reverb_mix` is now a true WET AMOUNT
+    // (0 = bone dry) scaling the wet branch only.
+    let wet_amount = stereo_reverb_mix(p.reverb_mix.clone(), lb.clone());
     let stereo = body
-        >> split::<U2>()
-        >> (chorus(30, 0.0, 0.018, 0.25) | chorus(31, 0.0, 0.022, 0.25))
-        >> reverb_stereo(25.0, 8.0, 0.85);
+        >> Net::wrap(Box::new(split::<U2>()))
+        >> Net::wrap(Box::new(
+            multipass::<U2>()
+                & ((chorus(30, 0.0, 0.018, 0.25) | chorus(31, 0.0, 0.022, 0.25))
+                    >> reverb_stereo(25.0, 8.0, 0.85))
+                    * wet_amount.clone()),
+        );
 
-    let with_super = Net::wrap(Box::new(stereo)) >> supermass_send(p.supermass.clone());
-    let voiced = with_super * stereo_reverb_mix(p.reverb_mix.clone(), lb.clone());
+    let voiced = stereo >> supermass_send(p.supermass.clone());
     voiced
         * stereo_gate_voiced(
             p.gain.clone(),
@@ -1206,15 +1274,21 @@ fn super_saw(p: &TrackParams, g: &GlobalParams) -> Net {
     let filtered = (mixed | Net::wrap(Box::new(cut_mod)) | Net::wrap(Box::new(res_mod)))
         >> Net::wrap(Box::new(moog()));
 
+    // Issue 11e dry+wet: the voice's dry signal is re-added (fundsp's
+    // `reverb_stereo` is a WET-ONLY tank — see `fm_voice`'s comment);
+    // `reverb_mix` is now a true WET AMOUNT (0 = bone dry) scaling the
+    // wet branch only.
+    let wet_amount = stereo_reverb_mix(p.reverb_mix.clone(), lb.clone());
     let stereo = filtered
         >> Net::wrap(Box::new(split::<U2>()))
         >> Net::wrap(Box::new(
-            chorus(0, 0.0, 0.012, 0.4) | chorus(1, 0.0, 0.014, 0.4),
-        ))
-        >> Net::wrap(Box::new(reverb_stereo(16.0, 3.0, 0.88)));
+            multipass::<U2>()
+                & ((chorus(0, 0.0, 0.012, 0.4) | chorus(1, 0.0, 0.014, 0.4))
+                    >> reverb_stereo(16.0, 3.0, 0.88))
+                    * wet_amount.clone()),
+        );
 
-    let with_super = stereo >> supermass_send(p.supermass.clone());
-    let voiced = with_super * stereo_reverb_mix(p.reverb_mix.clone(), lb.clone());
+    let voiced = stereo >> supermass_send(p.supermass.clone());
     voiced
         * stereo_gate_voiced(
             p.gain.clone(),
@@ -1288,15 +1362,24 @@ fn pluck_saw(p: &TrackParams, g: &GlobalParams) -> Net {
     });
     let plucked = filtered * Net::wrap(Box::new(amp_env));
 
+    // Issue 11e dry+wet: fundsp's `reverb_stereo` is a WET-ONLY tank
+    // (it discards its dry input — pre-11e, the voice WAS the tank's
+    // output, so the pluck was 100% reverb tail). The caller re-adds
+    // the dry, per fundsp's own doc idiom (`multipass() & 0.2 *
+    // reverb_stereo(...)`; this file's `supermass_send` already did it
+    //). `reverb_mix` is now a true WET AMOUNT (0 = bone dry) scaling
+    // the wet branch only — the chorus→reverb chain keeps its character.
+    let wet_amount = stereo_reverb_mix(p.reverb_mix.clone(), lb.clone());
     let stereo = plucked
         >> Net::wrap(Box::new(split::<U2>()))
         >> Net::wrap(Box::new(
-            chorus(0, 0.0, 0.010, 0.5) | chorus(1, 0.0, 0.013, 0.5),
-        ))
-        >> Net::wrap(Box::new(reverb_stereo(18.0, 3.5, 0.88)));
+            multipass::<U2>()
+                & ((chorus(0, 0.0, 0.010, 0.5) | chorus(1, 0.0, 0.013, 0.5))
+                    >> reverb_stereo(18.0, 3.5, 0.88))
+                    * wet_amount.clone()),
+        );
 
-    let with_super = stereo >> supermass_send(p.supermass.clone());
-    let voiced = with_super * stereo_reverb_mix(p.reverb_mix.clone(), lb.clone());
+    let voiced = stereo >> supermass_send(p.supermass.clone());
     voiced
         * stereo_gate_voiced(
             p.gain.clone(),
