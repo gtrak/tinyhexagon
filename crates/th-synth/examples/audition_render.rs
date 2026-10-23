@@ -1,57 +1,104 @@
-//! The offline WAV audition renderer (plan 002 issue 11c — the
-//! deliverable that prevents another un-auditioned kit).
+//! The offline WAV audition renderer (plan 002 issue 11c; extended by
+//! 11g to the PHRASE).
 //!
 //! Renders the REAL director setup — `MusicDirector::new_fallback()`'s
 //! 8 tracks: the shipped `Score::default()`'s kinds, the `apply_slot`
-//! per-kind params AND the role-based `pattern_bits` — through the SAME
-//! graph the engine builds (each slot's `Preset::build` summed through
-//! `master_bus`), for 4 bars at the shipped bpm, 48 kHz stereo, 16-bit
-//! PCM. `hound` is NOT available (th-synth has no audio-encoding dep),
-//! so the 44-byte WAV header is written by hand (no new dependency).
+//! per-kind params AND the role-based `pattern_bits` — through the
+//! SAME graph the engine builds (each slot's `Preset::build` summed
+//! through `master_bus`), for the WHOLE PHRASE (the resolved
+//! `score.bars.len()` bars; default 4 when the score carries no
+//! phrase; `--bars N` overrides), 48 kHz stereo, 16-bit PCM. `hound`
+//! is NOT available (th-synth has no audio-encoding dep), so the
+//! 44-byte WAV header is written by hand (no new dependency).
+//!
+//! Issue 11g: the render is DIRECTOR-DRIVEN — the fallback director
+//! ticks sample by sample while the offline graphs run, so its
+//! `sequence` rewrites the tracks' `Shared` params (the SAME atomics
+//! the live graph reads): the resolved per-bar bass/lead/comp
+//! figures, the per-bar `pattern_bits` refresh and the absolute-bar
+//! chord offsets all actually vary inside the WAV (the pre-11g
+//! renderer rendered 4 bars as ONE static setup — a phrase would have
+//! sounded like one bar).
 //!
 //! Prints the values it used (the director's real `TrackSnapshot`s —
 //! the renderer reads them through `MusicDirector::tracks()`, it does
-//! NOT mirror `apply_slot`'s numbers by hand) and a per-slot table:
-//! peak / RMS with each slot SOLOED, a coarse brightness proxy, the
-//! ATTACK/TAIL ratio (issue 11e's permanent guard — see
-//! `attack_tail`), and the mix's peak — so a silent, clipped or
-//! indistinguishable voice is a NUMBER before it ships:
+//! NOT mirror `apply_slot`'s numbers by hand), a per-bar marker line
+//! naming the bar index and which figure each part used (so a
+//! listener can follow the form), and a per-slot table: peak / RMS
+//! with each slot SOLOED (each solo pass runs with every voice
+//! UNLOCKED — stage = the max slot's unlock — so a stage-locked voice
+//! still gets a measured row; the mix stays the shipped stage-0 mix),
+//! a coarse brightness proxy, the ATTACK/TAIL ratio (issue 11e's
+//! permanent guard — see `attack_tail`), and the mix's peak — so a
+//! silent, clipped or indistinguishable voice is a NUMBER before it
+//! ships:
 //!
 //!   cargo run -q -p th-synth --example audition_render
-//!   cargo run -q -p th-synth --example audition_render -- /tmp/audition.wav
+//!   cargo run -q -p th-synth --example audition_render -- /tmp/phrase.wav --solo-dir /tmp/phrase-solos
 //!
 //! The optional first argument sets the output path (default
-//! `audition.wav`).
+//! `audition.wav`); `--solo-dir DIR` dumps each soloed slot beside
+//! the mix; `--bars N` renders N bars (default: the phrase length,
+//! minimum 4).
 
 use std::env;
 use std::fs;
 use std::path::Path;
 
 use fundsp::hacker::*;
+use fundsp::MAX_BUFFER_SIZE;
 
 use rust_synth::audio::preset::{master_bus, GlobalParams, Preset};
 use rust_synth::audio::Track;
-use th_synth::director::{scale_mode_for_stage, MusicDirector, MASTER_GAIN};
+use th_synth::director::{scale_mode_for_stage, MusicDirector, MASTER_GAIN, SLOTS};
+use th_synth::score::Score;
 
 const SR: f32 = 48_000.0;
 
 fn main() {
-    // argv: [out.wav] [--solo-dir DIR]
+    // argv: [out.wav] [--solo-dir DIR] [--bars N]
     let args: Vec<String> = env::args().skip(1).collect();
-    let solo_dir: Option<String> = args
-        .iter()
-        .position(|a| a == "--solo-dir")
-        .and_then(|i| args.get(i + 1).cloned());
-    let out = args
-        .iter()
-        .find(|a| !a.starts_with("--") && Some(*a) != solo_dir.as_ref())
-        .cloned()
-        .unwrap_or_else(|| "audition.wav".to_string());
+    let mut out: Option<String> = None;
+    let mut solo_dir: Option<String> = None;
+    let mut bars_override: Option<usize> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--solo-dir" => {
+                i += 1;
+                solo_dir = args.get(i).cloned();
+            }
+            "--bars" => {
+                i += 1;
+                match args
+                    .get(i)
+                    .and_then(|v| v.parse::<usize>().ok())
+                    .filter(|&n| n >= 1)
+                {
+                    Some(n) => bars_override = Some(n),
+                    None => eprintln!(
+                        "audition: --bars needs a count >= 1 (got {:?}); using the default",
+                        args.get(i)
+                    ),
+                }
+            }
+            other => {
+                if out.is_none() {
+                    out = Some(other.to_string());
+                }
+            }
+        }
+        i += 1;
+    }
+    let out = out.unwrap_or_else(|| "audition.wav".to_string());
 
-    // The REAL director setup (stage 0, the shipped score).
-    let d = MusicDirector::new_fallback();
-    let tracks = d.tracks();
-    let score = d.score();
+    // The REAL director setup (stage 0, the shipped score) — and its
+    // PHRASE: `score.bars` (empty = today's one bar whose figures are
+    // the top-level lines — the backwards-compat contract).
+    let probe = MusicDirector::new_fallback();
+    let score = probe.score().clone();
+    let phrase_len = score.phrase_len();
+    let bars = bars_override.unwrap_or(std::cmp::max(phrase_len, 4));
     let p = score.stage_params(0);
     if let Some(dir) = &solo_dir {
         if let Err(err) = fs::create_dir_all(dir) {
@@ -65,23 +112,29 @@ fn main() {
     g.scale_mode.set_value(scale_mode_for_stage(0));
     g.master_gain.set_value(MASTER_GAIN);
 
-    let bars = 4.0;
-    let secs = bars * 4.0 * 60.0 / p.bpm as f64;
+    let secs = bars as f64 * 4.0 * 60.0 / p.bpm as f64;
     // The frequency closures' `follow(0.08)` means a FRESH graph takes
     // ~0.3 s (≈3× the response time) for the carriers to spin up from
     // 0 Hz. Live, the graph runs continuously so this never happens;
     // offline, render the flush and measure/write the settled tail.
     const SPINUP_S: f64 = 0.3;
+    let step_s = 60.0 / p.bpm as f64 / 4.0;
+    let flush_steps = (SPINUP_S / step_s).round() as usize;
 
     println!(
-        "audition: {} slots, {} bars @ {} bpm ({} s @ 48 kHz, +{SPINUP_S:.1} s spin-up flush) -> {out}",
-        tracks.len(),
-        bars,
+        "audition: {} slots, {bars} bars @ {} bpm ({} s @ 48 kHz, +{SPINUP_S:.1} s spin-up flush ≈ {flush_steps} steps of bar 0) -> {out}",
+        probe.tracks().len(),
         p.bpm,
         secs
     );
-    println!("values used (the director's REAL tracks — read, not mirrored):");
-    for t in tracks {
+    println!(
+        "phrase: {phrase_len} bar(s); rendering {bars} (markers: default = the top-level figure; bar[i] = phrase bar i's override; internal = the off-beat comp fallback):"
+    );
+    for b in 0..bars {
+        println!("[bar {b}] {}", figure_markers(&score, b));
+    }
+    println!("values used (the director's REAL tracks at t=0 — the DEFAULT bar's figures; the per-bar markers above are what vary across the phrase):");
+    for t in probe.tracks() {
         let s = t.params.snapshot();
         println!(
             "  {:<10} {:<10} freq {:7.2} gain {:4.2} char {:4.2} res {:4.2} cut {:6.0} det {:4.0} rev {:4.2} bits {:#018b}",
@@ -99,52 +152,75 @@ fn main() {
     }
 
     // ── The per-slot table: each slot soloed (the others muted — the
-    // fresh graph per pass keeps the reverb tails from cross-contaminating
-    // the measurement). `Wave::render` is fundsp's block (SIMD) offline
-    // renderer — the per-sample `get_stereo()` tick would be 10×+ slower
-    // for these long-reverb graphs.
+    // fresh graph per pass keeps the reverb tails from cross-
+    // contaminating the measurement). Two director-driven details:
+    // (1) the silence lives in the SCORE (every other slot's `muted`
+    // = true) — the director's per-tick mute fold rewrites every
+    // slot's `mute` from the score's user state EVERY tick, so a raw
+    // `params.mute` write (the pre-11g renderer's approach) would be
+    // clobbered by the first tick; (2) each pass runs with every
+    // voice UNLOCKED (stage = the max slot's unlock — the table's
+    // job is each voice's CHARACTER, and a stage-locked row reading
+    // 0.0 forever could never expose a broken voice; below stage 6
+    // the drum tiers, the root and the chord table are
+    // stage-0-identical, so only the bpm/brightness globals differ —
+    // the pass gets its own). The MIX pass below stays the shipped
+    // stage-0 mix.
+    let unlock_stage = SLOTS.iter().map(|s| s.unlock).max().unwrap_or(0);
+    let g_solo = {
+        let ps = score.stage_params(unlock_stage);
+        let g_solo = GlobalParams::default();
+        g_solo.bpm.set_value(ps.bpm);
+        g_solo.brightness.set_value(ps.brightness);
+        g_solo
+            .scale_mode
+            .set_value(scale_mode_for_stage(unlock_stage));
+        g_solo.master_gain.set_value(MASTER_GAIN);
+        g_solo
+    };
     let mut solo: Vec<(String, f32, f32, f64, f64, usize)> = Vec::new();
-    for i in 0..tracks.len() {
-        for (j, t) in tracks.iter().enumerate() {
-            t.params.mute.set_value(if j == i { 0.0 } else { 1.0 });
+    for i in 0..probe.tracks().len() {
+        let mut d = MusicDirector::new_fallback();
+        let mut s = score.clone();
+        for j in 0..s.slots.len() {
+            s.slots[j].muted = j != i;
         }
-        let mut net = build_sum(tracks, &g);
-        let wave = Wave::render(SR as f64, SPINUP_S + secs, &mut net);
+        d.set_score(s);
+        d.set_stage(unlock_stage); // the table's unlock (see above)
+        let name = d.tracks()[i].name.clone();
+        let mut net = build_sum(d.tracks(), &g_solo);
+        let (left_full, right_full) =
+            render_phrase(&mut d, &mut [&mut net], SPINUP_S + secs).remove(0);
         let drop = (SPINUP_S * SR as f64) as usize;
-        let left: Vec<f32> = wave.channel(0)[drop..].to_vec();
-        let right: Vec<f32> = wave.channel(1)[drop..].to_vec();
+        let left: Vec<f32> = left_full[drop..].to_vec();
+        let right: Vec<f32> = right_full[drop..].to_vec();
         let m = metrics(&left, &right);
         let (atktail, onsets) = attack_tail(&left, &right, SR as f64);
-        solo.push((
-            tracks[i].name.clone(),
-            m.peak,
-            m.rms,
-            m.bright,
-            atktail,
-            onsets,
-        ));
+        solo.push((name.clone(), m.peak, m.rms, m.bright, atktail, onsets));
         // Also dump each soloed slot beside the mix WAV when asked
         // (`--solo-dir DIR`): the per-slot table is a SUMMARY, and a
         // summary cannot settle "is this voice actually FM?" — the
         // spectrum of the soloed signal can. Naming is index-prefixed so
         // the files sort in engine order.
         if let Some(dir) = &solo_dir {
-            let name = format!("{dir}/{i}-{}.wav", tracks[i].name.replace(' ', "_"));
-            if let Err(err) = fs::write(Path::new(&name), wav_bytes(&left, &right)) {
-                eprintln!("audition: solo dump {name}: {err}");
+            let fname = format!("{dir}/{i}-{}.wav", name.replace(' ', "_"));
+            if let Err(err) = fs::write(Path::new(&fname), wav_bytes(&left, &right)) {
+                eprintln!("audition: solo dump {fname}: {err}");
             }
         }
     }
 
-    // ── The mix (all 8 live) — this is the WAV's content.
-    for t in tracks {
-        t.params.mute.set_value(0.0);
-    }
-    let mut net = build_sum(tracks, &g);
-    let wave = Wave::render(SR as f64, SPINUP_S + secs, &mut net);
+    // ── The mix (all 8 live) — this is the WAV's content. The raw
+    // (no master bus) net is pulled in the SAME tick loop (the
+    // headroom probe below).
+    let mut d = MusicDirector::new_fallback(); // the shipped score, unmuted
+    let mut net = build_sum(d.tracks(), &g);
+    let mut raw = build_sum_raw(d.tracks(), &g);
+    let mut r = render_phrase(&mut d, &mut [&mut net, &mut raw], SPINUP_S + secs);
+    let (mix_full, raw_full) = (r.remove(0), r.remove(0));
     let drop = (SPINUP_S * SR as f64) as usize;
-    let left: Vec<f32> = wave.channel(0)[drop..].to_vec();
-    let right: Vec<f32> = wave.channel(1)[drop..].to_vec();
+    let left: Vec<f32> = mix_full.0[drop..].to_vec();
+    let right: Vec<f32> = mix_full.1[drop..].to_vec();
     let mix = metrics(&left, &right);
 
     // The headroom probe: the same sum through NO master bus, so the
@@ -154,10 +230,8 @@ fn main() {
     // included, which is exactly the "no punch" symptom the atk/tail
     // column measures. `headroom_db` is how much to trim the slot gains
     // (or `master_gain`) to leave the limiter alone.
-    let mut raw = build_sum_raw(tracks, &g);
-    let raw_wave = Wave::render(SR as f64, SPINUP_S + secs, &mut raw);
-    let raw_left: Vec<f32> = raw_wave.channel(0)[drop..].to_vec();
-    let raw_right: Vec<f32> = raw_wave.channel(1)[drop..].to_vec();
+    let raw_left: Vec<f32> = raw_full.0[drop..].to_vec();
+    let raw_right: Vec<f32> = raw_full.1[drop..].to_vec();
     let raw_peak = raw_left
         .iter()
         .chain(raw_right.iter())
@@ -172,7 +246,9 @@ fn main() {
         f32::INFINITY
     };
 
-    println!("\n== per-slot (soloed, {secs:.2} s) + mix ==");
+    println!(
+        "\n== per-slot (soloed, all voices unlocked @ stage {unlock_stage}, {secs:.2} s) + mix (the shipped stage-0 mix) =="
+    );
     println!(
         "{:<10} {:>10} {:>10} {:>12} {:>9} {:>7}",
         "slot", "peak", "rms", "bright (4k+)", "atk/tail", "onsets"
@@ -204,6 +280,90 @@ fn main() {
     );
 }
 
+/// The per-bar marker (issue 11g — the section header that lets a
+/// listener follow the form): which figure each part (bass/lead/comp)
+/// resolves to on bar `b` — the phrase bar's override (`bar[i]`,
+/// `i = b % bars.len()` — the resolution's modulo), the top-level
+/// figure (`default`), or, for the comp, the internal off-beat default
+/// (`internal`) when the score itself carries no `comp` field.
+fn figure_markers(score: &Score, b: usize) -> String {
+    if score.bars.is_empty() {
+        return "bass=default lead=default comp=default".to_string();
+    }
+    let i = b % score.bars.len();
+    let bar = &score.bars[i];
+    let part = |present: bool| -> String {
+        if present {
+            format!("bar[{i}]")
+        } else {
+            "default".to_string()
+        }
+    };
+    let comp = if bar.comp.is_some() {
+        format!("bar[{i}]")
+    } else if score.comp.is_some() {
+        "default".to_string()
+    } else {
+        "internal".to_string()
+    };
+    format!(
+        "bass={} lead={} comp={}",
+        part(bar.bass.is_some()),
+        part(bar.lead.is_some()),
+        comp
+    )
+}
+
+/// Render the PHRASE DIRECTOR-DRIVEN (issue 11g): the fallback
+/// director ticks SAMPLE by SAMPLE while the nets run — its
+/// `sequence` rewrites the tracks' `Shared` params (the SAME atomics
+/// the live graph reads: `apply_bar`'s per-bar `pattern_bits`
+/// refresh, `apply_step`'s resolved note frequencies, the absolute-
+/// bar chord offsets) — so the resolved per-bar figures actually vary
+/// inside the render (the pre-11g "render ONE static setup with
+/// `Wave::render`" path would have played a phrase as one bar). The
+/// nets are pulled through fundsp's BLOCK `process` in the same
+/// 64-sample chunks `Wave::render` uses (a per-sample `get_stereo()`
+/// tick would be 10× slower for these long-reverb graphs — the
+/// director's ticks are cheap; the graph's work is not).
+fn render_phrase(
+    d: &mut MusicDirector,
+    nets: &mut [&mut Net],
+    secs: f64,
+) -> Vec<(Vec<f32>, Vec<f32>)> {
+    let total = (secs * SR as f64).round() as usize;
+    let dt = 1.0 / SR as f64;
+    let mut channels: Vec<(Vec<f32>, Vec<f32>)> = nets
+        .iter_mut()
+        .map(|net| {
+            net.set_sample_rate(SR as f64);
+            (Vec::with_capacity(total), Vec::with_capacity(total))
+        })
+        .collect();
+    let mut i = 0;
+    while i < total {
+        let n = std::cmp::min(total - i, MAX_BUFFER_SIZE);
+        for _ in 0..n {
+            d.tick(dt as f32);
+        }
+        for k in 0..nets.len() {
+            // A FRESH local buffer per net per chunk (a `BufferMut`
+            // into a Vec element of `channels` would not coexist with
+            // the next `channels[k]` borrow — the borrows must be
+            // disjoint).
+            let mut buf = BufferVec::new(2);
+            let mut out = buf.buffer_mut();
+            nets[k].process(n, &BufferRef::new(&[]), &mut out);
+            for j in 0..n {
+                channels[k].0.push(out.at_f32(0, j));
+                channels[k].1.push(out.at_f32(1, j));
+            }
+        }
+        i += n;
+    }
+    channels
+}
+
 /// The SAME graph the director builds: each slot's `Preset::build`
 /// (the slot's resolved kind + its `TrackParams` — the `Shared`
 /// atomics the live graph reads) summed through the master bus.
@@ -212,14 +372,14 @@ fn build_sum(tracks: &[Track], g: &GlobalParams) -> Net {
 }
 
 /// The same sum WITHOUT the master bus (so no limiter): the headroom probe.
-/// The master bus ends in `limiter_stereo(0.001, 0.3)`, and a limiter is
-/// not a mixer: when the sum exceeds its ceiling it squashes EVERYTHING,
-/// transients included. Since the issue-11e dry+wet fix multiplied every
-/// voice's energy ~8x, the sum now hits the limiter hard — and a squashed
-/// kick is exactly the "no punch" symptom we just fixed at the voice
-/// level. This render exists to keep that honest: `headroom` below is the
-/// gain the operator should trim from the slots' gains, not a secret the
-/// limiter hides.
+/// The master bus ends in `limiter_stereo(0.001, 0.3)`, and a limiter
+/// is not a mixer: when the sum exceeds its ceiling it squashes
+/// EVERYTHING, transients included. Since the issue-11e dry+wet fix
+/// multiplied every voice's energy ~8x, the sum now hits the limiter
+/// hard — and a squashed kick is exactly the "no punch" symptom we just
+/// fixed at the voice level. This render exists to keep that honest:
+/// `headroom` below is the gain the operator should trim from the
+/// slots' gains, not a secret the limiter hides.
 fn build_sum_raw(tracks: &[Track], g: &GlobalParams) -> Net {
     let mut sum: Option<Net> = None;
     for t in tracks {

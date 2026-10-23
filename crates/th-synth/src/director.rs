@@ -85,6 +85,30 @@
 //! enum, so `ALL_KINDS`' existing cycle order and the shipped scores'
 //! ids are untouched.
 //!
+//! # The plan 11g phrase (the per-bar figures — the song form)
+//!
+//! Issue 11g made the melody more than one bar: `Score.bars` is the
+//! phrase — per-bar OVERRIDES of the top-level `bass`/`lead`/`comp`
+//! figures, resolved modulo `bars.len()` over the ABSOLUTE bar counter
+//! (the chord progression keeps its OWN cycle — `chord_offset`'s
+//! `bars_per_chord` + table arithmetic over the same absolute bar — so
+//! an 8-bar phrase over a 4-chord progression cycles the chords twice;
+//! the two are NOT coupled). A `None` field falls back to the
+//! top-level figure; an EMPTY `bars` list is "no phrase": one bar
+//! whose figures are the top-level lines, exactly today's behaviour
+//! (the backwards-compat contract; the shipped bake is the reference,
+//! and it carries no `bars`). The sequencer resolves the bar NOW
+//! PLAYING (`Score::resolve_bar`): `apply_step` writes the resolved
+//! bass/lead lines' note frequencies, the staccato gate's note-present
+//! half reads the resolved lines (a phrase bar that rests where the
+//! top-level line plays stays gated — `the_gate_reads_the_resolved_
+//! bar` pins it), and `apply_bar` — called exactly when the bar
+//! changes — RE-FRESHES the bass/lead/comp `pattern_bits` from the
+//! resolved figures: a stale grid (the default bar's bits left on a
+//! later bar) is the subtle bug that would make a phrase sound like
+//! one bar (`bars_resolve_modulo_and_fall_back` +
+//! `the_phrase_actually_changes_what_plays` pin it).
+//!
 //! # The plan 11 effective-mute fold (mute/solo + the instrument kinds)
 //!
 //! A slot's role (fixed by index) and its timbre (selectable — the
@@ -937,11 +961,18 @@ impl MusicDirector {
         let on = window.contains(&in_step);
         // The gate's program half: the bass/lead are audible only while
         // their step has a note AND the window is open (the staccato).
-        // The user state (baked `muted`/`solo`) folds on top in
-        // `fold_mutes` — a user mute can no longer be clobbered by the
-        // gate (the plan 11 regression).
-        self.gate_voice(3, self.score.bass.notes[idx].is_some() && on);
-        self.gate_voice(4, self.score.lead.notes[idx].is_some() && on);
+        // The note-present half reads the bar NOW PLAYING's RESOLVED
+        // lines (issue 11g — a phrase bar that rests where the
+        // top-level line plays must stay gated; the `ResolvedBar`
+        // temporaries drop before the `&mut self` gate writes, which
+        // is why the booleans are pulled out first). The user state
+        // (baked `muted`/`solo`) folds on top in `fold_mutes` — a user
+        // mute can no longer be clobbered by the gate (the plan 11
+        // regression).
+        let bass_some = self.score.resolve_bar(bar).bass.notes[idx].is_some();
+        let lead_some = self.score.resolve_bar(bar).lead.notes[idx].is_some();
+        self.gate_voice(3, bass_some && on);
+        self.gate_voice(4, lead_some && on);
         // The effective-mute fold: ALL 8 slots, EVERY tick.
         self.fold_mutes();
     }
@@ -954,39 +985,101 @@ impl MusicDirector {
         self.program_mute[slot] = !on;
     }
 
-    /// Write the bar's chord onto the chord-following slots: the comp
-    /// (issue 11f — its PITCH is the chord root × the slot's ratio;
-    /// its HITS come from the `comp` pattern via `pattern_bits`) and
-    /// the harmony slots (pad/bell/sub).
+    /// Write the bar onto the tracks (called from `sequence` EXACTLY
+    /// when the bar changes): the chord-following slots' PITCH (the
+    /// comp — issue 11f's chord root × the slot's ratio — and the
+    /// harmony slots) AND the per-bar FIGURE grids (issue 11g — the
+    /// phrase): the bass/lead `pattern_bits` from the bar NOW
+    /// PLAYING's resolved note lines, the comp's from the bar's
+    /// resolved comp pattern. The refresh lives HERE (not in
+    /// `apply_slot`, which writes the top-level/default figures at
+    /// construction and set_stage/set_score time) because a stale
+    /// grid — the default bar's bits left on a later bar — is the
+    /// subtle bug that would make a phrase sound like one bar
+    /// (`bars_resolve_modulo_and_fall_back` +
+    /// `the_phrase_actually_changes_what_plays` pin it).
     fn apply_bar(&mut self, bar: u64) {
         let p = self.score.stage_params(self.stage);
         let offset = self.score.chord_offset(self.stage, bar);
+        let resolved = self.score.resolve_bar(bar);
         for (i, slot) in SLOTS.iter().enumerate() {
-            if matches!(slot.role, Role::Comp | Role::Harmony) {
-                self.tracks[i]
-                    .params
-                    .freq
-                    .set_value(p.root() * slot.ratio * semitone_ratio(offset));
+            match slot.role {
+                Role::Comp => {
+                    // The comp's PITCH: the chord root × ratio (the
+                    // 11f contract)...
+                    self.tracks[i]
+                        .params
+                        .freq
+                        .set_value(p.root() * slot.ratio * semitone_ratio(offset));
+                    // ...and its HIT PATTERN: the bar's resolved comp
+                    // pattern's bits (the top-level `comp`, or the
+                    // internal off-beat default — `resolve_bar`'s
+                    // fallback).
+                    Self::write_slot_grid(
+                        &mut self.tracks[..],
+                        i,
+                        crate::score::pattern_bits(resolved.comp),
+                    );
+                }
+                Role::Harmony => {
+                    self.tracks[i]
+                        .params
+                        .freq
+                        .set_value(p.root() * slot.ratio * semitone_ratio(offset));
+                }
+                // The per-bar note lines (the phrase's resolved
+                // figures — the top-level lines when the bar leaves
+                // the field `None` / the list empty).
+                Role::Bass => Self::write_slot_grid(
+                    &mut self.tracks[..],
+                    i,
+                    Self::note_line_bits(&resolved.bass.notes),
+                ),
+                Role::Lead => Self::write_slot_grid(
+                    &mut self.tracks[..],
+                    i,
+                    Self::note_line_bits(&resolved.lead.notes),
+                ),
+                Role::Drum => {} // the stage tiers (written at stage/score changes)
             }
         }
     }
 
+    /// One slot's per-bar grid write (issue 11g): `pattern_bits` +
+    /// the hit count + a zero rotation — the same triple
+    /// `apply_slot` writes at construction. Takes the tracks (not the
+    /// whole director) so `apply_bar` can call it while the
+    /// `ResolvedBar`'s borrow of `self.score` is still live (disjoint
+    /// fields).
+    fn write_slot_grid(tracks: &mut [Track], i: usize, bits: u32) {
+        tracks[i]
+            .params
+            .pattern_hits
+            .set_value(bits.count_ones() as f32);
+        tracks[i].params.pattern_rotation.set_value(0.0);
+        tracks[i].params.pattern_bits.store(bits, Ordering::Relaxed);
+    }
+
     /// Write the step's bass/lead note (rests gate the voice in
     /// `sequence` — the note-present half of the fold's program state;
-    /// this pass writes freqs only, never `mute`).
+    /// this pass writes freqs only, never `mute`). The lines come from
+    /// the bar NOW PLAYING's resolved figures (issue 11g — the
+    /// phrase's per-bar lines, with the top-level lines as the
+    /// fallback; empty `bars` = the top-level lines, exactly today).
     fn apply_step(&mut self, step: u64, bar: u64) {
         let p = self.score.stage_params(self.stage);
         let offset = self.score.chord_offset(self.stage, bar);
         let idx = (step % self.score.steps_per_bar as u64) as usize;
+        let resolved = self.score.resolve_bar(bar);
 
         // Bass (slot 3): the chord root/fifth/octave line, gated per
         // step. The octave is data (`bass.octave_shift`: -1 in the
         // default score — the legacy `root * 0.5`): `2^octave_shift`.
         let bass = &self.tracks[3].params;
-        if let Some(note) = self.score.bass.notes[idx] {
+        if let Some(note) = resolved.bass.notes[idx] {
             bass.freq.set_value(
                 p.root()
-                    * 2.0_f32.powf(self.score.bass.octave_shift as f32)
+                    * 2.0_f32.powf(resolved.bass.octave_shift as f32)
                     * semitone_ratio(offset + note),
             );
         }
@@ -995,9 +1088,9 @@ impl MusicDirector {
         // (`lead.octave_shift`: +1 — the legacy `root * 2.0`),
         // deliberately NOT chord-following.
         let lead = &self.tracks[4].params;
-        if let Some(note) = self.score.lead.notes[idx] {
+        if let Some(note) = resolved.lead.notes[idx] {
             lead.freq.set_value(
-                p.root() * 2.0_f32.powf(self.score.lead.octave_shift as f32) * semitone_ratio(note),
+                p.root() * 2.0_f32.powf(resolved.lead.octave_shift as f32) * semitone_ratio(note),
             );
         }
     }
@@ -2034,6 +2127,413 @@ mod tests {
             (d.tracks[5].params.freq.value() - new_pad).abs() < 1e-4,
             "the bar's chord freq re-applies within the same bar (got {}, want {new_pad})",
             d.tracks[5].params.freq.value()
+        );
+    }
+    /// Plan 002 issue 11g — the backwards-compat contract: an EMPTY
+    /// `bars` list (the shipped bake — no `bars` field at all) resolves
+    /// every bar to the top-level figures: bar after bar, the bass/
+    /// lead/comp `pattern_bits` are the top-level lines' set steps and
+    /// the step-0 frequencies are the top-level lines over the
+    /// ABSOLUTE bar's chord (the phrase machinery is transparent when
+    /// there is no phrase). Driven through real fallback directors
+    /// (one per bar — the tick lands exactly on bar {bar}, step 0,
+    /// in-step ≈0.15 — the even-step window open, and well inside the
+    /// step, so float noise cannot land on the wrong step).
+    #[test]
+    fn an_empty_bars_list_is_todays_behaviour() {
+        let score = Score::default();
+        assert!(score.bars.is_empty(), "the shipped bake carries no `bars`");
+        // The top-level figures' grids, computed INDEPENDENTLY (the
+        // note-line fold + the char parse — not through
+        // `resolve_bar`/`pattern_bits`/`note_line_bits`, so a drift in
+        // any of them is caught).
+        let line_bits = |notes: &[Option<i32>]| -> u32 {
+            notes.iter().enumerate().fold(
+                0u32,
+                |b, (i, n)| {
+                    if n.is_some() {
+                        b | (1 << i)
+                    } else {
+                        b
+                    }
+                },
+            )
+        };
+        let char_bits = |pattern: &str| -> u32 {
+            pattern.chars().enumerate().fold(0u32, |b, (i, c)| {
+                if c == 'x' || c == 'X' {
+                    b | (1 << i)
+                } else {
+                    b
+                }
+            })
+        };
+        let bass_bits = line_bits(&score.bass.notes);
+        let lead_bits = line_bits(&score.lead.notes);
+        let comp_bits = char_bits(
+            score
+                .comp
+                .as_deref()
+                .unwrap_or(crate::score::COMP_DEFAULT_PATTERN),
+        );
+
+        let stage = 3u32; // a shifted root (fourths = 1) — the legacy `root * ROOT_SHIFT`
+        let p = stage_params(stage);
+        let root = ROOT_A2_HZ * ROOT_SHIFT.powi(p.fourths as i32);
+        let step_len = 60.0 / p.bpm / 4.0;
+        // A full chord cycle, bar after bar: the figures are the
+        // top-level ones EVERY time (the empty-phrase resolution).
+        for bar in 0..4u64 {
+            let mut d = MusicDirector::new_fallback();
+            d.set_stage(stage);
+            d.tick((bar as f32 * 16.0 + 0.25) * step_len - 0.01); // bar {bar}, step 0, in-step ≈0.15
+            assert_eq!(
+                d.tracks[3].params.pattern_bits.load(Ordering::Relaxed),
+                bass_bits,
+                "bar {bar}: the bass grid is the top-level line's (no phrase)"
+            );
+            assert_eq!(
+                d.tracks[4].params.pattern_bits.load(Ordering::Relaxed),
+                lead_bits,
+                "bar {bar}: the lead grid is the top-level line's (no phrase)"
+            );
+            assert_eq!(
+                d.tracks[5].params.pattern_bits.load(Ordering::Relaxed),
+                comp_bits,
+                "bar {bar}: the comp grid is the top-level pattern's (no phrase)"
+            );
+            let offset = score.chord_offset(stage, bar);
+            let bass0 = root
+                * 2.0_f32.powf(score.bass.octave_shift as f32)
+                * semitone_ratio(
+                    offset + score.bass.notes[0].expect("the default bass's step 0 is a note"),
+                );
+            assert!(
+                (d.tracks[3].params.freq.value() - bass0).abs() < 1e-4,
+                "bar {bar}: the bass step-0 freq is the top-level line over the bar's chord (got {}, want {bass0})",
+                d.tracks[3].params.freq.value()
+            );
+            let lead0 = root
+                * 2.0_f32.powf(score.lead.octave_shift as f32)
+                * semitone_ratio(score.lead.notes[0].expect("the default lead's step 0 is a note"));
+            assert!(
+                (d.tracks[4].params.freq.value() - lead0).abs() < 1e-4,
+                "bar {bar}: the lead step-0 freq is the top-level line on the key root (got {}, want {lead0})",
+                d.tracks[4].params.freq.value()
+            );
+            let comp0 = root * semitone_ratio(offset);
+            assert!(
+                (d.tracks[5].params.freq.value() - comp0).abs() < 1e-4,
+                "bar {bar}: the comp pitch is the bar's chord root (got {}, want {comp0})",
+                d.tracks[5].params.freq.value()
+            );
+        }
+    }
+
+    /// Plan 002 issue 11g — the resolution contract: the bar index
+    /// resolves modulo `bars.len()`, and a `None` field falls back to
+    /// the top-level figure. A 2-bar phrase over 4 bars resolves
+    /// 0,1,0,1 — asserted BOTH on the pure `resolve_bar` resolution
+    /// and on the DIRECTOR's per-bar grids (the `pattern_bits` refresh
+    /// at the bar change is exactly what keeps bar 1's grid from
+    /// being bar 0's stale bits — a resolution that always returned
+    /// bar 0 fails the bar-1/bar-3 asserts).
+    #[test]
+    fn bars_resolve_modulo_and_fall_back() {
+        use crate::score::{Bar, NoteLine};
+        // A 16-entry line with ONE note (at the given step) — distinct
+        // per override, so a wrong figure is an inequality.
+        let one_note = |step: usize, note: i32| {
+            let mut notes = vec![None; 16];
+            notes[step] = Some(note);
+            NoteLine {
+                notes,
+                octave_shift: 0,
+            }
+        };
+        // The top-level figures' grids, computed INDEPENDENTLY (the
+        // note-line fold + the char parse).
+        let line_bits = |notes: &[Option<i32>]| -> u32 {
+            notes.iter().enumerate().fold(
+                0u32,
+                |b, (i, n)| {
+                    if n.is_some() {
+                        b | (1 << i)
+                    } else {
+                        b
+                    }
+                },
+            )
+        };
+        let char_bits = |pattern: &str| -> u32 {
+            pattern.chars().enumerate().fold(0u32, |b, (i, c)| {
+                if c == 'x' || c == 'X' {
+                    b | (1 << i)
+                } else {
+                    b
+                }
+            })
+        };
+        let mut score = Score::default();
+        let top_bass_bits = line_bits(&score.bass.notes);
+        let top_lead_bits = line_bits(&score.lead.notes);
+        let top_comp_bits = char_bits(
+            score
+                .comp
+                .as_deref()
+                .unwrap_or(crate::score::COMP_DEFAULT_PATTERN),
+        );
+        // The TEST-ONLY 2-bar phrase: bar 0 overrides the bass (step
+        // 0, +5) and the comp (16ths); bar 1 overrides the lead (step
+        // 0, +15); every `None` field falls back to the top-level
+        // figure.
+        let bar0_comp = "x.x.x.x.x.x.x.x.";
+        score.bars = vec![
+            Bar {
+                bass: Some(one_note(0, 5)),
+                lead: None,
+                comp: Some(bar0_comp.to_string()),
+            },
+            Bar {
+                bass: None,
+                lead: Some(one_note(0, 15)),
+                comp: None,
+            },
+        ];
+        // The overrides are distinct figures (so the grid asserts are
+        // inequalities, not equality accidents).
+        assert_ne!(
+            1u32, top_bass_bits,
+            "bar 0's bass override is a distinct grid"
+        );
+        assert_ne!(
+            1u32, top_lead_bits,
+            "bar 1's lead override is a distinct grid"
+        );
+        assert_ne!(
+            char_bits(bar0_comp),
+            top_comp_bits,
+            "bar 0's comp override is a distinct pattern"
+        );
+
+        // The pure resolution: 0,1,0,1 + the per-field fallbacks.
+        let bar0 = score.resolve_bar(0);
+        assert_eq!(bar0.bass.notes[0], Some(5), "bar 0's override bass");
+        assert!(
+            bar0.bass.notes.iter().skip(1).all(Option::is_none),
+            "bar 0's override bass rests elsewhere"
+        );
+        assert_eq!(
+            bar0.lead, &score.lead,
+            "bar 0's lead falls back to the top-level line"
+        );
+        assert_eq!(bar0.comp, bar0_comp, "bar 0's override comp");
+        let bar1 = score.resolve_bar(1);
+        assert_eq!(
+            bar1.bass, &score.bass,
+            "bar 1's bass falls back to the top-level line"
+        );
+        assert_eq!(bar1.lead.notes[0], Some(15), "bar 1's override lead");
+        assert_eq!(
+            bar1.comp,
+            score
+                .comp
+                .as_deref()
+                .expect("the shipped score's comp pattern"),
+            "bar 1's comp falls back to the top-level pattern"
+        );
+        // The modulo: 2 == 0, 3 == 1.
+        assert_eq!(score.resolve_bar(2), bar0, "bar 2 resolves to phrase bar 0");
+        assert_eq!(score.resolve_bar(3), bar1, "bar 3 resolves to phrase bar 1");
+        assert_eq!(score.phrase_len(), 2);
+
+        // The DIRECTOR half: the per-bar grids follow the resolution
+        // (the `apply_bar` refresh — a stale grid is the subtle bug
+        // that would make the phrase sound like one bar).
+        let step_len = 60.0 / BPM_BASE / 4.0;
+        let mut d = MusicDirector::new_fallback();
+        d.set_score(score);
+        let expected = [
+            (1u32, top_lead_bits, char_bits(bar0_comp)),
+            (top_bass_bits, 1, top_comp_bits),
+        ];
+        for bar in 0..4u64 {
+            // The first tick lands 0.01 s INSIDE step 0 of bar 0 (in-
+            // step ≈0.15 — the even-step window open); each later tick
+            // advances exactly 16 steps (a full bar), keeping in-step
+            // ≈0.15 of the bar's step 0.
+            d.tick(if bar == 0 {
+                0.25 * step_len - 0.01
+            } else {
+                16.0 * step_len
+            });
+            let (e_bass, e_lead, e_comp) = expected[(bar % 2) as usize];
+            assert_eq!(
+                d.tracks[3].params.pattern_bits.load(Ordering::Relaxed),
+                e_bass,
+                "bar {bar}: the bass grid (the bar-change refresh)"
+            );
+            assert_eq!(
+                d.tracks[4].params.pattern_bits.load(Ordering::Relaxed),
+                e_lead,
+                "bar {bar}: the lead grid (the bar-change refresh)"
+            );
+            assert_eq!(
+                d.tracks[5].params.pattern_bits.load(Ordering::Relaxed),
+                e_comp,
+                "bar {bar}: the comp grid (the bar-change refresh)"
+            );
+        }
+    }
+
+    /// Plan 002 issue 11g — THE mutation-sensitive contract: two bars
+    /// with DIFFERENT bass lines actually change what plays — the
+    /// bass's `pattern_bits` AND its step frequencies differ between
+    /// the bars (independently computed expectations), and the grid
+    /// RETURNS to bar 0's on bar 2 (the modulo). If the resolution
+    /// always returned bar 0 (or the top-level line), the bar-1
+    /// asserts fail.
+    #[test]
+    fn the_phrase_actually_changes_what_plays() {
+        use crate::score::{Bar, NoteLine};
+        let mut score = Score::default();
+        // bar 0: a bass line with a note ONLY at step 0 (+0, the bar's
+        // chord root); bar 1: a bass line with a note ONLY at step 4
+        // (+7, a fifth up). Different grid, different pitch.
+        let mut b0 = vec![None; 16];
+        b0[0] = Some(0);
+        let mut b1 = vec![None; 16];
+        b1[4] = Some(7);
+        let oct = score.bass.octave_shift;
+        score.bars = vec![
+            Bar {
+                bass: Some(NoteLine {
+                    notes: b0,
+                    octave_shift: oct,
+                }),
+                lead: None,
+                comp: None,
+            },
+            Bar {
+                bass: Some(NoteLine {
+                    notes: b1,
+                    octave_shift: oct,
+                }),
+                lead: None,
+                comp: None,
+            },
+        ];
+        let root = stage_params(0).root();
+        let step_len = 60.0 / BPM_BASE / 4.0;
+        // One fresh fallback director per observation (the tick lands
+        // exactly on the target bar/step, in-step ≈0.15 — the even-step
+        // window open, well inside the step).
+        let state_at = |bar: u64, step: u64| -> (u32, f32) {
+            let mut d = MusicDirector::new_fallback();
+            d.set_score(score.clone());
+            d.tick((bar as f32 * 16.0 + step as f32 + 0.25) * step_len - 0.01);
+            (
+                d.tracks[3].params.pattern_bits.load(Ordering::Relaxed),
+                d.tracks[3].params.freq.value(),
+            )
+        };
+        // bar 0, step 0: grid = bit 0, freq = root * 2^oct * semitone(0 + 0)
+        // (the bar's chord I's offset 0 + the line's note 0).
+        let (bits0, freq0) = state_at(0, 0);
+        assert_eq!(bits0, 0b1, "bar 0's bass grid (its line's set steps)");
+        let want0 = root * 2.0_f32.powf(oct as f32) * semitone_ratio(0);
+        assert!(
+            (freq0 - want0).abs() < 1e-4,
+            "bar 0's bass step-0 pitch: got {freq0}, want {want0}"
+        );
+        // bar 1, step 4: grid = bit 4, freq = root * 2^oct *
+        // semitone(9 + 7) (vi's offset 9 + the line's fifth).
+        let (bits1, freq1) = state_at(1, 4);
+        assert_eq!(bits1, 1 << 4, "bar 1's bass grid (a DIFFERENT figure)");
+        let want1 = root * 2.0_f32.powf(oct as f32) * semitone_ratio(9 + 7);
+        assert!(
+            (freq1 - want1).abs() < 1e-4,
+            "bar 1's bass step-4 pitch: got {freq1}, want {want1}"
+        );
+        assert_ne!(bits0, bits1, "the phrase actually changes the grid");
+        assert_ne!(freq0, freq1, "the phrase actually changes the pitch");
+        // bar 2 = phrase bar 0 again (the modulo): the grid RETURNS to
+        // bit 0; bar 3 = phrase bar 1: bit 4.
+        let (bits2, _) = state_at(2, 0);
+        assert_eq!(
+            bits2, bits0,
+            "bar 2 resolves to phrase bar 0 (the grid returns)"
+        );
+        let (bits3, _) = state_at(3, 4);
+        assert_eq!(
+            bits3, bits1,
+            "bar 3 resolves to phrase bar 1 (the grid returns)"
+        );
+    }
+
+    /// Plan 002 issue 11g — the gate reads the RESOLVED bar's figure,
+    /// not the top-level default: the default bass has a note at step
+    /// 0, but the phrase's bar 1 overrides the bass with a line that
+    /// RESTS at step 0 — on bar 1's step 0 the bass must be GATED
+    /// (muted) even though the top-level line plays there (and
+    /// un-muted on bar 0's step 0, where the top-level line applies —
+    /// the fallback keeps today's behaviour). A gate that reads
+    /// `score.bass.notes` (the pre-11g expression) fails the bar-1
+    /// half.
+    #[test]
+    fn the_gate_reads_the_resolved_bar() {
+        use crate::score::{Bar, NoteLine};
+        let mut score = Score::default();
+        // bar 1's bass: the default line with step 0 RESTED (and step
+        // 1 given a note — so the override's grid is not the default's
+        // either).
+        let mut b1 = score.bass.notes.clone();
+        b1[0] = None;
+        b1[1] = Some(3);
+        let oct = score.bass.octave_shift;
+        score.bars = vec![
+            Bar {
+                bass: None, // bar 0: the top-level line
+                lead: None,
+                comp: None,
+            },
+            Bar {
+                bass: Some(NoteLine {
+                    notes: b1,
+                    octave_shift: oct,
+                }),
+                lead: None,
+                comp: None,
+            },
+        ];
+        let step_len = 60.0 / BPM_BASE / 4.0;
+        let mut d = MusicDirector::new_fallback();
+        d.set_score(score);
+        // bar 0, step 0 (in-step ≈0.25 — the even window 0..0.7 open,
+        // and clear of BOTH window edges so float noise cannot land
+        // outside): the top-level line plays → the gate OPEN.
+        d.tick(0.35 * step_len - 0.01);
+        assert_eq!(
+            d.tracks[3].params.mute.value(),
+            0.0,
+            "bar 0 step 0: the top-level line's note keeps the bass live"
+        );
+        // bar 1, step 0 (in-step ≈0.25): the override RESTS → the gate
+        // CLOSED, even though the top-level line has a note there.
+        d.tick(16.0 * step_len);
+        assert_eq!(
+            d.tracks[3].params.mute.value(),
+            1.0,
+            "bar 1 step 0: the resolved rest gates the bass (the top-level line plays here — the gate must not read it)"
+        );
+        // ...and the override's OWN note (step 1 — ODD, swung: the
+        // window is SWING..SWING+GATE_OPEN = 0.15..0.85; in-step
+        // ≈0.25 sits well inside) is live there.
+        d.tick(step_len);
+        assert_eq!(
+            d.tracks[3].params.mute.value(),
+            0.0,
+            "bar 1 step 1: the override's note is live"
         );
     }
     #[test]

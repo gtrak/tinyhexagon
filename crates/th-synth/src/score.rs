@@ -16,6 +16,18 @@
 //! of the d97d4277 code) — independent of the `Score::default()`
 //! shorthands in `crate::director` (asserting through them would make
 //! the test vacuous: both sides the same expression).
+//!
+//! # The plan 11g phrase (the per-bar figures)
+//!
+//! Since issue 11g the score carries an OPTIONAL phrase: `bars` — a
+//! list of per-bar OVERRIDES of the top-level `bass`/`lead`/`comp`
+//! figures. `Score::resolve_bar(bar)` resolves the bar index modulo
+//! `bars.len()` and falls back to the top-level figure for each field
+//! left `None`; an EMPTY list (the shipped bake — it carries no
+//! `bars`) resolves every bar to the top-level figures, which IS
+//! today's one-bar behaviour (the backwards-compat contract). The
+//! chord cycle is independent: `chord_offset` keeps its own
+//! `bars_per_chord` arithmetic over the same absolute bar.
 
 use serde::{Deserialize, Serialize};
 
@@ -103,6 +115,22 @@ pub fn kind_from_id(id: &str) -> Option<PresetKind> {
 /// operator edits), this constant is only the fallback.
 pub const COMP_DEFAULT_PATTERN: &str = "..x...x...x...x.";
 
+/// The step pattern's `pattern_bits` (the char-index parse every
+/// pattern writer shares — `drum_pattern`'s documented discipline:
+/// `x`/`X` = a hit, step 0 first, never byte arithmetic; indices >=
+/// 32 skipped because they do not fit the u32 grid). Issue 11g:
+/// the per-bar comp patterns' bits come through here too.
+#[must_use]
+pub fn pattern_bits(pattern: &str) -> u32 {
+    let mut bits = 0u32;
+    for (step, char) in pattern.chars().enumerate() {
+        if (char == 'x' || char == 'X') && step < 32 {
+            bits |= 1 << step;
+        }
+    }
+    bits
+}
+
 /// The full chiptune score (the plan 10 schema, snake_case field names).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -152,6 +180,19 @@ pub struct Score {
     /// off-beat default ([`COMP_DEFAULT_PATTERN`]).
     #[serde(default)]
     pub comp: Option<String>,
+    /// The phrase (plan 002 issue 11g — the song form): the per-bar
+    /// figures, resolved modulo `len` over the ABSOLUTE bar counter —
+    /// INDEPENDENT of the chord cycle (`chord_offset` keeps its own
+    /// `bars_per_chord` + table arithmetic over the same absolute bar,
+    /// so an 8-bar phrase over a 4-chord progression cycles the chords
+    /// twice). A `None` field falls back to the top-level figure; an
+    /// EMPTY list means "no phrase": one bar whose figures are the
+    /// top-level `bass`/`lead`/`comp` — exactly today's behaviour
+    /// (a score written before this issue parses and plays unchanged
+    /// — the backwards-compat contract; the shipped bake is the
+    /// reference). `len` is sanity-bounded to 64 (`validate`).
+    #[serde(default)]
+    pub bars: Vec<Bar>,
     /// The 8 slots' mix gains, engine order (`SLOTS`' order).
     pub slots: Vec<SlotGain>,
     /// The baked solo (an FL-project track solo, plan 11): the
@@ -223,6 +264,49 @@ pub struct NoteLine {
     /// the note's semitones (the default score: bass -1 — the legacy
     /// `root * 0.5`; lead +1 — the legacy `root * 2.0`).
     pub octave_shift: i32,
+}
+
+/// One bar of the phrase (plan 002 issue 11g — the song form): the
+/// per-bar OVERRIDES of the top-level figures. A `None` field falls
+/// back to the top-level value (`Score.bass`/`lead`/`comp`) — so
+/// `Bar { lead: None, .. }` means "this bar uses the default lead
+/// line". An empty `bars` list is "no phrase": every bar resolves to
+/// the top-level figures — exactly today's behaviour (the
+/// backwards-compat contract; the shipped bake carries no `bars`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct Bar {
+    /// This bar's bass line (a FULL line — `notes` AND
+    /// `octave_shift`). `None` = the top-level `bass`.
+    #[serde(default)]
+    pub bass: Option<NoteLine>,
+    /// This bar's lead line. `None` = the top-level `lead`.
+    #[serde(default)]
+    pub lead: Option<NoteLine>,
+    /// This bar's comp step pattern. `None` = the top-level `comp`
+    /// (which itself falls back to the internal off-beat default,
+    /// [`COMP_DEFAULT_PATTERN`], when absent).
+    #[serde(default)]
+    pub comp: Option<String>,
+}
+
+/// One bar's RESOLVED figures (plan 002 issue 11g — `Score::
+/// resolve_bar`'s result): the top-level figures with the phrase's
+/// per-bar overrides applied. An empty `bars` list resolves every bar
+/// to exactly the top-level figures — today's behaviour.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ResolvedBar<'a> {
+    /// The bass line the bar plays (the top-level `bass` unless the
+    /// phrase bar overrides it — `notes` AND `octave_shift` are the
+    /// override's when it is present).
+    pub bass: &'a NoteLine,
+    /// The lead line the bar plays (the top-level `lead` unless the
+    /// phrase bar overrides it).
+    pub lead: &'a NoteLine,
+    /// The comp's step pattern the bar plays (always present: the
+    /// phrase bar's `comp`, else the top-level `comp`, else
+    /// [`COMP_DEFAULT_PATTERN`]).
+    pub comp: &'a str,
 }
 
 /// One slot's mix gain (the `slots` array; engine/SLOTS order).
@@ -305,14 +389,45 @@ impl Score {
     /// compat rule — the pattern is additive data, not a requirement).
     #[must_use]
     pub fn comp_pattern_bits(&self) -> u32 {
-        let pattern = self.comp.as_deref().unwrap_or(COMP_DEFAULT_PATTERN);
-        let mut bits = 0u32;
-        for (step, char) in pattern.chars().enumerate() {
-            if (char == 'x' || char == 'X') && step < 32 {
-                bits |= 1 << step;
-            }
+        pattern_bits(self.comp.as_deref().unwrap_or(COMP_DEFAULT_PATTERN))
+    }
+
+    /// The phrase's length in bars (plan 002 issue 11g — the
+    /// resolution modulus the sequencer's bar index wraps on): the
+    /// `bars` count when the score carries a phrase, `1` (the single
+    /// default bar) when `bars` is empty — today's one-bar behaviour.
+    #[must_use]
+    pub fn phrase_len(&self) -> usize {
+        if self.bars.is_empty() {
+            1
+        } else {
+            self.bars.len()
         }
-        bits
+    }
+
+    /// The bar's RESOLVED figures (plan 002 issue 11g — the phrase's
+    /// resolution the sequencer uses): the bar index is resolved
+    /// modulo `bars.len()` (the phrase cycles), and each figure falls
+    /// back to the top-level value when the phrase bar leaves it
+    /// `None` (for `comp`, the top-level `comp` field, then the
+    /// internal off-beat default). An EMPTY `bars` list resolves
+    /// EVERY bar to the top-level figures — exactly today's behaviour
+    /// (the backwards-compat contract).
+    #[must_use]
+    pub fn resolve_bar(&self, bar: u64) -> ResolvedBar<'_> {
+        let entry = if self.bars.is_empty() {
+            None
+        } else {
+            Some(&self.bars[(bar % self.bars.len() as u64) as usize])
+        };
+        ResolvedBar {
+            bass: entry.and_then(|b| b.bass.as_ref()).unwrap_or(&self.bass),
+            lead: entry.and_then(|b| b.lead.as_ref()).unwrap_or(&self.lead),
+            comp: entry
+                .and_then(|b| b.comp.as_deref())
+                .or(self.comp.as_deref())
+                .unwrap_or(COMP_DEFAULT_PATTERN),
+        }
     }
 
     /// Parse + validate a score. `Err(message)` is human-facing
@@ -345,12 +460,7 @@ impl Score {
             .expect(
                 "drum tiers must be non-empty with tiers[0].stage == 0 (Score::from_json validates this; a hand-built Score must too)",
             );
-        let mut bits = 0u32;
-        for (step, char) in tier.pattern.chars().enumerate() {
-            if (char == 'x' || char == 'X') && step < 32 {
-                bits |= 1 << step;
-            }
-        }
+        let mut bits = pattern_bits(&tier.pattern);
         for &excluded in &tier.exclude {
             if excluded < 32 {
                 bits &= !(1 << excluded);
@@ -415,6 +525,42 @@ impl Score {
                 return Err(format!(
                     "comp: must be {steps} chars, one per step (got {len})"
                 ));
+            }
+        }
+        // The phrase's per-bar figures (issue 11g): the sanity bound
+        // first (an unbounded phrase is a score bug, not a feature),
+        // then the same length discipline as the top-level figures —
+        // an override, not a definition, still has to fit the grid.
+        if self.bars.len() > 64 {
+            return Err(format!(
+                "bars: must have at most 64 entries (a phrase, not an unbounded song) (got {})",
+                self.bars.len()
+            ));
+        }
+        for (i, bar) in self.bars.iter().enumerate() {
+            if let Some(line) = &bar.bass {
+                if line.notes.len() != steps as usize {
+                    return Err(format!(
+                        "bars[{i}].bass.notes: must have {steps} entries, one per step (got {})",
+                        line.notes.len()
+                    ));
+                }
+            }
+            if let Some(line) = &bar.lead {
+                if line.notes.len() != steps as usize {
+                    return Err(format!(
+                        "bars[{i}].lead.notes: must have {steps} entries, one per step (got {})",
+                        line.notes.len()
+                    ));
+                }
+            }
+            if let Some(comp) = &bar.comp {
+                let len = comp.chars().count();
+                if len != steps as usize {
+                    return Err(format!(
+                        "bars[{i}].comp: must be {steps} chars, one per step (got {len})"
+                    ));
+                }
             }
         }
         for (name, table) in [
@@ -843,5 +989,46 @@ mod tests {
             .pop();
         let err = Score::from_json(&value.to_string()).unwrap_err();
         assert!(err.contains("slots"), "slots count: {err}");
+    }
+
+    /// Plan 002 issue 11g — a bad BAR is an `Err` NAMING THE BAR
+    /// INDEX (the lab's status line must be able to surface it),
+    /// never a panic: a wrong-length per-bar note line, a
+    /// wrong-length per-bar comp pattern (on bar 1 — the index, not
+    /// just the field), and an over-long `bars` list (past the 64-bar
+    /// sanity bound). The VALID degenerate case: a bar that overrides
+    /// nothing (every field `None`) falls back to the top-level
+    /// figures, so it parses and resolves to the defaults.
+    #[test]
+    fn a_bad_bar_is_an_error() {
+        // A per-bar bass line of the wrong length.
+        let mut value = serde_json::to_value(Score::default()).expect("default serializes");
+        value["bars"] = serde_json::json!([{ "bass": { "notes": [0, null], "octave_shift": -1 } }]);
+        let err = Score::from_json(&value.to_string()).unwrap_err();
+        assert!(err.contains("bars[0].bass"), "names the bar index: {err}");
+
+        // A per-bar comp pattern of the wrong length (bar 1 — the
+        // index, not just the field).
+        value = serde_json::to_value(Score::default()).expect("default serializes");
+        value["bars"] = serde_json::json!([{}, { "comp": "x" }]);
+        let err = Score::from_json(&value.to_string()).unwrap_err();
+        assert!(err.contains("bars[1].comp"), "names the bar index: {err}");
+
+        // An over-long bars list (more than the 64-bar sanity bound).
+        value = serde_json::to_value(Score::default()).expect("default serializes");
+        value["bars"] = serde_json::json!(vec![serde_json::json!({}); 65]);
+        let err = Score::from_json(&value.to_string()).unwrap_err();
+        assert!(err.contains("bars"), "names the field: {err}");
+
+        // The valid degenerate case: a bar that overrides NOTHING
+        // (all fields `None`) parses and resolves to the top-level
+        // figures (the fallback contract).
+        value = serde_json::to_value(Score::default()).expect("default serializes");
+        value["bars"] = serde_json::json!([{}, {}]);
+        let score = Score::from_json(&value.to_string()).expect("all-null bars parse");
+        assert_eq!(score.phrase_len(), 2);
+        assert_eq!(score.resolve_bar(0), score.resolve_bar(1));
+        assert_eq!(score.resolve_bar(0).bass, &score.bass);
+        assert_eq!(score.resolve_bar(0).lead, &score.lead);
     }
 }
