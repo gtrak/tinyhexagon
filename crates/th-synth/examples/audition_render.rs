@@ -147,6 +147,31 @@ fn main() {
     let right: Vec<f32> = wave.channel(1)[drop..].to_vec();
     let mix = metrics(&left, &right);
 
+    // The headroom probe: the same sum through NO master bus, so the
+    // limiter cannot hide how hard it is working. The master bus ends in
+    // `limiter_stereo(0.001, 0.3)`, and a limiter is not a mixer — when
+    // the sum exceeds its ceiling it squashes EVERYTHING, transients
+    // included, which is exactly the "no punch" symptom the atk/tail
+    // column measures. `headroom_db` is how much to trim the slot gains
+    // (or `master_gain`) to leave the limiter alone.
+    let mut raw = build_sum_raw(tracks, &g);
+    let raw_wave = Wave::render(SR as f64, SPINUP_S + secs, &mut raw);
+    let raw_left: Vec<f32> = raw_wave.channel(0)[drop..].to_vec();
+    let raw_right: Vec<f32> = raw_wave.channel(1)[drop..].to_vec();
+    let raw_peak = raw_left
+        .iter()
+        .chain(raw_right.iter())
+        .fold(0.0f32, |p, s| p.max(s.abs()));
+    let limited_peak = left
+        .iter()
+        .chain(right.iter())
+        .fold(0.0f32, |p, s| p.max(s.abs()));
+    let headroom_db = if raw_peak > 0.0 {
+        20.0 * (1.0 / raw_peak).log10()
+    } else {
+        f32::INFINITY
+    };
+
     println!("\n== per-slot (soloed, {secs:.2} s) + mix ==");
     println!(
         "{:<10} {:>10} {:>10} {:>12} {:>9} {:>7}",
@@ -161,6 +186,15 @@ fn main() {
         "{:<10} {:>10.4} {:>10.4} {:>12.4} {:>9} {:>7}",
         "mix", mix.peak, mix.rms, mix.bright, "—", "—"
     );
+    println!(
+        "\nheadroom: pre-limiter peak {raw_peak:.4}, post {limited_peak:.4} -> trim slot gains by {headroom_db:+.1} dB to leave the limiter alone"
+    );
+    if raw_peak > 1.0 {
+        println!(
+            "  WARNING: the sum is {:.1}x over full scale; the limiter is squashing transients (the punch this table measures).",
+            raw_peak
+        );
+    }
 
     fs::write(Path::new(&out), wav_bytes(&left, &right))
         .unwrap_or_else(|err| panic!("write {out}: {err}"));
@@ -174,6 +208,19 @@ fn main() {
 /// (the slot's resolved kind + its `TrackParams` — the `Shared`
 /// atomics the live graph reads) summed through the master bus.
 fn build_sum(tracks: &[Track], g: &GlobalParams) -> Net {
+    build_sum_raw(tracks, g) >> master_bus(g.brightness.clone())
+}
+
+/// The same sum WITHOUT the master bus (so no limiter): the headroom probe.
+/// The master bus ends in `limiter_stereo(0.001, 0.3)`, and a limiter is
+/// not a mixer: when the sum exceeds its ceiling it squashes EVERYTHING,
+/// transients included. Since the issue-11e dry+wet fix multiplied every
+/// voice's energy ~8x, the sum now hits the limiter hard — and a squashed
+/// kick is exactly the "no punch" symptom we just fixed at the voice
+/// level. This render exists to keep that honest: `headroom` below is the
+/// gain the operator should trim from the slots' gains, not a secret the
+/// limiter hides.
+fn build_sum_raw(tracks: &[Track], g: &GlobalParams) -> Net {
     let mut sum: Option<Net> = None;
     for t in tracks {
         let node = Preset::build(t.kind, &t.params, g);
@@ -182,7 +229,7 @@ fn build_sum(tracks: &[Track], g: &GlobalParams) -> Net {
             None => node,
         });
     }
-    sum.expect("8 slots") >> master_bus(g.brightness.clone())
+    sum.expect("8 slots")
 }
 
 struct Metrics {

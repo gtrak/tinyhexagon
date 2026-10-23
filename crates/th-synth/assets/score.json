@@ -122,40 +122,40 @@
   },
   "slots": [
     {
-      "gain": 0.9,
+      "gain": 0.421,
       "kind": "fm_kick",
       "muted": false
     },
     {
-      "gain": 0.9,
+      "gain": 0.421,
       "kind": "fm_snare",
       "muted": false
     },
     {
-      "gain": 0.4,
+      "gain": 0.1871,
       "kind": "fm_hat",
       "muted": false
     },
     {
-      "gain": 0.95,
+      "gain": 0.4443,
       "kind": "fm_bass",
       "muted": false
     },
     {
-      "gain": 0.6,
+      "gain": 0.2806,
       "kind": "fm_lead",
       "muted": false
     },
     {
-      "gain": 0.2,
+      "gain": 0.0935,
       "muted": false
     },
     {
-      "gain": 0.2,
+      "gain": 0.0935,
       "muted": false
     },
     {
-      "gain": 0.28,
+      "gain": 0.131,
       "muted": false
     }
   ],
