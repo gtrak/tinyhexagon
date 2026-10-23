@@ -119,13 +119,15 @@ fn describe(kind: PresetKind, s: &TrackSnapshot) -> (Color, String) {
         | PresetKind::FmHat
         | PresetKind::FmBass
         | PresetKind::FmLead
-        | PresetKind::FmBell => {
+        | PresetKind::FmBell
+        | PresetKind::FmComp => {
             let ratio = match kind {
                 PresetKind::FmKick => lerp3(4.0, 6.0, 10.0, c),
                 PresetKind::FmSnare => lerp3(1.5, 2.0, 2.8, c),
                 PresetKind::FmHat => lerp3(7.0, 9.0, 11.0, c),
                 PresetKind::FmBass => lerp3(1.0, 1.5, 2.0, c),
                 PresetKind::FmLead => lerp3(1.5, 2.0, 3.0, c),
+                PresetKind::FmComp => lerp3(1.6, 2.0, 2.4, c),
                 _ => lerp3(3.0, 3.5, 4.2, c),
             };
             let color = match kind {
@@ -134,6 +136,7 @@ fn describe(kind: PresetKind, s: &TrackSnapshot) -> (Color, String) {
                 PresetKind::FmHat => Color::Rgb(240, 220, 120),
                 PresetKind::FmBass => Color::Rgb(80, 200, 120),
                 PresetKind::FmLead => Color::Rgb(120, 140, 240),
+                PresetKind::FmComp => Color::Rgb(255, 140, 190),
                 _ => Color::Rgb(200, 120, 220),
             };
             (
@@ -244,13 +247,15 @@ fn sample(kind: PresetKind, s: &TrackSnapshot, phase: f64) -> f64 {
         | PresetKind::FmHat
         | PresetKind::FmBass
         | PresetKind::FmLead
-        | PresetKind::FmBell => {
+        | PresetKind::FmBell
+        | PresetKind::FmComp => {
             let ratio = match kind {
                 PresetKind::FmKick => lerp3(4.0, 6.0, 10.0, c),
                 PresetKind::FmSnare => lerp3(1.5, 2.0, 2.8, c),
                 PresetKind::FmHat => lerp3(7.0, 9.0, 11.0, c),
                 PresetKind::FmBass => lerp3(1.0, 1.5, 2.0, c),
                 PresetKind::FmLead => lerp3(1.5, 2.0, 3.0, c),
+                PresetKind::FmComp => lerp3(1.6, 2.0, 2.4, c),
                 _ => lerp3(3.0, 3.5, 4.2, c),
             };
             let depth = s.resonance.min(0.65) as f64;

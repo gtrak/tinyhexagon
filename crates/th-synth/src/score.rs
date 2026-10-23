@@ -24,11 +24,12 @@ use rust_synth::audio::preset::PresetKind;
 /// The shipped score: the bake artifact (`assets/score.json`).
 pub const SCORE_JSON: &str = include_str!("../assets/score.json");
 
-/// The 14 instrument ids, in `PresetKind`'s ALL_KINDS order (stable JSON
+/// The 15 instrument ids, in `PresetKind`'s ALL_KINDS order (stable JSON
 /// ids — the DAW's kind cycler walks this order, so it must match the
-/// vendor's `ALL_KINDS` cycle order EXACTLY). The six FM ids are plan
-/// 002 issue 11c's append-only addition (the last six entries).
-pub const ALL_KIND_IDS: [&str; 14] = [
+/// vendor's `ALL_KINDS` cycle order EXACTLY). The seven FM ids are
+/// append-only additions (plan 002 issues 11c/11f — the last seven
+/// entries).
+pub const ALL_KIND_IDS: [&str; 15] = [
     "pad_zimmer",
     "bass_pulse",
     "heartbeat",
@@ -43,6 +44,7 @@ pub const ALL_KIND_IDS: [&str; 14] = [
     "fm_bass",
     "fm_lead",
     "fm_bell",
+    "fm_comp",
 ];
 
 /// The stable JSON id of a preset kind (the `ALL_KIND_IDS` entry in
@@ -64,6 +66,7 @@ pub fn kind_id(kind: PresetKind) -> &'static str {
         PresetKind::FmBass => "fm_bass",
         PresetKind::FmLead => "fm_lead",
         PresetKind::FmBell => "fm_bell",
+        PresetKind::FmComp => "fm_comp",
     }
 }
 
@@ -86,9 +89,19 @@ pub fn kind_from_id(id: &str) -> Option<PresetKind> {
         "fm_bass" => PresetKind::FmBass,
         "fm_lead" => PresetKind::FmLead,
         "fm_bell" => PresetKind::FmBell,
+        "fm_comp" => PresetKind::FmComp,
         _ => return None,
     })
 }
+
+/// The comp's internal step pattern default (plan 002 issue 11f —
+/// the plain off-beat Genesis stab: a hit on each beat's "and", the
+/// 8th-note off-beats at steps 2/6/10/14 of the 16-step grid). Played
+/// when a score leaves `comp` absent (`None`) — the backwards-compat
+/// path. A 16-char string to match the default `steps_per_bar`; the
+/// shipped bake carries its own `comp` pattern (score data the
+/// operator edits), this constant is only the fallback.
+pub const COMP_DEFAULT_PATTERN: &str = "..x...x...x...x.";
 
 /// The full chiptune score (the plan 10 schema, snake_case field names).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -128,6 +141,17 @@ pub struct Score {
     pub bass: NoteLine,
     /// The lead line (one note per step, `None` = rest).
     pub lead: NoteLine,
+    /// The comp's step pattern (plan 002 issue 11f — the Genesis
+    /// arrangement's chordal stab): a step pattern like the drum tiers
+    /// (`x` = a hit, `X` accepted, anything else a rest; parsed by CHAR
+    /// index, exactly `steps_per_bar` chars — validated). The pattern
+    /// drives the comp's `pattern_bits` (the FM envelope's gate); the
+    /// PITCH is the bar's chord root × the comp slot's ratio (the
+    /// comp follows the chord, unlike the lead). `None` (a score with
+    /// no `comp` field — the backwards-compat path) plays the internal
+    /// off-beat default ([`COMP_DEFAULT_PATTERN`]).
+    #[serde(default)]
+    pub comp: Option<String>,
     /// The 8 slots' mix gains, engine order (`SLOTS`' order).
     pub slots: Vec<SlotGain>,
     /// The baked solo (an FL-project track solo, plan 11): the
@@ -271,6 +295,26 @@ impl Score {
         serde_json::to_string_pretty(self).expect("a valid Score serializes")
     }
 
+    /// The comp's step pattern as `pattern_bits` (plan 002 issue 11f):
+    /// the same char-index parse discipline as [`drum_pattern`] —
+    /// `x`/`X` = a hit, step 0 first, never byte arithmetic — with
+    /// step indices >= 32 skipped (they do not fit the u32 grid;
+    /// `drum_pattern`'s documented convention). `None` (a score
+    /// without a `comp` field) resolves to the internal off-beat
+    /// default so an old score still plays the comp (the backwards-
+    /// compat rule — the pattern is additive data, not a requirement).
+    #[must_use]
+    pub fn comp_pattern_bits(&self) -> u32 {
+        let pattern = self.comp.as_deref().unwrap_or(COMP_DEFAULT_PATTERN);
+        let mut bits = 0u32;
+        for (step, char) in pattern.chars().enumerate() {
+            if (char == 'x' || char == 'X') && step < 32 {
+                bits |= 1 << step;
+            }
+        }
+        bits
+    }
+
     /// Parse + validate a score. `Err(message)` is human-facing
     /// (surfaced in the lab's status line): serde's own error text — it
     /// carries the field path and line/column when serde gives one — for
@@ -362,6 +406,14 @@ impl Score {
                 return Err(format!(
                     "{name}.notes: must have {steps} entries, one per step (got {})",
                     line.notes.len()
+                ));
+            }
+        }
+        if let Some(comp) = &self.comp {
+            let len = comp.chars().count();
+            if len != steps as usize {
+                return Err(format!(
+                    "comp: must be {steps} chars, one per step (got {len})"
                 ));
             }
         }
@@ -762,6 +814,25 @@ mod tests {
         assert!(
             err.contains("kick.tiers[0].pattern"),
             "pattern length: {err}"
+        );
+
+        // A `comp` pattern of the wrong length (issue 11f — the same
+        // discipline as the drum tiers: exactly `steps_per_bar` chars).
+        let mut value = serde_json::to_value(Score::default()).expect("default serializes");
+        value["comp"] = serde_json::json!("x");
+        let err = Score::from_json(&value.to_string()).unwrap_err();
+        assert!(err.contains("comp"), "comp pattern length: {err}");
+
+        // An absent `comp` is the backwards-compat path (serde default
+        // → `None` — the off-beat internal default, not an error).
+        let mut value = serde_json::to_value(Score::default()).expect("default serializes");
+        value
+            .as_object_mut()
+            .expect("the score is an object")
+            .remove("comp");
+        assert!(
+            Score::from_json(&value.to_string()).is_ok(),
+            "no `comp` parses"
         );
 
         // A `slots` array of 7 (the 8-slot contract).

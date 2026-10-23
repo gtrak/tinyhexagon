@@ -202,5 +202,7 @@ fn kind_to_str(k: PresetKind) -> &'static str {
         PresetKind::FmBass => "FmBass",
         PresetKind::FmLead => "FmLead",
         PresetKind::FmBell => "FmBell",
+        // Plan 002 issue 11f — the Genesis comp (append-only kind).
+        PresetKind::FmComp => "FmComp",
     }
 }

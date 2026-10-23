@@ -33,10 +33,14 @@ pub enum PresetKind {
     FmBass,
     FmLead,
     FmBell,
+    // Plan 002 issue 11f — the Genesis arrangement's comp (the
+    // chordal stab): APPENDED so `ALL_KINDS`' existing cycle order and
+    // the shipped scores' ids are untouched.
+    FmComp,
 }
 
 /// All preset kinds in cycle order. Used by the TUI `t` / `T` keys.
-pub const ALL_KINDS: [PresetKind; 14] = [
+pub const ALL_KINDS: [PresetKind; 15] = [
     PresetKind::PadZimmer,
     PresetKind::BassPulse,
     PresetKind::Heartbeat,
@@ -51,6 +55,7 @@ pub const ALL_KINDS: [PresetKind; 14] = [
     PresetKind::FmBass,
     PresetKind::FmLead,
     PresetKind::FmBell,
+    PresetKind::FmComp,
 ];
 
 impl PresetKind {
@@ -70,6 +75,7 @@ impl PresetKind {
             PresetKind::FmBass => "FM Bass",
             PresetKind::FmLead => "FM Lead",
             PresetKind::FmBell => "FM Bell",
+            PresetKind::FmComp => "FM Comp",
         }
     }
 
@@ -306,6 +312,38 @@ impl Preset {
                     detune_carrier: false,
                     haas: 0.0,
                     reverb: (25.0, 8.0, 0.85),
+                },
+            ),
+            // Plan 002 issue 11f — the Genesis comp: an FM
+            // electric-piano STAB. The arrangement's placeholder row
+            // (the composition boundary: the mechanism + its audibility
+            // are the deliverable, the actual part is the operator's)
+            // — harmonic ratio 2.0, a moderate index (450 Hz at
+            // `resonance` 0.65), a FAST index decay (the EP's tonal
+            // collapse), and a SHORT amp decay (the step-gated env's
+            // per-step rate `k`: at the shipped 150 bpm one step is
+            // 100 ms, so k = 3.0 decays to ≈1 % in ≈150 ms — in the
+            // 0.15–0.25 s window the kit's own ms convention reads
+            // `amp_decay` in; the stab decays rather than sustains,
+            // and the next pattern rest's gate cuts it either way).
+            PresetKind::FmComp => fm_voice(
+                p,
+                g,
+                FmVoice {
+                    ratio: 2.0,
+                    ratio_lo: 1.6,
+                    ratio_hi: 2.4,
+                    index: 450.0,
+                    index_decay: 10.0,
+                    amp_decay: 3.0,
+                    sweep: 1.0,
+                    sweep_decay: 1.0,
+                    noise_hp: 0.0,
+                    noise_decay: 0.0,
+                    filter_cap: 0.0,
+                    detune_carrier: false,
+                    haas: 0.0,
+                    reverb: (16.0, 3.0, 0.88),
                 },
             ),
         }

@@ -83,6 +83,14 @@ pub fn get_score() -> String {
 /// human-facing parse/validation error text otherwise (the overlay's
 /// status line shows it verbatim — the `?score=` hot-reload's error
 /// log).
+/// The instrument ids for the DAW's picker (plan 002 issue 11f): the
+/// page builds its `<select>` from THIS, so appending a `PresetKind` can
+/// never leave the picker stale again (it did: 14 options for 15 kinds).
+#[wasm_bindgen(js_name = "getKindIds")]
+pub fn get_kind_ids() -> Vec<String> {
+    th_app::tiny::web_kind_ids()
+}
+
 #[wasm_bindgen(js_name = "setScore")]
 pub fn set_score(json: &str) -> String {
     th_app::tiny::web_set_score(json)

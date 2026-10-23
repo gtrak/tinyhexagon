@@ -76,6 +76,19 @@
 #     .agents/tasks/plan-002/issue-011e-report.md for the measured
 #     before/after and the re-balanced `reverb_mix` values (they live
 #     in th-synth's `director.rs`, not here).
+#   * `src/audio/preset.rs` (plan 002 issue 11f, the Genesis comp):
+#     the THIRD deliberate DSP change — the `PresetKind` enum grew one
+#     more append-only variant at the end (`FmComp`; `ALL_KINDS` is now
+#     `[PresetKind; 15]`), one more `FmVoice` table row in the shared
+#     `fm_voice` core (an FM electric-piano stab: ratio 2.0 (1.6/2.4),
+#     index 450, fast index decay 10, short step-gated amp decay 3,
+#     no sweep/noise/filter/detune/Haas, reverb (16, 3.0, 0.88)), and
+#     the `label()`/`Preset::build` arms ("FM Comp"). Every 11c/11e
+#     rule holds (the pattern-bit-driven envelope, `stereo_gate_voiced`,
+#     the dry+wet reverb topology — the new voice goes through the
+#     same shared core). `src/persistence.rs` + `src/tui/{life,
+#     formula,waveshape}.rs`: the exhaustive matches over `PresetKind`
+#     grew with the variant (no behavior change).
 # Reason: the wasm32-unknown-emscripten cross-target spike (05b) —
 # crossterm 0.28's mio does not support the emscripten target and
 # vorbis_rs 0.5's ogg_next_sys build script needs a C compiler (emcc).

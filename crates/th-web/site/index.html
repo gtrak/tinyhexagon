@@ -629,12 +629,18 @@
             { name: "BELL", builtin: "bell", lane: "chord" },
             { name: "SUB", builtin: "drone_sub", lane: "chord" },
           ];
-          const KIND_IDS = [
-            "pad_zimmer", "bass_pulse", "heartbeat", "drone_sub",
-            "shimmer", "bell", "super_saw", "pluck_saw",
-            "fm_kick", "fm_snare", "fm_hat", "fm_bass",
-            "fm_lead", "fm_bell",
-          ];
+          // The instrument picker's options come FROM THE ENGINE
+          // (`getKindIds` -> th-synth's ALL_KIND_IDS), never a copy: the
+          // hardcoded list this replaced went stale silently when 11f
+          // appended `fm_comp` (the picker offered 14 of 15 kinds and the
+          // probe happily pinned the stale count). Only a fallback for a
+          // build predating the export.
+          const KIND_IDS = (typeof mod.getKindIds === "function" && mod.getKindIds().length)
+            ? mod.getKindIds()
+            : ["pad_zimmer", "bass_pulse", "heartbeat", "drone_sub",
+               "shimmer", "bell", "super_saw", "pluck_saw",
+               "fm_kick", "fm_snare", "fm_hat", "fm_bass",
+               "fm_lead", "fm_bell", "fm_comp"];
           const CHORD_RATIO = [1.0, 2.0, 0.25];
 
           // The transport row: the stage read (the drum rack shows the

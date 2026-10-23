@@ -1383,6 +1383,21 @@ pub fn web_get_score() -> String {
 /// validate + hot-swap the director's score in place (no graph
 /// rebuild). `""` on success; the human-facing parse/validation error
 /// text otherwise (the lab's status line shows it).
+/// The canonical instrument ids (plan 002 issue 11f): `th-web`'s
+/// `getKindIds()` export calls this. The DAW's instrument picker used to
+/// hardcode its own copy of this list, which silently went stale the
+/// moment a kind was appended (the picker showed 14 of 15 and the probe
+/// pinned the stale count). The page now asks the engine, so the list
+/// cannot drift again.
+#[cfg(target_os = "emscripten")]
+#[must_use]
+pub fn web_kind_ids() -> Vec<String> {
+    th_synth::score::ALL_KIND_IDS
+        .iter()
+        .map(|id| (*id).to_string())
+        .collect()
+}
+
 #[cfg(target_os = "emscripten")]
 #[must_use]
 pub fn web_set_score(json: &str) -> String {

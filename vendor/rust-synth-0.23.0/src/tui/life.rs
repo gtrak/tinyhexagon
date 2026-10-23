@@ -126,6 +126,9 @@ fn color_for(kind: PresetKind) -> Color {
         PresetKind::FmBass => Color::Rgb(80, 200, 120),
         PresetKind::FmLead => Color::Rgb(120, 140, 240),
         PresetKind::FmBell => Color::Rgb(200, 120, 220),
+        // Plan 002 issue 11f — the Genesis comp (the arrangement's
+        // chordal stab; a hue no other slot strip colour uses).
+        PresetKind::FmComp => Color::Rgb(255, 140, 190),
     }
 }
 

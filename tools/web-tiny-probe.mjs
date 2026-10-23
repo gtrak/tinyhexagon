@@ -403,19 +403,32 @@ if (scorelabProbe) {
   // none of these mutations leak into the rest of the run.
 
   // The track-header column: 8 headers, each with M + S + an
-  // instrument <select> over the 14 kinds.
-  const headerCount = await pageEval(`(() => {
+  // instrument <select> over ALL of the engine's kinds. The count is
+  // taken FROM the engine (mod.getKindIds), not hardcoded: pinning a
+  // literal here is what let the picker go stale at 14 of 15 kinds when
+  // 11f appended fm_comp (the probe checked the stale number and passed).
+  const headerState = await pageEval(`(() => {
+    const want = (typeof window.ohMod.getKindIds === "function") ? window.ohMod.getKindIds().length : -1;
     let n = 0;
     for (let i = 0; i < 8; i++) {
       const r = document.getElementById("scorelab-track-" + i);
       const m = document.getElementById("scorelab-mute-" + i);
       const s = document.getElementById("scorelab-solo-" + i);
       const k = document.getElementById("scorelab-kind-" + i);
-      if (r && m && s && k && k.tagName === "SELECT" && k.options.length === 14) n++;
+      if (r && m && s && k && k.tagName === "SELECT" && k.options.length === want) n++;
     }
-    return n;
+    return JSON.stringify({ n, want });
   })()`);
-  scorelabChecks.push(['scorelab: the DAW renders 8 track headers with M/S + an instrument <select>', headerCount === 8]);
+  let headerCount = 0;
+  let wantKinds = -1;
+  try {
+    const parsed = JSON.parse(headerState || "null");
+    if (parsed) { headerCount = parsed.n; wantKinds = parsed.want; }
+  } catch { /* stays 0 */ }
+  scorelabChecks.push([
+    `scorelab: the DAW renders 8 track headers with M/S + an instrument <select> offering every engine kind (${wantKinds})`,
+    headerCount === 8 && wantKinds > 0,
+  ]);
 
   // M toggles slots[i].muted in the engine AND the row dims visibly
   // (a hidden mute is indistinguishable from a bug when the operator

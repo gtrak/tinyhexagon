@@ -250,7 +250,8 @@ fn lines_for(kind: PresetKind, s: &crate::audio::track::TrackSnapshot, bpm: f32)
         | PresetKind::FmHat
         | PresetKind::FmBass
         | PresetKind::FmLead
-        | PresetKind::FmBell => {
+        | PresetKind::FmBell
+        | PresetKind::FmComp => {
             out.push(Line::from(Span::styled("2-operator FM (YM2612 idiom):", hi)));
             out.push(Line::from(Span::styled(
                 "  mod(t) = sin(2π·f·ratio·t) · (q·idx) · e^(−k_idx·φ)",

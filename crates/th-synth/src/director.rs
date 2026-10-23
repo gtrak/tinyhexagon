@@ -63,6 +63,28 @@
 //! `SLOTS` built-ins stay Heartbeat/BassPulse/PluckSaw, the
 //! backwards-compat path for scores without `kind` fields).
 //!
+//! # The plan 11f `Role` enum (replaces `Slot.chord` + the index hacks)
+//!
+//! Issue 11f made the role an ENUM — `Role::{Drum, Bass, Lead, Comp,
+//! Harmony}` — instead of the `Slot.chord` bool + the `index < 3` drum
+//! special-casing (a latent bug source: the drum tier selection and the
+//! bass/lead line selection both keyed on the slot's INDEX). The
+//! `apply_slot`/`apply_bar` branches now match on `slot.role`, so a
+//! slot's driver is data, not arithmetic. The new `Role::Comp` (slot 5
+//! — the pad gives way) is the Genesis arrangement's chordal stab:
+//! chord-following PITCH (the bar's chord root × the slot's ratio,
+//! written in `apply_bar` alongside the harmony slots) plus a hit
+//! PATTERN (the score's `comp` step pattern, written to
+//! `pattern_bits` — the FM core's `step_is_active` reads it per-sample,
+//! so the pattern gates the envelope and no staccato-gate change is
+//! needed for the sound; the mute/solo fold covers it like every other
+//! slot). The existing roles' observable behaviour is UNCHANGED (the
+//! `existing_roles_are_unchanged` + 11c's `the_pattern_bits_follow_the
+//! _role_not_the_kind` tests pin it); `PresetKind::FmComp` (the seventh
+//! FM voice — an electric-piano stab) is APPENDED to the vendor's
+//! enum, so `ALL_KINDS`' existing cycle order and the shipped scores'
+//! ids are untouched.
+//!
 //! # The plan 11 effective-mute fold (mute/solo + the instrument kinds)
 //!
 //! A slot's role (fixed by index) and its timbre (selectable — the
@@ -91,69 +113,100 @@ use crate::score::{kind_from_id, Score};
 /// `th_synth::director::StageParams` keeps resolving.
 pub use crate::score::StageParams;
 
+/// The slot's ROLE (plan 002 issue 11f — replaces the `Slot.chord`
+/// bool + the `index < 3` drum special-casing): the driver that
+/// sequences the slot, INDEPENDENT of the slot's selectable KIND (the
+/// timbre — the role/timbre split the plan 11 instrument swap rests
+/// on: a swapped kind keeps the role's driver, takes the new preset's
+/// parameters).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    /// Fixed pitch (ratio-based), gated by the score's kick/snare/hat
+    /// tiers (slots 0-2: the drums' `pattern_bits` come from the
+    /// stage's tier, the pitch from the slot's ratio).
+    Drum,
+    /// Step-sequenced notes from the bass line; follows the bar's chord
+    /// root (slot 3 — the note's step gates the voice with `mute`).
+    Bass,
+    /// Step-sequenced notes from the lead line; on the KEY root
+    /// (deliberately NOT chord-following, slot 4).
+    Lead,
+    /// THE NEW ROLE (issue 11f, slot 5 — the Genesis comp):
+    /// chord-following PITCH (the bar's chord root × the slot's ratio,
+    /// written in `apply_bar` alongside the harmony slots) plus a hit
+    /// PATTERN (the score's `comp` step pattern written to
+    /// `pattern_bits` — the FM envelope's gate).
+    Comp,
+    /// Chord-following and sustained (no step gating): pad/bell/sub
+    /// (slots 6-7 — they follow the bar's chord, not the steps).
+    Harmony,
+}
+
 /// One row of the fixed 8-slot track map (the synthesis design: the
 /// preset kind, the unlock stage, the ratio to the slot's root, and the
-/// chord-following flag. The slot's MIX GAIN is score data —
-/// `Score.slots` — since 10a: one source, no drift).
+/// role. The slot's MIX GAIN is score data — `Score.slots` — since 10a:
+/// one source, no drift).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Slot {
     pub kind: PresetKind,
     pub unlock: u32,
     pub ratio: f32,
-    /// `true`: follows the bar's chord root (pad/bell/sub). The bass/lead
-    /// are sequenced per step, and the drums have fixed pitches.
-    pub chord: bool,
+    pub role: Role,
 }
 
-/// The 8 slots in engine order.
+/// The 8 slots in engine order (plan 002 issue 11f's map: slot 5 is
+/// now the new `Comp` role on the new `FmComp` voice — the
+/// pad's kind/role moves out, the comp is rhythm so it unlocks at 0;
+/// slots 6/7 keep `Harmony`, and the eight-voice `MAX_TRACKS` contract
+/// stands).
 pub const SLOTS: [Slot; 8] = [
     Slot {
         kind: PresetKind::Heartbeat,
         unlock: 0,
         ratio: 0.5,
-        chord: false,
+        role: Role::Drum,
     }, // kick
     Slot {
         kind: PresetKind::Heartbeat,
         unlock: 0,
         ratio: 1.6,
-        chord: false,
+        role: Role::Drum,
     }, // snare
     Slot {
         kind: PresetKind::Heartbeat,
         unlock: 0,
         ratio: 8.0,
-        chord: false,
+        role: Role::Drum,
     }, // hat
     Slot {
         kind: PresetKind::BassPulse,
         unlock: 0,
         ratio: 0.5,
-        chord: false,
+        role: Role::Bass,
     }, // bass
     Slot {
         kind: PresetKind::PluckSaw,
         unlock: 0,
         ratio: 2.0,
-        chord: false,
+        role: Role::Lead,
     }, // lead
     Slot {
-        kind: PresetKind::PadZimmer,
-        unlock: 4,
+        kind: PresetKind::FmComp,
+        unlock: 0,
         ratio: 1.0,
-        chord: true,
-    }, // pad
+        role: Role::Comp,
+    }, // the comp (was the PadZimmer pad)
     Slot {
         kind: PresetKind::Bell,
         unlock: 2,
         ratio: 2.0,
-        chord: true,
+        role: Role::Harmony,
     }, // bell
     Slot {
         kind: PresetKind::DroneSub,
         unlock: 0,
         ratio: 0.25,
-        chord: true,
+        role: Role::Harmony,
     }, // sub
 ];
 
@@ -424,16 +477,20 @@ impl MusicDirector {
         // kind's (issue 11c's fix — the old code set it only inside the
         // Heartbeat arm, so a melodic slot's `step_is_active`-driven
         // envelope fired on `default_for`'s 4-hit Euclidean pattern,
-        // unrelated to that line's notes): the drum slots (0-2) ALWAYS
-        // get their stage-tiered pattern (any preset on a drum slot
-        // keeps the role's grid), the bass/lead (3-4) get their OWN
-        // note lines (bit i iff the line's step i has a note), and the
-        // harmony slots (5-7) keep the 4-hit Euclidean default (they
-        // follow the chord, not the steps). Note lines longer than 32
-        // steps: indices >= 32 do not fit the u32 grid (`Score::
+        // unrelated to that line's notes); issue 11f made the ROLE the
+        // enum that selects it (the `index < 3` drum special-casing is
+        // gone): the drum slots ALWAYS get their stage-tiered pattern
+        // (any preset on a drum slot keeps the role's grid), the
+        // bass/lead get their OWN note lines (bit i iff the line's
+        // step i has a note), the comp gets the score's `comp` step
+        // pattern (issue 11f — the pattern gates the FM envelope; the
+        // chord-following pitch is `apply_bar`'s job), and the
+        // harmony slots keep the 4-hit Euclidean default (they follow
+        // the chord, not the steps). Note lines longer than 32 steps:
+        // indices >= 32 do not fit the u32 grid (`Score::
         // drum_pattern`'s documented convention).
-        match index {
-            0..=2 => {
+        match slot.role {
+            Role::Drum => {
                 let bits = match index {
                     0 => score.drum_pattern(&score.kick, stage),
                     1 => score.drum_pattern(&score.snare, stage),
@@ -443,18 +500,26 @@ impl MusicDirector {
                 pms.pattern_rotation.set_value(0.0);
                 pms.pattern_bits.store(bits, Ordering::Relaxed);
             }
-            3 | 4 => {
-                let notes = if index == 3 {
-                    &score.bass.notes
-                } else {
-                    &score.lead.notes
+            Role::Bass | Role::Lead => {
+                let notes = match slot.role {
+                    Role::Bass => &score.bass.notes,
+                    _ => &score.lead.notes,
                 };
                 let bits = Self::note_line_bits(notes);
                 pms.pattern_hits.set_value(bits.count_ones() as f32);
                 pms.pattern_rotation.set_value(0.0);
                 pms.pattern_bits.store(bits, Ordering::Relaxed);
             }
-            _ => {} // harmony: the `default_for` Euclidean default stands
+            Role::Comp => {
+                // The comp's pattern (the score's `comp`, or the
+                // off-beat default when the field is absent —
+                // `comp_pattern_bits`' backwards-compat fallback).
+                let bits = score.comp_pattern_bits();
+                pms.pattern_hits.set_value(bits.count_ones() as f32);
+                pms.pattern_rotation.set_value(0.0);
+                pms.pattern_bits.store(bits, Ordering::Relaxed);
+            }
+            Role::Harmony => {} // the `default_for` Euclidean default stands
         }
 
         // The per-preset parameters key on the slot's RESOLVED kind
@@ -583,6 +648,23 @@ impl MusicDirector {
                 pms.character.set_value(0.50);
                 pms.resonance.set_value(0.40);
                 pms.reverb_mix.set_value(0.35); // 11e re-audit: marimba room
+            }
+            // Plan 002 issue 11f — the Genesis comp (the arrangement's
+            // chordal stab): the placeholder row's parameters (the
+            // composition boundary: the mechanism + its audibility are
+            // the deliverable, the actual part/balance is the
+            // operator's). `character` 0.5 = the voice's tuned ratio
+            // (2.0); `resonance` 0.50 = a moderate index (0.5 × 450 Hz
+            // at the hit, decaying fast); the comp's `pattern_bits`
+            // come from the ROLE block above (the score's `comp`
+            // pattern) — the step-gated FM envelope needs it, exactly
+            // like the other FM voices.
+            PresetKind::FmComp => {
+                pms.pulse_depth.set_value(0.0);
+                pms.lfo_depth.set_value(0.0);
+                pms.character.set_value(0.50);
+                pms.resonance.set_value(0.50);
+                pms.reverb_mix.set_value(0.25); // between the bass (0.15) and the lead (0.30) — a moderate air
             }
         }
     }
@@ -872,12 +954,15 @@ impl MusicDirector {
         self.program_mute[slot] = !on;
     }
 
-    /// Write the bar's chord onto the harmonic slots (pad/bell/sub).
+    /// Write the bar's chord onto the chord-following slots: the comp
+    /// (issue 11f — its PITCH is the chord root × the slot's ratio;
+    /// its HITS come from the `comp` pattern via `pattern_bits`) and
+    /// the harmony slots (pad/bell/sub).
     fn apply_bar(&mut self, bar: u64) {
         let p = self.score.stage_params(self.stage);
         let offset = self.score.chord_offset(self.stage, bar);
         for (i, slot) in SLOTS.iter().enumerate() {
-            if slot.chord {
+            if matches!(slot.role, Role::Comp | Role::Harmony) {
                 self.tracks[i]
                     .params
                     .freq
@@ -1043,9 +1128,25 @@ mod tests {
                 (PresetKind::Heartbeat, 0),
                 (PresetKind::BassPulse, 0),
                 (PresetKind::PluckSaw, 0),
-                (PresetKind::PadZimmer, 4),
+                (PresetKind::FmComp, 0),
                 (PresetKind::Bell, 2),
                 (PresetKind::DroneSub, 0),
+            ]
+        );
+        // The role map (plan 002 issue 11f — the `Slot.chord` bool is
+        // gone: the comp is the new slot 5, the harmony slots are
+        // 6/7).
+        assert_eq!(
+            SLOTS.iter().map(|s| s.role).collect::<Vec<_>>(),
+            vec![
+                Role::Drum,
+                Role::Drum,
+                Role::Drum,
+                Role::Bass,
+                Role::Lead,
+                Role::Comp,
+                Role::Harmony,
+                Role::Harmony,
             ]
         );
         assert_eq!(SLOTS.len(), MAX_TRACKS);
@@ -1072,6 +1173,8 @@ mod tests {
     fn root_shift_retunes_the_harmony() {
         let mut d = MusicDirector::new_fallback();
         d.set_stage(3);
+        // Slot 5 (the comp — issue 11f replaced the pad here) follows
+        // the root shift exactly like the harmony slots do.
         assert_eq!(d.tracks[5].params.freq.value(), ROOT_A2_HZ * ROOT_SHIFT);
         d.set_stage(3);
         assert_eq!(d.tracks[5].params.freq.value(), ROOT_A2_HZ * ROOT_SHIFT);
@@ -1105,7 +1208,10 @@ mod tests {
     /// swapping a slot's KIND does not move its grid (the mutation
     /// check — reverting to the old only-in-Heartbeat-arm behaviour
     /// fails slot 4's first assert: the lead line's bits vs the
-    /// Euclidean default).
+    /// Euclidean default). Issue 11f: slot 5 is now the COMP (its grid
+    /// is the score's `comp` pattern — `the_comp_role_follows_the_chord
+    /// _and_takes_the_pattern` pins it), so the untouched-Euclidean
+    /// assertion covers the harmony slots 6-7 only.
     #[test]
     fn the_pattern_bits_follow_the_role_not_the_kind() {
         use rust_synth::math::rhythm::euclidean_bits;
@@ -1151,8 +1257,9 @@ mod tests {
             (1 << 0) | (1 << 7) | (1 << 10),
             "slot 0 gets the stage-0 kick tier"
         );
-        // The harmony slots keep the Euclidean default (untouched).
-        for i in 5..8 {
+        // The harmony slots (6-7 since issue 11f — slot 5 is the
+        // comp's) keep the Euclidean default (untouched).
+        for i in 6..8 {
             assert_eq!(
                 d.tracks[i].params.pattern_bits.load(Ordering::Relaxed),
                 euclidean_bits(4, 0),
@@ -1180,6 +1287,317 @@ mod tests {
             d.tracks[0].params.pattern_bits.load(Ordering::Relaxed),
             (1 << 0) | (1 << 7) | (1 << 10),
             "a PluckSaw swapped into the kick slot keeps the kick tier's grid"
+        );
+    }
+
+    /// Plan 002 issue 11f — the comp role (slot 5): its `pattern_bits`
+    /// equal the score's `comp` pattern's set steps (computed
+    /// INDEPENDENTLY from the chars — not through `comp_pattern_bits`,
+    /// so a drift in that helper is caught), AND its frequency
+    /// follows the bar's chord (the comp is chord-following — unlike
+    /// the lead, which stays on the key root). Mutation check:
+    /// dropping the comp from `apply_bar`'s chord write fails the
+    /// bar-1 assertion; leaving the comp on the Euclidean default (no
+    /// `Role::Comp` grid arm) fails the first assertion (the off-beat
+    /// pattern's bits vs the 4-hit Euclidean default).
+    #[test]
+    fn the_comp_role_follows_the_chord_and_takes_the_pattern() {
+        use rust_synth::math::rhythm::euclidean_bits;
+        let score = Score::default();
+        // The comp pattern's set steps, computed INDEPENDENTLY from
+        // the shipped score's `comp` chars (never through
+        // `comp_pattern_bits` — the test must fail if that helper
+        // drifts).
+        let comp_bits = score
+            .comp
+            .as_deref()
+            .expect("the shipped score carries a comp pattern")
+            .chars()
+            .enumerate()
+            .fold(0u32, |bits, (i, c)| {
+                if c == 'x' || c == 'X' {
+                    bits | (1 << i)
+                } else {
+                    bits
+                }
+            });
+        // The off-beat 8ths: hits on 2/6/10/14 — unmistakably not
+        // the 4-hit Euclidean default (which has no hit at step 2).
+        assert_eq!(comp_bits, 0b0100_0100_0100_0100);
+        assert_ne!(
+            comp_bits,
+            euclidean_bits(4, 0),
+            "the comp pattern is NOT the Euclidean default"
+        );
+
+        let mut d = MusicDirector::new_fallback(); // stage 0, the shipped score
+        assert_eq!(
+            d.tracks[5].params.pattern_bits.load(Ordering::Relaxed),
+            comp_bits,
+            "slot 5 (comp) gets the comp pattern's set steps"
+        );
+
+        // The PITCH: the bar's chord root × the slot's ratio (1.0),
+        // written by `apply_bar` — bar 0 is I (offset 0).
+        let root = stage_params(0).root();
+        d.tick(0.01); // bar 0, step 0
+        let comp0 = d.tracks[5].params.freq.value();
+        assert!(
+            (comp0 - root).abs() < 1e-4,
+            "the comp is on the bar-0 chord root (I): got {comp0}, want {root}"
+        );
+        let lead0 = d.tracks[4].params.freq.value();
+
+        // Bar 1 (vi, +9 semitones): the COMP retunes with the chord...
+        let p = stage_params(0);
+        let step_len = 60.0 / p.bpm / 4.0;
+        d.tick(16.0 * step_len + 0.3 * step_len - 0.01); // t lands at bar 1, in-step 0.3
+        let comp1 = d.tracks[5].params.freq.value();
+        assert!(
+            (comp1 - comp0 * semitone_ratio(9)).abs() < 0.5,
+            "the comp follows the bar's chord (vi): got {comp1}, want {}",
+            comp0 * semitone_ratio(9)
+        );
+        // ...while the lead stays on the key root (the contrast that
+        // makes the comp chord-following, unlike the lead).
+        assert!(
+            (d.tracks[4].params.freq.value() - lead0).abs() < 1e-4,
+            "the lead ignores the chord (still {lead0})"
+        );
+    }
+
+    /// Plan 002 issue 11f — the Role refactor's contract: the
+    /// EXISTING roles' observable behaviour is unchanged. For the
+    /// default score: the drum slots' `pattern_bits` are the stage-0
+    /// tier patterns, the bass/lead bits are their note lines, and
+    /// the harmony slots (6-7) keep the 4-hit Euclidean default — the
+    /// same assertions 11c's role test made, so a refactor slip (e.g.
+    /// the role selection reordering the bass/lead lines onto the
+    /// wrong slots) is caught: the lines have different set steps.
+    #[test]
+    fn existing_roles_are_unchanged() {
+        use rust_synth::math::rhythm::euclidean_bits;
+        let score = Score::default();
+        // The tier/line bits, computed INDEPENDENTLY (the char-level
+        // parse and the note-line fold — not through the director's
+        // helpers, so a drift in them is caught).
+        let tier_bits = |pattern: &str| -> u32 {
+            pattern.chars().enumerate().fold(0u32, |bits, (i, c)| {
+                if c == 'x' || c == 'X' {
+                    bits | (1 << i)
+                } else {
+                    bits
+                }
+            })
+        };
+        let line_bits =
+            |notes: &[Option<i32>]| -> u32 {
+                notes.iter().enumerate().fold(0u32, |bits, (i, n)| {
+                    if n.is_some() {
+                        bits | (1 << i)
+                    } else {
+                        bits
+                    }
+                })
+            };
+        let kick = tier_bits(&score.kick.tiers[0].pattern);
+        let snare = tier_bits(&score.snare.tiers[0].pattern);
+        let hat = tier_bits(&score.hat.tiers[0].pattern);
+        let bass = line_bits(&score.bass.notes);
+        let lead = line_bits(&score.lead.notes);
+        // The drivers are DISTINCT numbers (so a "wrong role assigned
+        // to the slot" is an inequality, not an equality accident):
+        // the tiers differ from each other, the lines from each other,
+        // and neither line is the 4-hit Euclidean default.
+        assert_ne!(kick, snare, "kick and snare tiers differ");
+        assert_ne!(snare, hat, "snare and hat tiers differ");
+        assert_ne!(
+            bass, lead,
+            "the bass and lead lines have different set steps"
+        );
+        assert_ne!(
+            bass,
+            euclidean_bits(4, 0),
+            "the bass line is NOT the Euclidean default"
+        );
+        assert_ne!(
+            lead,
+            euclidean_bits(4, 0),
+            "the lead line is NOT the Euclidean default"
+        );
+
+        let d = MusicDirector::new_fallback(); // stage 0, the shipped score
+        assert_eq!(
+            d.tracks[0].params.pattern_bits.load(Ordering::Relaxed),
+            kick,
+            "slot 0 (drum) keeps the stage-0 kick tier"
+        );
+        assert_eq!(
+            d.tracks[1].params.pattern_bits.load(Ordering::Relaxed),
+            snare,
+            "slot 1 (drum) keeps the stage-0 snare tier"
+        );
+        assert_eq!(
+            d.tracks[2].params.pattern_bits.load(Ordering::Relaxed),
+            hat,
+            "slot 2 (drum) keeps the stage-0 hat tier"
+        );
+        assert_eq!(
+            d.tracks[3].params.pattern_bits.load(Ordering::Relaxed),
+            bass,
+            "slot 3 (bass) keeps the bass line's set steps"
+        );
+        assert_eq!(
+            d.tracks[4].params.pattern_bits.load(Ordering::Relaxed),
+            lead,
+            "slot 4 (lead) keeps the lead line's set steps"
+        );
+        for i in 6..8 {
+            assert_eq!(
+                d.tracks[i].params.pattern_bits.load(Ordering::Relaxed),
+                euclidean_bits(4, 0),
+                "slot {i} (harmony) keeps the 4-hit Euclidean default"
+            );
+        }
+    }
+
+    /// Plan 002 issue 11f — the backwards-compat contract: a score
+    /// JSON with no `comp` field (an 11e-era file) still parses
+    /// (serde default → `None`) and PLAYS: the comp slot resolves to
+    /// the internal off-beat default pattern (never silent — the
+    /// fallback pattern's bits land in `pattern_bits`) and its
+    /// chord-following pitch is written like every other chord
+    /// follower's.
+    #[test]
+    fn a_score_without_comp_still_parses_and_plays() {
+        use crate::score::COMP_DEFAULT_PATTERN;
+        // The pre-11f shape: the canonical JSON minus the `comp`
+        // field (what the 11e bake emitted).
+        let mut value = serde_json::to_value(Score::default()).expect("default serializes");
+        value
+            .as_object_mut()
+            .expect("the score is an object")
+            .remove("comp");
+        let score = Score::from_json(&value.to_string()).expect("a score without `comp` parses");
+        assert_eq!(score.comp, None, "`comp` defaults to absent");
+
+        // It PLAYS: the director's comp slot gets the off-beat
+        // default's bits (independently computed) and a live,
+        // chord-rooted pitch at stage 0 (the comp unlocks at 0).
+        let default_bits = COMP_DEFAULT_PATTERN
+            .chars()
+            .enumerate()
+            .fold(0u32, |bits, (i, c)| {
+                if c == 'x' || c == 'X' {
+                    bits | (1 << i)
+                } else {
+                    bits
+                }
+            });
+        let mut d = MusicDirector::new_fallback();
+        d.set_score(score);
+        assert_eq!(
+            d.tracks[5].params.pattern_bits.load(Ordering::Relaxed),
+            default_bits,
+            "the absent `comp` plays the off-beat default pattern"
+        );
+        d.tick(0.01); // bar 0 (I, offset 0)
+        let root = stage_params(0).root();
+        assert!(
+            (d.tracks[5].params.freq.value() - root).abs() < 1e-4,
+            "the comp is on the bar-0 chord root: got {}, want {root}",
+            d.tracks[5].params.freq.value()
+        );
+        assert_eq!(
+            d.tracks[5].params.mute.value(),
+            0.0,
+            "the comp (unlock 0) is live, not stage-muted"
+        );
+    }
+
+    /// Plan 002 issue 11f — the fold covers the COMP role: a
+    /// user-muted comp stays muted across a whole bar of ticks
+    /// (INCLUDING its pattern's hit steps — the comp's envelope is
+    /// pattern-driven, but the MUTE is the fold's), and soloing the
+    /// comp silences every other slot (the fold's user half) while
+    /// the soloed comp follows its own program (live — unlock 0).
+    #[test]
+    fn the_mute_solo_fold_silences_the_comp() {
+        let step_len = 60.0 / BPM_BASE / 4.0;
+        // The mute half: the user-muted comp stays muted on every
+        // step of the bar — its pattern's hit steps (the off-beat
+        // 8ths: 2/6/10/14) included.
+        let mut d = MusicDirector::new_fallback();
+        let mut score = Score::default();
+        score.slots[5].muted = true; // the comp
+        d.set_score(score);
+        assert_eq!(
+            d.tracks[5].params.mute.value(),
+            1.0,
+            "the user mute lands immediately (the fold — not a stale write)"
+        );
+        for step in 0..16u64 {
+            d.tick(step_len); // one full step per tick: steps 0..15 of the bar
+            assert_eq!(
+                d.tracks[5].params.mute.value(),
+                1.0,
+                "the user-muted comp stays muted on step {step} (its pattern's hits included)"
+            );
+        }
+        // The fold is per-slot: the kick is not touched by the comp's
+        // mute (unlock 0 → live).
+        assert_eq!(
+            d.tracks[0].params.mute.value(),
+            0.0,
+            "the kick is not touched by the comp's mute"
+        );
+
+        // The solo half: soloing the comp silences the other seven;
+        // the comp itself follows its program (unlock 0 → live on
+        // every step).
+        let mut d = MusicDirector::new_fallback();
+        let score = Score {
+            solo: Some(5),
+            ..Default::default()
+        };
+        d.set_score(score);
+        for k in 0..8u64 {
+            d.tick(step_len);
+            assert_eq!(
+                d.tracks[5].params.mute.value(),
+                0.0,
+                "the soloed comp follows its own program (unlock 0 → live, tick {k})"
+            );
+            for i in [0usize, 1, 2, 3, 4, 6, 7] {
+                assert_eq!(
+                    d.tracks[i].params.mute.value(),
+                    1.0,
+                    "soloing the comp silences slot {i} (tick {k})"
+                );
+            }
+        }
+        // Clear the solo: the other slots come back to their program
+        // state. The comp's program half is the unlock state, not the
+        // pattern — it is live on a cleared solo (the bell stays
+        // stage-locked, as before 11f).
+        d.set_score(Score::default());
+        d.tick(step_len);
+        assert_eq!(
+            d.tracks[5].params.mute.value(),
+            0.0,
+            "clearing the solo un-mutes the comp (unlock 0 → live)"
+        );
+        for i in [0usize, 1, 2] {
+            assert_eq!(
+                d.tracks[i].params.mute.value(),
+                0.0,
+                "clearing the solo un-mutes the unlocked drum {i}"
+            );
+        }
+        assert_eq!(
+            d.tracks[6].params.mute.value(),
+            1.0,
+            "the bell is STILL stage-locked at stage 0 (program, not solo)"
         );
     }
 
@@ -1293,15 +1711,15 @@ mod tests {
     fn the_bar_chord_moves_the_harmony_only() {
         let bar = 4.0 * 60.0 / BPM_BASE;
         let mut d = MusicDirector::new_fallback();
-        let pad0 = d.tracks[5].params.freq.value();
+        let comp0 = d.tracks[5].params.freq.value();
         let lead0 = d.tracks[4].params.freq.value();
         d.tick(0.01);
-        assert!((d.tracks[5].params.freq.value() - pad0).abs() < 1e-4);
+        assert!((d.tracks[5].params.freq.value() - comp0).abs() < 1e-4);
         d.tick(bar * 1.05);
-        let expected = pad0 * semitone_ratio(9);
+        let expected = comp0 * semitone_ratio(9);
         assert!(
             (d.tracks[5].params.freq.value() - expected).abs() < 0.5,
-            "pad follows vi"
+            "the comp follows vi"
         );
         // The lead melody is on the key root, not the chord.
         assert_ne!(d.tracks[4].params.freq.value(), lead0 * semitone_ratio(9));
@@ -1511,11 +1929,11 @@ mod tests {
         // state. The tick lands on step 4, in-step ≈0.5 (the even
         // window 0..0.7 open; the default bass AND lead both carry a
         // note on step 4) — the gated voices come back through their
-        // gate; the unlocked drums/harmony are live; the pad/bell are
+        // gate; the unlocked drums/harmony/comp are live; the bell is
         // still stage-locked (program, not solo).
         d.set_score(Score::default());
         d.tick(step_len * 0.5);
-        for i in [1usize, 2, 7] {
+        for i in [1usize, 2, 5, 7] {
             assert_eq!(
                 d.tracks[i].params.mute.value(),
                 0.0,
@@ -1531,11 +1949,6 @@ mod tests {
             d.tracks[4].params.mute.value(),
             0.0,
             "the lead comes back through its gate (step 4's note, window open)"
-        );
-        assert_eq!(
-            d.tracks[5].params.mute.value(),
-            1.0,
-            "the pad is STILL stage-locked at stage 0 (program, not solo)"
         );
         assert_eq!(
             d.tracks[6].params.mute.value(),
@@ -1599,7 +2012,7 @@ mod tests {
         );
         assert!(
             (d.tracks[5].params.freq.value() - root).abs() < 1e-4,
-            "the pre-swap pad is the bar-0 chord (I, offset 0)"
+            "the pre-swap comp is the bar-0 chord (I, offset 0)"
         );
 
         // A moved step note (0 → +5) and a moved bar-0 chord (0 → +7):
@@ -1623,7 +2036,6 @@ mod tests {
             d.tracks[5].params.freq.value()
         );
     }
-
     #[test]
     fn start_without_a_device_does_not_panic() {
         let mut d = MusicDirector::start();
@@ -1814,7 +2226,7 @@ mod tests {
             PresetKind::FmHat,
             PresetKind::PluckSaw,
             PresetKind::FmLead,
-            PresetKind::PadZimmer,
+            PresetKind::FmComp,
             PresetKind::Bell,
             PresetKind::DroneSub,
         ];

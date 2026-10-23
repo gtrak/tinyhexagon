@@ -120,6 +120,7 @@
     ],
     "octave_shift": 1
   },
+  "comp": "..x...x...x...x.",
   "slots": [
     {
       "gain": 0.421,
@@ -148,6 +149,7 @@
     },
     {
       "gain": 0.0935,
+      "kind": "fm_comp",
       "muted": false
     },
     {
