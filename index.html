@@ -958,7 +958,10 @@
               "rollhead"));
             const [lo, hi] = pitchRange(line);
             const rows = [];
-            for (let p = lo; p <= hi; p++) {
+            // HIGH pitch at the TOP, low at the bottom — a piano roll
+            // reads upward. This loop used to run lo -> hi, so the rows
+            // were upside down (the low notes sat at the top).
+            for (let p = hi; p >= lo; p--) {
               const rowEl = mk("div", null, "rollrow");
               const pth = mk("span", p > 0 ? "+" + p : String(p), "pth"
                 + (p === 0 ? " root" : p % 12 === 0 ? " oct" : ""));
@@ -1015,7 +1018,11 @@
               if (!r) continue;
               const notes = barView(line).notes;
               r.rows.forEach((cells, ri) => {
-                const p = r.lo + ri;
+                // Rows are built hi -> lo (the roll reads upward), so the
+                // row's pitch is hi - ri. Using lo + ri here would have
+                // painted every note on the mirror-image row once the
+                // order was fixed.
+                const p = r.hi - ri;
                 cells.forEach((c, s) => {
                   c.classList.toggle("on", s < notes.length && notes[s] === p);
                 });
