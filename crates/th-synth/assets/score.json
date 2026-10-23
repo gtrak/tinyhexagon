@@ -107,17 +107,17 @@
     "notes": [
       12,
       null,
-      null,
       16,
+      null,
       19,
       null,
-      17,
-      null,
       16,
       null,
-      14,
+      19,
       null,
-      12,
+      21,
+      null,
+      19,
       null,
       null,
       null
@@ -152,17 +152,17 @@
         "notes": [
           12,
           null,
-          null,
           16,
+          null,
           19,
           null,
-          17,
-          null,
           16,
           null,
-          14,
+          19,
           null,
-          12,
+          21,
+          null,
+          19,
           null,
           null,
           null
@@ -195,19 +195,19 @@
       },
       "lead": {
         "notes": [
-          14,
-          null,
-          null,
-          17,
           21,
           null,
           19,
           null,
-          17,
-          null,
           16,
           null,
-          14,
+          19,
+          null,
+          21,
+          null,
+          19,
+          null,
+          16,
           null,
           null,
           null
@@ -231,18 +231,20 @@
           null,
           7,
           null,
-          5,
+          10,
           null,
-          7,
+          12,
           null
         ],
         "octave_shift": -1
       },
       "lead": {
         "notes": [
-          16,
+          17,
           null,
           19,
+          null,
+          21,
           null,
           24,
           null,
@@ -252,8 +254,6 @@
           null,
           17,
           null,
-          16,
-          null,
           null,
           null
         ],
@@ -276,28 +276,28 @@
           null,
           7,
           null,
-          5,
+          10,
           null,
-          7,
+          12,
           null
         ],
         "octave_shift": -1
       },
       "lead": {
         "notes": [
-          17,
+          19,
           null,
-          16,
+          21,
           null,
-          14,
+          23,
           null,
-          12,
+          26,
           null,
+          24,
           null,
+          23,
           null,
-          null,
-          null,
-          null,
+          19,
           null,
           null,
           null
@@ -330,104 +330,14 @@
       },
       "lead": {
         "notes": [
-          12,
-          null,
-          null,
-          16,
-          19,
-          null,
           17,
-          null,
-          16,
-          null,
-          14,
-          null,
-          12,
-          null,
-          null,
-          null
-        ],
-        "octave_shift": 1
-      },
-      "comp": "..x...x...x...x."
-    },
-    {
-      "bass": {
-        "notes": [
-          0,
-          null,
-          12,
-          null,
-          7,
-          null,
-          12,
-          null,
-          0,
-          null,
-          12,
-          null,
-          7,
-          null,
-          10,
-          null
-        ],
-        "octave_shift": -1
-      },
-      "lead": {
-        "notes": [
-          14,
-          null,
-          null,
-          17,
-          21,
-          null,
-          19,
-          null,
-          17,
-          null,
-          16,
-          null,
-          14,
-          null,
-          null,
-          null
-        ],
-        "octave_shift": 1
-      },
-      "comp": "..x...x...x...x."
-    },
-    {
-      "bass": {
-        "notes": [
-          0,
-          null,
-          12,
-          null,
-          7,
-          null,
-          12,
-          null,
-          0,
-          null,
-          7,
-          null,
-          5,
-          null,
-          7,
-          null
-        ],
-        "octave_shift": -1
-      },
-      "lead": {
-        "notes": [
-          19,
           null,
           21,
           null,
           24,
           null,
-          null,
           21,
+          null,
           24,
           null,
           26,
@@ -454,22 +364,112 @@
           null,
           0,
           null,
-          7,
-          null,
-          5,
+          12,
           null,
           7,
+          null,
+          10,
           null
         ],
         "octave_shift": -1
       },
       "lead": {
         "notes": [
-          17,
+          19,
+          null,
+          23,
+          null,
+          26,
+          null,
+          23,
+          null,
+          19,
+          null,
+          23,
+          null,
+          26,
+          null,
+          null,
+          null
+        ],
+        "octave_shift": 1
+      },
+      "comp": "..x.x...x.x...x."
+    },
+    {
+      "bass": {
+        "notes": [
+          0,
+          null,
+          12,
+          null,
+          7,
+          null,
+          12,
+          null,
+          0,
+          null,
+          7,
+          null,
+          10,
+          null,
+          12,
+          null
+        ],
+        "octave_shift": -1
+      },
+      "lead": {
+        "notes": [
+          24,
+          null,
+          21,
+          null,
+          19,
           null,
           16,
           null,
-          14,
+          19,
+          null,
+          21,
+          null,
+          16,
+          null,
+          null,
+          null
+        ],
+        "octave_shift": 1
+      },
+      "comp": "..x...x...x...x."
+    },
+    {
+      "bass": {
+        "notes": [
+          0,
+          null,
+          12,
+          null,
+          7,
+          null,
+          12,
+          null,
+          0,
+          null,
+          7,
+          null,
+          10,
+          null,
+          12,
+          null
+        ],
+        "octave_shift": -1
+      },
+      "lead": {
+        "notes": [
+          21,
+          null,
+          19,
+          null,
+          16,
           null,
           12,
           null,
@@ -484,49 +484,49 @@
         ],
         "octave_shift": 1
       },
-      "comp": "....x...x...x..."
+      "comp": "..x.....x...x..."
     }
   ],
   "slots": [
     {
-      "gain": 0.569,
+      "gain": 0.556,
       "kind": "fm_kick",
       "muted": false
     },
     {
-      "gain": 0.4471,
+      "gain": 0.4369,
       "kind": "fm_snare",
       "muted": false
     },
     {
-      "gain": 0.1301,
+      "gain": 0.1271,
       "kind": "fm_hat",
       "muted": false
     },
     {
-      "gain": 0.4877,
+      "gain": 0.4766,
       "kind": "fm_bass",
       "muted": false
     },
     {
-      "gain": 0.3251,
+      "gain": 0.3177,
       "kind": "fm_lead",
       "muted": false
     },
     {
-      "gain": 0.1626,
+      "gain": 0.1589,
       "kind": "fm_comp",
       "ratio": 2.0,
       "muted": false
     },
     {
-      "gain": 0.2,
+      "gain": 0.1954,
       "kind": "fm_comp",
       "ratio": 2.52,
       "muted": false
     },
     {
-      "gain": 0.0813,
+      "gain": 0.0794,
       "kind": "fm_comp",
       "ratio": 3.0,
       "muted": false
