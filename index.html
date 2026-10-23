@@ -148,6 +148,18 @@
       #scorelab input[type="range"] { width: 110px; }
       #scorelab .val { display: inline-block; width: 3.4em; color: #999; }
       #scorelab button { padding: 2px 8px; font-family: inherit; }
+      /* the built-in stepper's open/close button (bottom-left, out of the
+         game's way; ?scorelab=1 or the backquote key do the same) */
+      #scorelab-toggle { position: fixed; left: 4px; bottom: 4px; z-index: 11;
+        opacity: 0.35; padding: 1px 7px; font-size: 13px; line-height: 1.3;
+        background: rgba(17,17,17,0.7); color: #ddd; border: 1px solid #444;
+        border-radius: 4px; font-family: monospace; cursor: pointer; }
+      #scorelab-toggle:hover { opacity: 1; }
+      #scorelab .barpick { display: inline-flex; align-items: center; gap: 3px;
+        margin-left: 4px; }
+      #scorelab .barpick .lbl { color: #999; }
+      #scorelab .barstep { padding: 0 6px; }
+      #scorelab .barread { min-width: 2.6em; text-align: center; color: #9cf; }
       #scorelab textarea { width: 100%; height: 88px; box-sizing: border-box;
         font-family: inherit; font-size: 11px; background: #0a0a0a;
         color: #bbb; border: 1px solid #444; margin-top: 3px; }
@@ -445,13 +457,67 @@
       const scorelab = scoreParams.get("scorelab") === "1";
       const scoreUrl = scoreParams.get("score");
 
-      if (scorelab || scoreUrl) {
+      {
+        // ALWAYS built (issue 11f follow-up: the operator's "serve me the
+        // game with stepper builtin"). This used to be gated on
+        // `scorelab || scoreUrl`, which meant the DAW's DOM and its
+        // toggle never existed on a plain URL — the panel could not be
+        // opened at all. The `?score=` POLL below stays gated; nothing
+        // else here has any effect until the panel is opened.
         // The lab's one state: the in-memory score (the engine's truth
         // — synced from getScore() at boot, after a rejected push, and
         // after a hot reload, so the panel always shows what the
         // engine is playing) + the last status line's stage + the
         // DAW's structure refs (scorelab-only; null without the flag).
-        const lab = { score: null, stage: -1, statusEl: null, els: {}, daw: null, paintAll: null };
+        const lab = { score: null, stage: -1, statusEl: null, els: {}, daw: null, paintAll: null, bar: 0, jsonDirty: false };
+
+        // ── THE PHRASE IS THE THING THAT PLAYS (issue 11g) ──────────
+        // `score.bars` is the arrangement; the top-level bass/lead/comp
+        // are only the FALLBACK for bars that leave a field out. The DAW
+        // was written before `bars` existed and edited the top-level
+        // lines — which the phrase overrides, so its edits changed the
+        // JSON and nothing else. These accessors are the fix: every
+        // read/write in the rolls and the comp lane goes through them.
+        const phraseLen = () =>
+          (lab.score && Array.isArray(lab.score.bars) && lab.score.bars.length)
+            ? lab.score.bars.length
+            : 1;
+        /// The resolved figure for the SELECTED bar (read-only view).
+        const barView = (field) => {
+          if (!lab.score) return null;
+          const bars = Array.isArray(lab.score.bars) ? lab.score.bars : [];
+          if (!bars.length) return lab.score[field];
+          const b = bars[lab.bar % bars.length];
+          return (b && b[field]) || lab.score[field];
+        };
+        /// The MUTABLE figure for the selected bar: writes create the
+        /// per-bar override (seeded from what is playing, so the first
+        /// click edits what you hear rather than a blank line).
+        const barEdit = (field) => {
+          if (!lab.score) return null;
+          const bars = Array.isArray(lab.score.bars) ? lab.score.bars : [];
+          if (!bars.length) return lab.score[field];
+          const i = lab.bar % bars.length;
+          if (!bars[i]) bars[i] = {};
+          if (!bars[i][field]) bars[i][field] = JSON.parse(JSON.stringify(lab.score[field]));
+          return bars[i][field];
+        };
+        /// The comp is a STRING pattern, so it needs its own pair.
+        const compView = () => {
+          if (!lab.score) return "";
+          const bars = Array.isArray(lab.score.bars) ? lab.score.bars : [];
+          if (!bars.length) return lab.score.comp || "";
+          const b = bars[lab.bar % bars.length];
+          return (b && b.comp) || lab.score.comp || "";
+        };
+        const compEdit = () => {
+          const bars = Array.isArray(lab.score.bars) ? lab.score.bars : [];
+          if (!bars.length) return null;
+          const i = lab.bar % bars.length;
+          if (!bars[i]) bars[i] = {};
+          if (!bars[i].comp) bars[i].comp = compView();
+          return bars[i];
+        };
 
         // The setScore result's paint ("" = ok in green, the error in
         // red; the span exists only with the overlay — a no-op
@@ -503,7 +569,11 @@
           if (text === "") return; // pre-boot: the next poll retries
           try {
             lab.score = JSON.parse(text);
-            if (scorelab && lab.paintAll) lab.paintAll();
+            // NOT `scorelab &&` — that constant is the boot-time URL
+            // flag, so gating here meant a panel opened at runtime (the
+            // built-in stepper) parsed the score and then never painted:
+            // an empty panel over a working engine.
+            if (lab.paintAll) lab.paintAll();
           } catch (err) {
             console.error("[scorelab] getScore parse failed: " + err);
           }
@@ -577,8 +647,15 @@
           })();
         }
 
-        if (scorelab) {
-          // ---- the DAW overlay (11b): built ONLY here (the default
+        {
+          // ---- the DAW overlay (11b/11f/11g): built ALWAYS so the
+          // stepper is BUILT IN — but hidden until asked for (the
+          // operator's request: "serve me the game with stepper
+          // builtin"). `?scorelab=1` opens it at boot; the backquote
+          // key or the corner button toggles it live. The kid page is
+          // unchanged by construction: the panel is display:none, so
+          // nothing is visible or text-bearing until it is opened.
+          // ---- (the original 11b comment follows) — a fixed, semi-transparent
           // page's DOM has no trace of it) — a fixed, semi-transparent
           // panel over the canvas; the game keeps running and audible
           // behind it. The FL-studio shape the operator asked for:
@@ -625,7 +702,7 @@
             { name: "HAT", builtin: "heartbeat", lane: "drum" },
             { name: "BASS", builtin: "bass_pulse", lane: "roll" },
             { name: "LEAD", builtin: "pluck_saw", lane: "roll" },
-            { name: "PAD", builtin: "pad_zimmer", lane: "chord" },
+            { name: "COMP", builtin: "fm_comp", lane: "comp" },
             { name: "BELL", builtin: "bell", lane: "chord" },
             { name: "SUB", builtin: "drone_sub", lane: "chord" },
           ];
@@ -684,6 +761,32 @@
             paintMix();
           });
           transport.append(clearSoloBtn);
+
+          // The PHRASE bar selector: `score.bars` is the arrangement, so
+          // the rolls and the comp lane edit ONE BAR at a time. Without
+          // this the DAW silently edited the fallback lines, which the
+          // phrase overrides — the "editor does nothing" trap.
+          const barWrap = mk("span", null, "barpick");
+          const barPrev = mk("button", "<", "barstep");
+          barPrev.id = "scorelab-bar-prev";
+          barPrev.title = "the previous bar of the phrase";
+          const barRead = mk("span", "bar 1", "barread");
+          barRead.id = "scorelab-bar-read";
+          const barNext = mk("button", ">", "barstep");
+          barNext.id = "scorelab-bar-next";
+          barNext.title = "the next bar of the phrase";
+          const stepBar = (d) => {
+            if (!lab.score) return;
+            const n = phraseLen();
+            lab.bar = ((lab.bar + d) % n + n) % n;
+            paintBar();
+          };
+          barPrev.addEventListener("click", () => stepBar(-1));
+          barNext.addEventListener("click", () => stepBar(1));
+          barWrap.append(mk("span", "bar", "lbl"), barPrev, barRead, barNext);
+          transport.append(barWrap);
+          lab.els.barRead = barRead;
+
           lab.statusEl = mk("span", "", "status");
           lab.statusEl.id = "scorelab-status";
           transport.append(lab.statusEl);
@@ -751,7 +854,7 @@
             gainWrap.append(gain, gainRead);
             th.append(mBtn, sBtn, sel, gainWrap);
             const lane = mk("div", null,
-              "lane" + (meta.lane === "drum" ? " drumlane" : meta.lane === "chord" ? " chordlane" : ""));
+              "lane" + (meta.lane === "drum" ? " drumlane" : meta.lane === "comp" ? " drumlane complane" : meta.lane === "chord" ? " chordlane" : ""));
             root.append(th, lane);
             tracks.append(root);
             trackEls.push({ root, mBtn, sBtn, sel, gain, gainRead, lane });
@@ -791,7 +894,8 @@
           // palette-cycle — the grid IS the pitch picker now.
           const setRollNote = (line, pitch, step) => {
             if (!lab.score) return;
-            const notes = lab.score[line].notes;
+            const notes = (barEdit(line) || {}).notes;
+            if (!notes) return;
             if (step < 0 || step >= notes.length) return;
             notes[step] = notes[step] === pitch ? null : pitch;
           };
@@ -824,7 +928,7 @@
           // (a pitch you can actually hear a relation to).
           const pitchRange = (line) => {
             let lo = 0, hi = 0;
-            for (const n of lab.score[line].notes) {
+            for (const n of barView(line).notes) {
               if (n !== null) {
                 if (n < lo) lo = n;
                 if (n > hi) hi = n;
@@ -849,8 +953,8 @@
             lane.replaceChildren();
             lane.append(mk("div",
               line === "bass"
-                ? "octave " + lab.score.bass.octave_shift + " — the bass follows the bar's chord"
-                : "octave " + lab.score.lead.octave_shift + " — the lead stays on the key root (ignores the chord)",
+                ? "octave " + barView("bass").octave_shift + " — the bass follows the bar's chord"
+                : "octave " + barView("lead").octave_shift + " — the lead stays on the key root (ignores the chord)",
               "rollhead"));
             const [lo, hi] = pitchRange(line);
             const rows = [];
@@ -909,7 +1013,7 @@
             for (const line of ["bass", "lead"]) {
               const r = lab.daw.rolls[line];
               if (!r) continue;
-              const notes = lab.score[line].notes;
+              const notes = barView(line).notes;
               r.rows.forEach((cells, ri) => {
                 const p = r.lo + ri;
                 cells.forEach((c, s) => {
@@ -1095,6 +1199,7 @@
               const a = document.createElement("a");
               a.href = URL.createObjectURL(blob);
               a.download = "score.json";
+              lab.jsonDirty = false;
               a.click();
               setTimeout(() => URL.revokeObjectURL(a.href), 1000);
               paintScoreStatus("");
@@ -1102,6 +1207,7 @@
               paintScoreStatus("download: " + (err && err.message ? err.message : String(err)));
             }
           });
+          jsonBox.addEventListener("input", () => { lab.jsonDirty = true; });
           const applyJson = (text) => {
             if (typeof mod.setScore !== "function") {
               paintScoreStatus("setScore export missing (issue 10a not in this build)");
@@ -1109,6 +1215,7 @@
             }
             const err = mod.setScore(text);
             paintScoreStatus(err);
+            if (err === "") lab.jsonDirty = false; // applied: the box mirrors the engine again
             if (err !== "") {
               console.error("[scorelab] load rejected: " + err);
             } else {
@@ -1134,6 +1241,60 @@
           jsonBtns.append(copyBtn, dlBtn, loadBtn, fileInput);
           jsonRow.append(jsonBtns, jsonBox);
 
+          // The COMP lane: slot 5's step pattern for the SELECTED bar
+          // (a string of x/. ). Clicking a step toggles the hit — this is
+          // the rhythm part, so it has to be editable per bar like the
+          // rolls.
+          const buildCompDom = (steps) => {
+            const lane = trackEls[5].lane;
+            const row = mk("div", null, "cells");
+            const cells = [];
+            for (let i = 0; i < steps; i++) {
+              const c = mk("span", null, "cell");
+              c.addEventListener("click", () => {
+                const bar = compEdit();
+                if (!bar) return;
+                const cur = bar.comp || compView();
+                const at = i < cur.length ? cur[i] : ".";
+                const ch = (at === "x" || at === "X") ? "." : "x";
+                bar.comp = cur.slice(0, i) + ch + cur.slice(i + 1);
+                pushScore();
+                paintComp();
+              });
+              cells.push(c);
+              row.append(c);
+            }
+            lane.replaceChildren(mk("div", null, "gutter"), row);
+            return cells;
+          };
+          const paintComp = () => {
+            if (!lab.daw || !lab.score || !lab.daw.compCells) return;
+            const pat = compView() || "";
+            lab.daw.compCells.forEach((c, i) => {
+              const on = i < pat.length && (pat[i] === "x" || pat[i] === "X");
+              c.className = on ? "cell on" : "cell";
+            });
+          };
+          /// Repaint everything that depends on WHICH BAR is selected.
+          const paintBar = () => {
+            if (!lab.score) return;
+            const n = phraseLen();
+            lab.bar = ((lab.bar % n) + n) % n;
+            if (lab.els.barRead) {
+              lab.els.barRead.textContent = (lab.bar + 1) + "/" + n;
+            }
+            // The rolls' pitch range can differ per bar, so the DOM may
+            // need a rebuild — do it the same way paintAll does.
+            const steps = lab.score.steps_per_bar;
+            for (const line of ["bass", "lead"]) {
+              const [lo, hi] = pitchRange(line);
+              const r = lab.daw && lab.daw.rolls[line];
+              if (!r || r.lo !== lo || r.hi !== hi || r.steps !== steps) buildRoll(line);
+            }
+            paintRolls();
+            paintComp();
+          };
+
           // The full repaint from the engine's truth (the boot sync,
           // the hot-reload sync, and the rejected-push re-sync all
           // land here): the DAW DOM (rebuilt only when the structure
@@ -1147,6 +1308,7 @@
             const steps = lab.score.steps_per_bar;
             if (!lab.daw || lab.daw.steps !== steps) {
               lab.daw = { steps, drumCells: buildDrumDom(steps), rolls: {} };
+              lab.daw.compCells = buildCompDom(steps);
             }
             for (const line of ["bass", "lead"]) {
               const [lo, hi] = pitchRange(line);
@@ -1155,7 +1317,9 @@
             }
             paintDrums();
             paintRolls();
+            paintComp();
             paintChords();
+            paintBar();
             const set = (ctrl, v) => {
               ctrl.input.value = String(v);
               ctrl.read.textContent = ctrl.fmt(v);
@@ -1164,13 +1328,43 @@
             set(lab.els.gate, lab.score.gate_open);
             set(lab.els.swing, lab.score.swing);
             paintMix();
-            if (document.activeElement !== jsonBox) {
+            // Do not clobber the operator's paste. The old guard was
+            // "not focused" — but a paste that never took focus (or a
+            // click landing between the paste and Load) was replaced by
+            // the next 1s sync, so Load then re-sent the ENGINE's score
+            // and nothing changed: "I paste this in and it doesn't
+            // work". The box is only refreshed when it is NOT dirty.
+            if (!lab.jsonDirty) {
               jsonBox.value = mod.getScore ? mod.getScore() : "";
             }
           };
 
           panel.append(titleEl, transport, tracks, jsonRow);
+          panel.style.display = scorelab ? "" : "none";
           document.body.append(panel);
+          window.__scorelab = { root: panel, open: false };
+          // The live toggle: the backquote key (no modifier, so it does
+          // not collide with the game's A/D/F steering) and a small
+          // corner button so it is discoverable without reading docs.
+          const setLabOpen = (on) => {
+            if (!window.__scorelab) return;
+            window.__scorelab.open = on;
+            panel.style.display = on ? "" : "none";
+            if (on) syncFromEngine();
+          };
+          window.__scorelab.toggle = () => setLabOpen(panel.style.display === "none");
+          setLabOpen(scorelab);
+          window.addEventListener("keydown", (e) => {
+            if (e.key === "`" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+              e.preventDefault();
+              window.__scorelab.toggle();
+            }
+          });
+          const labBtn = mk("button", "\u2699", "labb");
+          labBtn.id = "scorelab-toggle";
+          labBtn.title = "the stepper (backquote toggles it)";
+          labBtn.addEventListener("click", () => window.__scorelab.toggle());
+          document.body.append(labBtn);
 
           // The probe's entry (tools/web-tiny-probe.mjs's OH_SCORELAB
           // checks): the same mod.setScore call every edit makes, plus
@@ -1191,6 +1385,7 @@
           // are the CURRENT stage's — repaint only on a change) + the
           // first sync (getScore() is "" until the director installs).
           scorelabTick = (s) => {
+            if (panel.style.display === "none") return;
             const m = /(^|;)stage=(\d+)/.exec(s);
             const st = m ? Number(m[2]) : -1;
             if (st !== lab.stage) {
