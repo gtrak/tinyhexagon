@@ -334,8 +334,14 @@ if (scorelabProbe) {
   // changes the bpm, and a later assertion must not inherit that).
   const canonicalScore = await pageEval('typeof window.ohMod.getScore === "function" ? window.ohMod.getScore() : ""');
 
-  const overlayOk = await pageEval('document.getElementById("scorelab") !== null');
-  scorelabChecks.push(['scorelab: the overlay exists (#scorelab rendered into the DOM with ?scorelab=1)', overlayOk === true]);
+  // VISIBLE, not merely present: the panel is ALWAYS built now (so the
+  // stepper is built in) and hidden until asked for. `offsetParent` is
+  // useless here — the panel is `position: fixed`, which makes
+  // offsetParent null even when it is on screen — so measure the rect.
+  const overlayOk = await pageEval(
+    '(() => { const e = document.getElementById("scorelab"); if (!e) return false; const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; })()',
+  );
+  scorelabChecks.push(['scorelab: the overlay is visible (#scorelab shown with ?scorelab=1; it is always built now, so VISIBILITY is the contract)', overlayOk === true]);
   const roundTrip = await pageEval(
     'typeof window.ohMod.getScore === "function" && typeof window.ohMod.setScore === "function" && window.ohMod.setScore(window.ohMod.getScore()) === ""',
   );
@@ -487,7 +493,15 @@ if (scorelabProbe) {
     const m = window.ohMod;
     const cell = document.querySelector('#scorelab-roll-bass [data-pitch="7"][data-step="1"]');
     if (!cell || !cell.classList.contains("rcell")) return false;
-    const note = () => JSON.parse(m.getScore()).bass.notes[1];
+    // The DAW edits the PHRASE's selected bar (issue 11g), so read the
+    // bar's line, falling back to the top-level one when there is no
+    // phrase. Reading the top-level line directly is what made this
+    // check fail once the stepper started editing what actually plays.
+    const note = () => {
+      const sc = JSON.parse(m.getScore());
+      const line = (Array.isArray(sc.bars) && sc.bars.length && sc.bars[0] && sc.bars[0].bass) || sc.bass;
+      return line.notes[1];
+    };
     cell.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     const a = note();
     cell.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
@@ -495,7 +509,7 @@ if (scorelabProbe) {
     window.dispatchEvent(new MouseEvent("mouseup"));
     return a === 7 && b === null;
   })()`);
-  scorelabChecks.push(['scorelab: the bass roll sets bass.notes[1]=7 on a cell click and clears it to rest on the second', rollFlip === true]);
+  scorelabChecks.push(['scorelab: the bass roll sets the SELECTED BAR\'s bass.notes[1]=7 on a click and clears it on the second', rollFlip === true]);
 
   // The drum rack's 3 rows share the step columns (the grouped-block
   // contract: the same x for the same step across the rows) — 16

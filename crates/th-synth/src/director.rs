@@ -217,7 +217,7 @@ pub const SLOTS: [Slot; 8] = [
     Slot {
         kind: PresetKind::FmComp,
         unlock: 0,
-        ratio: 1.0,
+        ratio: 2.0, // the rhythm-guitar register (A3), clearly above the bass
         role: Role::Comp,
     }, // the comp (was the PadZimmer pad)
     Slot {
@@ -483,7 +483,14 @@ impl MusicDirector {
         score: &Score,
         program_mute: &mut [bool; 8],
     ) {
-        let s = stage.min(score.bpm.cap) as f32;
+        // `cap: 0` is a legitimate score ("no stage ramp"): guard the
+        // divisor. This used to divide by `bpm.cap` directly, so a score
+        // with cap 0 produced life_mod = NaN — and NaN propagates through
+        // the gate and the master bus to COMPLETE SILENCE with no error
+        // anywhere (the operator hit exactly that: a valid JSON, a clean
+        // setScore, and no sound).
+        let cap = score.bpm.cap.max(1);
+        let s = stage.min(cap) as f32;
         let p = score.stage_params(stage);
         let pms = track.params.clone();
         // The stage-unlock PROGRAM state (the fold's program half —
@@ -493,8 +500,7 @@ impl MusicDirector {
         program_mute[index] = stage < slot.unlock;
         pms.gain.set_value(score.slots[index].gain);
         pms.arp.set_value(0.0);
-        pms.life_mod
-            .set_value(0.85 + 0.15 * (s / (score.bpm.cap as f32)));
+        pms.life_mod.set_value(0.85 + 0.15 * (s / (cap as f32)));
         pms.freq.set_value(p.root() * slot.ratio);
 
         // The timing grid (`pattern_bits`) is a ROLE property, not a
@@ -588,7 +594,7 @@ impl MusicDirector {
                 pms.lfo_rate.set_value(0.07);
                 pms.lfo_target.set_value(LFO_CUTOFF as f32);
                 pms.character.set_value(0.40);
-                pms.reverb_mix.set_value(0.28);
+                pms.reverb_mix.set_value(0.12);
             }
             PresetKind::Bell => {
                 pms.pulse_depth.set_value(0.0);
@@ -632,21 +638,21 @@ impl MusicDirector {
                 pms.lfo_depth.set_value(0.0);
                 pms.character.set_value(0.50);
                 pms.resonance.set_value(0.50);
-                pms.reverb_mix.set_value(0.25); // 11e re-audit: a roomy low tail, attack first
+                pms.reverb_mix.set_value(0.08); // the Genesis mix is tight, not roomy
             }
             PresetKind::FmSnare => {
                 pms.pulse_depth.set_value(0.0);
                 pms.lfo_depth.set_value(0.0);
                 pms.character.set_value(0.60); // a touch more noise in the balance
                 pms.resonance.set_value(0.50);
-                pms.reverb_mix.set_value(0.20); // 11e re-audit: punch over room
+                pms.reverb_mix.set_value(0.06);
             }
             PresetKind::FmHat => {
                 pms.pulse_depth.set_value(0.0);
                 pms.lfo_depth.set_value(0.0);
                 pms.character.set_value(0.50);
                 pms.resonance.set_value(0.35);
-                pms.reverb_mix.set_value(0.15); // 11e re-audit: tight, almost dry
+                pms.reverb_mix.set_value(0.04);
             }
             PresetKind::FmBass => {
                 pms.pulse_depth.set_value(0.0);
@@ -654,7 +660,7 @@ impl MusicDirector {
                 pms.character.set_value(0.50);
                 pms.resonance.set_value(0.50);
                 pms.cutoff.set_value(500.0);
-                pms.reverb_mix.set_value(0.15); // 11e re-audit: dry bass weight
+                pms.reverb_mix.set_value(0.06);
             }
             PresetKind::FmLead => {
                 pms.pulse_depth.set_value(0.0);
@@ -662,7 +668,7 @@ impl MusicDirector {
                 pms.character.set_value(0.50);
                 pms.resonance.set_value(0.35);
                 pms.detune.set_value(14.0);
-                pms.reverb_mix.set_value(0.30); // 11e re-audit: melodic air
+                pms.reverb_mix.set_value(0.14); // a touch of air, no wash
             }
             PresetKind::FmBell => {
                 pms.pulse_depth.set_value(0.0);
@@ -688,7 +694,7 @@ impl MusicDirector {
                 pms.lfo_depth.set_value(0.0);
                 pms.character.set_value(0.50);
                 pms.resonance.set_value(0.50);
-                pms.reverb_mix.set_value(0.25); // between the bass (0.15) and the lead (0.30) — a moderate air
+                pms.reverb_mix.set_value(0.10); // the stab stays a stab
             }
         }
     }
@@ -1177,11 +1183,51 @@ impl MusicDirector {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    /// The single-bar (pre-phrase) score: the shipped bake with its
+    /// arrangement cleared. The sequencer-semantics tests below are about
+    /// the 16-step rules — bars, lead, bass, the gate — NOT about the
+    /// shipped composition, so they must not break when the operator
+    /// rewrites `assets/score.json`'s phrase.
+    fn single_bar_score() -> Score {
+        let mut s = Score::default();
+        s.bars.clear();
+        s
+    }
+
+    /// A fallback director playing exactly `score`.
+    fn director_for(score: Score) -> MusicDirector {
+        let mut d = MusicDirector::new_fallback();
+        d.set_score(score);
+        d
+    }
     use rust_synth::audio::engine::IN_MEMORY_SAMPLE_RATE;
 
-    use super::*;
     use crate::score::{Score, SlotGain};
     use rust_synth::audio::engine::MAX_TRACKS;
+
+    /// A score with `bpm.cap: 0` ("no stage ramp") must be AUDIBLE. It
+    /// used to divide by zero in `apply_slot`'s life_mod, yielding NaN,
+    /// which propagated through the gate and the master bus to total
+    /// silence — with a clean `setScore` and no error anywhere (the
+    /// operator lost time on exactly this).
+    #[test]
+    fn a_zero_bpm_cap_is_not_silent() {
+        let mut score = single_bar_score();
+        score.bpm.cap = 0;
+        score.bpm.per_stage = 0.0;
+        let d = director_for(score);
+        for i in 0..8 {
+            let life = d.tracks[i].params.life_mod.value();
+            assert!(
+                life.is_finite() && life > 0.0,
+                "slot {i}: life_mod must stay finite with cap 0 (got {life})"
+            );
+            let gain = d.tracks[i].params.gain.value();
+            assert!(gain.is_finite(), "slot {i}: gain must stay finite");
+        }
+    }
 
     #[test]
     fn stage_map_monotonic_and_capped() {
@@ -1267,10 +1313,21 @@ mod tests {
         let mut d = MusicDirector::new_fallback();
         d.set_stage(3);
         // Slot 5 (the comp — issue 11f replaced the pad here) follows
-        // the root shift exactly like the harmony slots do.
-        assert_eq!(d.tracks[5].params.freq.value(), ROOT_A2_HZ * ROOT_SHIFT);
+        // the root shift exactly like the harmony slots do. Its RATIO is
+        // its own (2.0 — the rhythm register, raised from 1.0 so the
+        // comp stops competing with the bass), so read the ratio from
+        // the slot table rather than hardcoding it: the property under
+        // test is the ROOT SHIFT, not the ratio.
+        let comp_ratio = SLOTS[5].ratio;
+        assert_eq!(
+            d.tracks[5].params.freq.value(),
+            ROOT_A2_HZ * ROOT_SHIFT * comp_ratio
+        );
         d.set_stage(3);
-        assert_eq!(d.tracks[5].params.freq.value(), ROOT_A2_HZ * ROOT_SHIFT);
+        assert_eq!(
+            d.tracks[5].params.freq.value(),
+            ROOT_A2_HZ * ROOT_SHIFT * comp_ratio
+        );
     }
 
     #[test]
@@ -1430,9 +1487,11 @@ mod tests {
             "slot 5 (comp) gets the comp pattern's set steps"
         );
 
-        // The PITCH: the bar's chord root × the slot's ratio (1.0),
-        // written by `apply_bar` — bar 0 is I (offset 0).
-        let root = stage_params(0).root();
+        // The PITCH: the bar's chord root × the SLOT's ratio, written by
+        // `apply_bar` — bar 0 is I (offset 0). Read the ratio from the
+        // slot table: the property is the CHORD FOLLOWING, not the ratio
+        // (the comp sits at 2.0 — the rhythm register, clear of the bass).
+        let root = stage_params(0).root() * SLOTS[5].ratio;
         d.tick(0.01); // bar 0, step 0
         let comp0 = d.tracks[5].params.freq.value();
         assert!(
@@ -1595,7 +1654,7 @@ mod tests {
             "the absent `comp` plays the off-beat default pattern"
         );
         d.tick(0.01); // bar 0 (I, offset 0)
-        let root = stage_params(0).root();
+        let root = stage_params(0).root() * SLOTS[5].ratio;
         assert!(
             (d.tracks[5].params.freq.value() - root).abs() < 1e-4,
             "the comp is on the bar-0 chord root: got {}, want {root}",
@@ -1696,7 +1755,7 @@ mod tests {
 
     #[test]
     fn the_bass_and_lead_are_sequenced_per_step() {
-        let mut d = MusicDirector::new_fallback();
+        let mut d = director_for(single_bar_score());
         d.tick(0.01); // step 0
         let bass0 = d.tracks[3].params.freq.value();
         let lead0 = d.tracks[4].params.freq.value();
@@ -1745,7 +1804,9 @@ mod tests {
         let bar0_offset = 0i32; // CHORD_MAJOR[0] (I)
         let bar1_offset = 9i32; // CHORD_MAJOR[1] (vi)
 
-        let mut d = MusicDirector::new_fallback();
+        // The LEGACY octave math lives on the single-bar score (the
+        // shipped phrase is the operator's own music now).
+        let mut d = director_for(single_bar_score());
         d.set_stage(stage);
         d.tick(0.01); // bar 0, step 0 — an even step, in-step < GATE_OPEN
         let bass0 = root * 2.0_f32.powi(-1) * semitone_ratio(bar0_offset + step0_bass_note);
@@ -1851,12 +1912,15 @@ mod tests {
     #[test]
     fn set_score_takes_effect_live() {
         // Rest half: the default score's step-0 bass note plays...
-        let mut d = MusicDirector::new_fallback();
+        let mut d = director_for(single_bar_score());
         d.tick(0.01); // step 0: the default bass's note 0 is on
         assert_eq!(d.tracks[3].params.mute.value(), 0.0);
         // ...until the swapped-in score makes step 0 a rest (and swings
         // the odd 16ths much later — the window-timing half below).
-        let mut score = Score::default();
+        // Built from the SINGLE-BAR score the director plays; a shipped
+        // score here would contribute its phrase, which overrides the
+        // top-level line this edit targets.
+        let mut score = single_bar_score();
         score.bass.notes[0] = None;
         d.set_score(Score {
             swing: 0.5,
@@ -1875,11 +1939,14 @@ mod tests {
         // 12) at in-step ≈ 0.25. The default swing's window
         // (0.15..0.85) is open there; the 0.5 swing's (0.5..1.0) is
         // still closed.
-        let mut def = MusicDirector::new_fallback();
-        let mut sw = MusicDirector::new_fallback();
+        // Both directors play the SINGLE-BAR score: the shipped phrase
+        // would drive the bass from its own notes and this test is about
+        // the gate WINDOW (swing), which keys off the top-level line.
+        let mut def = director_for(single_bar_score());
+        let mut sw = director_for(single_bar_score());
         let swapped = Score {
             swing: 0.5,
-            ..Score::default()
+            ..single_bar_score()
         };
         sw.set_score(swapped);
         def.tick(0.30);
@@ -2096,7 +2163,7 @@ mod tests {
     /// stay stale.
     #[test]
     fn set_score_reapplies_the_current_step_and_bar() {
-        let mut d = MusicDirector::new_fallback();
+        let mut d = director_for(single_bar_score());
         d.tick(0.01); // bar 0, step 0: the default bass's note 0, chord I
         let root = stage_params(0).root();
         assert!(
@@ -2104,13 +2171,14 @@ mod tests {
             "the pre-swap bass is the default score's step-0 note"
         );
         assert!(
-            (d.tracks[5].params.freq.value() - root).abs() < 1e-4,
+            (d.tracks[5].params.freq.value() - root * SLOTS[5].ratio).abs() < 1e-4,
             "the pre-swap comp is the bar-0 chord (I, offset 0)"
         );
 
         // A moved step note (0 → +5) and a moved bar-0 chord (0 → +7):
-        // the same score otherwise.
-        let mut score = Score::default();
+        // the same score otherwise (single-bar: the shipped phrase would
+        // override the top-level line being edited).
+        let mut score = single_bar_score();
         score.bass.notes[0] = Some(5);
         score.chords.major[0] = 7;
         d.set_score(score);
@@ -2122,7 +2190,8 @@ mod tests {
             "the step's note freq re-applies within the same step (got {}, want {new_bass})",
             d.tracks[3].params.freq.value()
         );
-        let new_pad = root * semitone_ratio(7);
+        // Slot 5 is the comp at the rhythm register (SLOTS[5].ratio).
+        let new_pad = root * SLOTS[5].ratio * semitone_ratio(7);
         assert!(
             (d.tracks[5].params.freq.value() - new_pad).abs() < 1e-4,
             "the bar's chord freq re-applies within the same bar (got {}, want {new_pad})",
@@ -2141,8 +2210,12 @@ mod tests {
     /// step, so float noise cannot land on the wrong step).
     #[test]
     fn an_empty_bars_list_is_todays_behaviour() {
-        let score = Score::default();
-        assert!(score.bars.is_empty(), "the shipped bake carries no `bars`");
+        // The CONTRACT is "a score with no phrase plays the single-bar
+        // case" — so construct that score rather than assuming the
+        // shipped bake has no phrase (it now carries the operator's
+        // 8-bar arrangement; asserting on the shipped file made this
+        // test a different, accidental test).
+        let score = single_bar_score();
         // The top-level figures' grids, computed INDEPENDENTLY (the
         // note-line fold + the char parse — not through
         // `resolve_bar`/`pattern_bits`/`note_line_bits`, so a drift in
@@ -2184,7 +2257,9 @@ mod tests {
         // A full chord cycle, bar after bar: the figures are the
         // top-level ones EVERY time (the empty-phrase resolution).
         for bar in 0..4u64 {
-            let mut d = MusicDirector::new_fallback();
+            // The director plays THIS score (bars cleared above) — not the
+            // shipped one, whose phrase would override every figure.
+            let mut d = director_for(score.clone());
             d.set_stage(stage);
             d.tick((bar as f32 * 16.0 + 0.25) * step_len - 0.01); // bar {bar}, step 0, in-step ≈0.15
             assert_eq!(
@@ -2221,7 +2296,7 @@ mod tests {
                 "bar {bar}: the lead step-0 freq is the top-level line on the key root (got {}, want {lead0})",
                 d.tracks[4].params.freq.value()
             );
-            let comp0 = root * semitone_ratio(offset);
+            let comp0 = root * SLOTS[5].ratio * semitone_ratio(offset);
             assert!(
                 (d.tracks[5].params.freq.value() - comp0).abs() < 1e-4,
                 "bar {bar}: the comp pitch is the bar's chord root (got {}, want {comp0})",
