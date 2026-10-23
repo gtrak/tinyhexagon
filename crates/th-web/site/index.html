@@ -1215,6 +1215,13 @@
             }
           });
           jsonBox.addEventListener("input", () => { lab.jsonDirty = true; });
+          // SELECT-ALL ON FOCUS. The box is pre-filled with the engine's
+          // score, so a plain Ctrl+V INSERTED at the caret and produced
+          // two concatenated JSONs ("trailing characters at line N") —
+          // which read as "I can't paste this". Selecting the contents
+          // makes a paste REPLACE, which is what pasting a whole score
+          // into a config box should do.
+          jsonBox.addEventListener("focus", () => jsonBox.select());
           const applyJson = (text) => {
             if (typeof mod.setScore !== "function") {
               paintScoreStatus("setScore export missing (issue 10a not in this build)");

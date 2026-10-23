@@ -501,7 +501,8 @@ impl MusicDirector {
         pms.gain.set_value(score.slots[index].gain);
         pms.arp.set_value(0.0);
         pms.life_mod.set_value(0.85 + 0.15 * (s / (cap as f32)));
-        pms.freq.set_value(p.root() * slot.ratio);
+        pms.freq
+            .set_value(p.root() * score.slots[index].ratio.unwrap_or(slot.ratio));
 
         // The timing grid (`pattern_bits`) is a ROLE property, not a
         // kind's (issue 11c's fix — the old code set it only inside the
@@ -1011,12 +1012,13 @@ impl MusicDirector {
         for (i, slot) in SLOTS.iter().enumerate() {
             match slot.role {
                 Role::Comp => {
-                    // The comp's PITCH: the chord root × ratio (the
-                    // 11f contract)...
+                    // The comp's PITCH: the chord root × its interval
+                    // (the score's `ratio`, else the built-in one)...
+                    let ratio = self.score.slots[i].ratio.unwrap_or(slot.ratio);
                     self.tracks[i]
                         .params
                         .freq
-                        .set_value(p.root() * slot.ratio * semitone_ratio(offset));
+                        .set_value(p.root() * ratio * semitone_ratio(offset));
                     // ...and its HIT PATTERN: the bar's resolved comp
                     // pattern's bits (the top-level `comp`, or the
                     // internal off-beat default — `resolve_bar`'s
@@ -1028,10 +1030,14 @@ impl MusicDirector {
                     );
                 }
                 Role::Harmony => {
+                    // The CHORD VOICES: each at its own interval above
+                    // the bar's root, so the harmony slots stack into a
+                    // triad with the comp instead of doubling one note.
+                    let ratio = self.score.slots[i].ratio.unwrap_or(slot.ratio);
                     self.tracks[i]
                         .params
                         .freq
-                        .set_value(p.root() * slot.ratio * semitone_ratio(offset));
+                        .set_value(p.root() * ratio * semitone_ratio(offset));
                 }
                 // The per-bar note lines (the phrase's resolved
                 // figures — the top-level lines when the bar leaves
@@ -1975,6 +1981,7 @@ mod tests {
         score.slots[0] = SlotGain {
             gain: 0.3,
             kind: None,
+            ratio: None,
             muted: false,
         };
         d.set_score(score);

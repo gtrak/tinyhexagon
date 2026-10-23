@@ -268,12 +268,11 @@ impl Preset {
                     ratio: 1.5,
                     ratio_lo: 1.0,
                     ratio_hi: 2.0,
-                    index: 600.0,
+                    index: 75.0, // I≈0.45: the bass must be a PITCH first
                     index_decay: 6.0,
-                    // the bass HOLDS: keep most of the index (the growl)
-                    index_sustain: 0.6,
-                    amp_decay: 4.0,
-                    amp_sustain: 0.72,
+                    index_sustain: 0.22, // decays, keeps a little growl
+                    amp_decay: 5.0,
+                    amp_sustain: 0.32,
                     sweep: 1.0,
                     sweep_decay: 1.0,
                     noise_hp: 0.0,
@@ -291,11 +290,11 @@ impl Preset {
                     ratio: 2.0,
                     ratio_lo: 1.5,
                     ratio_hi: 3.0,
-                    index: 350.0,
-                    index_decay: 3.0,
-                    index_sustain: 0.65, // the lead sings, it does not plink
-                    amp_decay: 4.5,
-                    amp_sustain: 0.7,
+                    index: 90.0, // I≈0.2: the melody reads as notes
+                    index_decay: 4.0,
+                    index_sustain: 0.25,
+                    amp_decay: 5.0,
+                    amp_sustain: 0.34,
                     sweep: 1.0,
                     sweep_decay: 1.0,
                     noise_hp: 0.0,
@@ -347,11 +346,11 @@ impl Preset {
                     ratio: 2.0,
                     ratio_lo: 1.6,
                     ratio_hi: 2.4,
-                    index: 450.0,
+                    index: 120.0,
                     index_decay: 10.0,
-                    index_sustain: 0.35, // a stab with body, not a click
-                    amp_decay: 3.0,
-                    amp_sustain: 0.25,
+                    index_sustain: 0.14, // a stab with body, not a click
+                    amp_decay: 6.0,
+                    amp_sustain: 0.10,
                     sweep: 1.0,
                     sweep_decay: 1.0,
                     noise_hp: 0.0,
@@ -692,7 +691,7 @@ fn fm_voice(p: &TrackParams, g: &GlobalParams, cfg: FmVoice) -> Net {
         let bpm = bpm_c.value() as f64;
         let base = fm_c.apply(fc.value() as f64, t);
         base * fm_sweep_mult(bits, t, bpm, cfg.sweep, cfg.sweep_decay)
-    }) >> follow(0.08);
+    }) >> follow(0.002); // instant pitch: a stepped sequencer, not a glide
 
     // ── The modulator: `character`-morphed ratio (the lerp3 idiom —
     // 0.5 = the tuned default), locked to the carrier (the same base,
@@ -704,7 +703,7 @@ fn fm_voice(p: &TrackParams, g: &GlobalParams, cfg: FmVoice) -> Net {
         let bpm = bpm_m.value() as f64;
         let base = fm_m.apply(fcm.value() as f64, t);
         base * fm_sweep_mult(bits, t, bpm, cfg.sweep, cfg.sweep_decay) * ratio
-    }) >> follow(0.08);
+    }) >> follow(0.002);
     let modulator = mod_freq >> sine();
 
     // ── The modulation index: `resonance`-scaled (the bell_preset
@@ -742,7 +741,7 @@ fn fm_voice(p: &TrackParams, g: &GlobalParams, cfg: FmVoice) -> Net {
             let base =
                 fm_c_d.apply(fc_d.value() as f64 * 2.0_f64.powf(cents / 1200.0), t);
             base * fm_sweep_mult(bits, t, bpm, cfg.sweep, cfg.sweep_decay)
-        }) >> follow(0.08);
+        }) >> follow(0.002);
         let mod2 = lfo(move |t: f64| {
             let c = char_d.value() as f64;
             let ratio = lerp3(cfg.ratio_lo, cfg.ratio, cfg.ratio_hi, c);
@@ -752,7 +751,7 @@ fn fm_voice(p: &TrackParams, g: &GlobalParams, cfg: FmVoice) -> Net {
             let base = fm_m_d
                 .apply(fcm_d.value() as f64 * 2.0_f64.powf(cents / 1200.0), t);
             base * fm_sweep_mult(bits, t, bpm, cfg.sweep, cfg.sweep_decay) * ratio
-        }) >> follow(0.08);
+        }) >> follow(0.002);
         let sig2 = (carrier2 + (mod2 >> sine()) * index_env_d) >> sine();
         (sig + sig2) * 0.5
     } else {
@@ -780,8 +779,8 @@ fn fm_voice(p: &TrackParams, g: &GlobalParams, cfg: FmVoice) -> Net {
         let cut_mod = lfo(move |t: f64| {
             let b = cut.value().min(cfg.filter_cap) as f64;
             lb_c.apply(b, LFO_CUTOFF, t, |b, m| b * 2.0_f64.powf(m))
-        }) >> follow(0.08);
-        let res_mod = lfo(move |_t: f64| res_s.value().min(0.65) as f64) >> follow(0.08);
+        }) >> follow(0.002);
+        let res_mod = lfo(move |_t: f64| res_s.value().min(0.65) as f64) >> follow(0.002);
         (body | cut_mod | res_mod) >> moog()
     } else {
         body

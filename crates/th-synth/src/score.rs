@@ -321,6 +321,14 @@ pub struct SlotGain {
     /// (no `kind` fields) valid and keeps the shipped bake diff-free.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
+    /// The slot's PITCH INTERVAL as a frequency multiplier of the bar's
+    /// chord root — this is what makes CHORDS possible: the comp plus
+    /// the two harmony voices at, say, 2.0 (root), 2.52 (a major third
+    /// up) and 3.0 (a fifth up) sound a triad. `None` = the slot's
+    /// built-in ratio (`director::SLOTS[i].ratio`), so every existing
+    /// score file is unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ratio: Option<f32>,
     /// The baked mute (an FL-project track mute, plan 11): the
     /// effective-mute fold ORs it with the program state EVERY tick, so
     /// a `true` written once survives the gate's every-tick rewrites.
@@ -572,6 +580,15 @@ impl Score {
                     "{name}: must have 1..=16 entries (got {})",
                     table.len()
                 ));
+            }
+        }
+        for (i, slot) in self.slots.iter().enumerate() {
+            if let Some(r) = slot.ratio {
+                if !r.is_finite() || r <= 0.0 {
+                    return Err(format!(
+                        "slots[{i}].ratio: must be a positive frequency multiplier (got {r})"
+                    ));
+                }
             }
         }
         if self.slots.len() != 8 {
